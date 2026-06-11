@@ -1,4 +1,11 @@
-import { useRef, useState, useEffect, useCallback } from "react";
+import {
+  useRef,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  type KeyboardEvent,
+} from "react";
 import {
   Search,
   X,
@@ -19,6 +26,7 @@ import { EntryCard } from "../DraggableEntryCard";
 import { useAppTheme } from "../../hooks/useAppTheme"; // ✅ 1. 引入 AppTheme
 import { entryEventBus } from "../../lib/entryEventBus";
 import { EscModalWrapper } from "../common/EscModalWrapper"; // ✅ 2. 引入 EscWrapper
+import { useTagCache } from "../../context/TagCacheContext";
 
 interface Props {
   isOpen: boolean;
@@ -26,9 +34,16 @@ interface Props {
   onClose: () => void;
 }
 
+const normalizeTagFilter = (value: string) =>
+  value
+    .trim()
+    .replace(/^#+/, "")
+    .replace(/^[,，;；:：\s]+|[,，;；:：\s]+$/g, "");
+
 const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
   const { t } = useTranslation();
   const { handleJump } = useEntryNavigation();
+  const { allTags, refreshTags } = useTagCache();
   const inputRef = useRef<HTMLInputElement>(null);
 
   // ✅ 3. 获取主题样式
@@ -45,6 +60,9 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     "idea",
     "event",
   ]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
+  const [tagInputFocused, setTagInputFocused] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [results, setResults] = useState<any[]>([]);
@@ -61,6 +79,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
 
   useEffect(() => {
     if (isOpen) {
+      void refreshTags();
       requestAnimationFrame(() => {
         setIsActive(true);
         setTimeout(() => inputRef.current?.focus(), 100);
@@ -71,10 +90,13 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
         setQuery("");
         setResults([]);
         setMode("text");
+        setSelectedTags([]);
+        setTagDraft("");
+        setTagInputFocused(false);
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [isOpen]);
+  }, [isOpen, refreshTags]);
 
   const handleClose = useCallback(() => {
     setIsActive(false);
@@ -102,8 +124,54 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     );
   };
 
+  const addTagFilter = useCallback((value: string) => {
+    const tag = normalizeTagFilter(value);
+    if (!tag || /\s/.test(tag)) return;
+    setSelectedTags((current) => {
+      if (current.some((item) => item.toLowerCase() === tag.toLowerCase())) {
+        return current;
+      }
+      return [...current, tag];
+    });
+    setTagDraft("");
+  }, []);
+
+  const removeTagFilter = useCallback((tag: string) => {
+    setSelectedTags((current) => current.filter((item) => item !== tag));
+  }, []);
+
+  const handleTagKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === "," || e.key === "，") {
+      e.preventDefault();
+      addTagFilter(tagDraft);
+    } else if (e.key === "Backspace" && !tagDraft && selectedTags.length > 0) {
+      removeTagFilter(selectedTags[selectedTags.length - 1]);
+    }
+  };
+
+  const filteredTagSuggestions = useMemo(() => {
+    if (!tagInputFocused) return [];
+    const needle = normalizeTagFilter(tagDraft).toLowerCase();
+    return allTags
+      .filter(
+        (tag) =>
+          !selectedTags.some(
+            (item) => item.toLowerCase() === tag.toLowerCase(),
+          ),
+      )
+      .filter((tag) => !needle || tag.toLowerCase().includes(needle))
+      .sort((a, b) => {
+        if (!needle) return 0;
+        const aStarts = a.toLowerCase().startsWith(needle);
+        const bStarts = b.toLowerCase().startsWith(needle);
+        if (aStarts === bStarts) return 0;
+        return aStarts ? -1 : 1;
+      })
+      .slice(0, 8);
+  }, [allTags, selectedTags, tagDraft, tagInputFocused]);
+
   const performSearch = useCallback(async () => {
-    if (!query.trim() && !startDate && !endDate) {
+    if (!query.trim() && !startDate && !endDate && selectedTags.length === 0) {
       setResults([]);
       return;
     }
@@ -113,6 +181,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
         q: query,
         mode: mode,
         entry_type: selectedTypes.length > 0 ? selectedTypes : undefined,
+        tags: selectedTags,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
       });
@@ -123,17 +192,17 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     } finally {
       setLoading(false);
     }
-  }, [query, mode, selectedTypes, startDate, endDate]);
+  }, [query, mode, selectedTypes, selectedTags, startDate, endDate]);
 
   useEffect(() => {
     if (!isOpen) return;
-    if (!query && !startDate && !endDate) {
+    if (!query && !startDate && !endDate && selectedTags.length === 0) {
       setResults([]);
       return;
     }
     const timer = setTimeout(performSearch, 400);
     return () => clearTimeout(timer);
-  }, [performSearch, query, isOpen, startDate, endDate]);
+  }, [performSearch, query, isOpen, startDate, endDate, selectedTags]);
 
   // --- 实时过滤 ---
   const checkEntryMatches = useCallback(
@@ -152,11 +221,23 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
           }
         }
       }
+      if (selectedTags.length > 0) {
+        const entryTags = Array.isArray(entry.tags)
+          ? entry.tags.map((tag: string) => tag.toLowerCase())
+          : [];
+        if (
+          !selectedTags.every((tag) =>
+            entryTags.includes(tag.toLowerCase()),
+          )
+        ) {
+          return false;
+        }
+      }
       if (selectedTypes.length > 0 && !selectedTypes.includes(entry.entry_type))
         return false;
       return true;
     },
-    [query, mode, selectedTypes],
+    [query, mode, selectedTags, selectedTypes],
   );
 
   useEffect(() => {
@@ -210,6 +291,12 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     : "bg-indigo-50/30 border-indigo-50/50";
 
   const resultsAreaStyle = isDark ? "bg-[#0f172a]" : "bg-[#f8fafc]";
+
+  const hasSearchFilters =
+    Boolean(query.trim()) ||
+    Boolean(startDate) ||
+    Boolean(endDate) ||
+    selectedTags.length > 0;
 
   return (
     // ✅ 5. 接入 EscModalWrapper
@@ -406,6 +493,75 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
                   )}
                 </div>
               </div>
+
+              {/* Native Tag Filters */}
+              <div
+                className={`relative rounded-2xl p-2 flex flex-wrap items-center gap-2 border ${filterContainerStyle}`}
+              >
+                <Hash
+                  size={14}
+                  className={`shrink-0 ${isDark ? "text-indigo-300/70" : "text-indigo-400/70"}`}
+                />
+                {selectedTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => removeTagFilter(tag)}
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold transition-colors ${
+                      isDark
+                        ? "bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25"
+                        : "bg-indigo-100/80 text-indigo-600 hover:bg-indigo-200/80"
+                    }`}
+                  >
+                    {tag}
+                    <X size={11} strokeWidth={2.5} />
+                  </button>
+                ))}
+                <input
+                  value={tagDraft}
+                  onChange={(e) => setTagDraft(e.target.value)}
+                  onKeyDown={handleTagKeyDown}
+                  onFocus={() => setTagInputFocused(true)}
+                  onBlur={() => {
+                    addTagFilter(tagDraft);
+                    setTagInputFocused(false);
+                  }}
+                  placeholder={t.search?.tagPlaceholder || "Filter by tag"}
+                  className={`min-w-28 flex-1 bg-transparent outline-none text-sm font-medium placeholder:opacity-40 ${
+                    isDark ? "text-slate-300" : "text-slate-600"
+                  }`}
+                />
+                {tagDraft.trim() && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => addTagFilter(tagDraft)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
+                      isDark
+                        ? "bg-white/10 text-slate-300 hover:bg-white/15"
+                        : "bg-white text-indigo-500 hover:bg-indigo-50"
+                    }`}
+                  >
+                    {t.search?.addTag || "Add"}
+                  </button>
+                )}
+                {filteredTagSuggestions.length > 0 && (
+                  <div className="absolute left-2 right-2 top-full z-30 mt-2 max-h-44 overflow-y-auto rounded-xl border border-base-200 bg-base-100/95 p-1 shadow-xl backdrop-blur-md">
+                    {filteredTagSuggestions.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => addTagFilter(tag)}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-base-content/75 hover:bg-base-200/70"
+                      >
+                        <Hash size={13} className="text-indigo-400" />
+                        <span className="truncate">{tag}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -430,7 +586,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
                 <div
                   className={`p-4 rounded-[2rem] border ${styles.feedback.emptyIconBg}`}
                 >
-                  {query || startDate || endDate ? (
+                  {hasSearchFilters ? (
                     <SearchX size={40} className="opacity-50" />
                   ) : (
                     <Filter size={40} className="opacity-50" />
@@ -440,14 +596,14 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
                   <p
                     className={`font-serif font-bold text-xl opacity-60 ${styles.feedback.emptyText}`}
                   >
-                    {query || startDate || endDate
+                    {hasSearchFilters
                       ? t.tag?.noEntries || "No entries found"
                       : t.search?.openTip || "Start typing to search"}
                   </p>
                   <p
                     className={`text-sm mt-2 opacity-40 ${styles.card.textSecondary}`}
                   >
-                    {query || startDate || endDate
+                    {hasSearchFilters
                       ? t.tag?.tryDifferent || "Try different keywords."
                       : ""}
                   </p>

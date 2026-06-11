@@ -315,13 +315,6 @@ pub fn run() {
                         true,
                         Some("CmdOrCtrl+L"),
                     )?,
-                    &MenuItem::with_id(
-                        app,
-                        "archive",
-                        "归档",
-                        true,
-                        Some("CmdOrCtrl+Shift+A"),
-                    )?,
                 ],
             )?;
             Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &view_menu])
@@ -331,7 +324,6 @@ pub fn run() {
                 "new_entry" => Some("menu:new-entry"),
                 "search" => Some("menu:search"),
                 "future_log" => Some("menu:future-log"),
-                "archive" => Some("menu:archive"),
                 "backup" => Some("menu:backup"),
                 _ => None,
             };

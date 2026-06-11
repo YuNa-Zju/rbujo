@@ -256,6 +256,8 @@ export const translations = {
       before: "前",
       from: "从",
       to: "到",
+      tagPlaceholder: "搜索或添加标签",
+      addTag: "添加",
     },
     jumpDate: {
       title: "选择日期",
@@ -648,6 +650,8 @@ export const translations = {
       before: "Before",
       from: "From",
       to: "To",
+      tagPlaceholder: "Search or add tag",
+      addTag: "Add",
     },
     jumpDate: {
       title: "Select Date",

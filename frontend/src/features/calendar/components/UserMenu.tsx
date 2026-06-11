@@ -4,12 +4,10 @@ import {
   Sun,
   Monitor,
   Languages,
-  Archive,
   FileArchive,
   Rss,
   RefreshCw,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 
 import { useTheme } from "../../../hooks/useTheme";
 import { useTranslation } from "../../../hooks/useTranslation";
@@ -24,7 +22,6 @@ const LANG_MAP: Record<string, string> = {
 };
 
 export default function UserMenu() {
-  const navigate = useNavigate();
   const { themeMode, cycleTheme } = useTheme();
   const { lang, toggleLang, t } = useTranslation();
 
@@ -46,9 +43,6 @@ export default function UserMenu() {
     uiEvents.emit("OPEN_BACKUP");
   };
 
-  const handleOpenArchive = () => {
-    navigate("/archive");
-  };
   // --- 子组件 (样式保持不变) ---
 
   const MenuItem = ({
@@ -113,11 +107,6 @@ export default function UserMenu() {
         className="dropdown-content mt-3 z-50 w-60 p-1.5 origin-top-right transform transition-all duration-200"
       >
         <div className="bg-base-100/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/5 border border-white/10 dark:border-white/5 flex flex-col gap-0.5 p-1.5">
-          <MenuItem
-            icon={Archive}
-            label={t.common?.archive || "Archive"}
-            onClick={handleOpenArchive}
-          />
           <MenuItem
             icon={RefreshCw}
             label={t.common?.update || "Update"}

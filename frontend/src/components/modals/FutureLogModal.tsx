@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import {
   X,
   CalendarCheck,
-  Archive,
   Plus,
   CalendarDays,
   Clock,
@@ -26,8 +25,6 @@ type FutureLayout = {
   undetermined: any[];
   months: Record<number, YearGroup>;
 };
-
-type TabType = "active" | "archive";
 
 interface Props {
   onClose: () => void;
@@ -235,7 +232,6 @@ const FutureLogModal = ({ onClose }: Props) => {
     undetermined: [],
     months: {},
   });
-  const [activeTab, setActiveTab] = useState<TabType>("active");
   const monthIndexes = Array.from({ length: 12 }, (_, i) => i);
 
   useEffect(() => {
@@ -377,15 +373,7 @@ const FutureLogModal = ({ onClose }: Props) => {
 
   const filterEntries = (entries: any[]) => {
     return entries.filter((entry) => {
-      const isCompleted = [
-        "completed",
-        "cancelled",
-        "migrated_forward",
-        "migrated_future",
-      ].includes(entry.status);
-      if (activeTab === "active")
-        return entry.status === "open" || entry.status === "future";
-      else return isCompleted;
+      return entry.status === "open" || entry.status === "future";
     });
   };
   const filterYearGroup = (group: YearGroup) => {
@@ -465,75 +453,8 @@ const FutureLogModal = ({ onClose }: Props) => {
             </div>
           </div>
 
-          {/* Desktop Tabs */}
-          <div
-            className={`
-              absolute left-1/2 -translate-x-1/2 hidden sm:flex p-1.5 rounded-full border shadow-inner
-              ${isDark ? "bg-black/40 border-white/5" : "bg-stone-100/80 border-stone-200/50"}
-          `}
-          >
-            <button
-              className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-bold transition-all duration-300 ${
-                activeTab === "active"
-                  ? isDark
-                    ? "bg-[#333] text-orange-400 shadow-sm ring-1 ring-white/10"
-                    : "bg-white text-orange-600 shadow-sm ring-1 ring-black/5"
-                  : isDark
-                    ? "text-stone-400 hover:text-stone-200"
-                    : "text-stone-500 hover:text-stone-700"
-              }`}
-              onClick={() => setActiveTab("active")}
-            >
-              <ListTodo size={14} strokeWidth={2.5} /> Active
-            </button>
-            <button
-              className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-bold transition-all duration-300 ${
-                activeTab === "archive"
-                  ? isDark
-                    ? "bg-[#333] text-stone-200 shadow-sm ring-1 ring-white/10"
-                    : "bg-white text-stone-600 shadow-sm ring-1 ring-black/5"
-                  : isDark
-                    ? "text-stone-400 hover:text-stone-200"
-                    : "text-stone-500 hover:text-stone-700"
-              }`}
-              onClick={() => setActiveTab("archive")}
-            >
-              <Archive size={14} strokeWidth={2.5} /> Archive
-            </button>
-          </div>
-
           {/* Actions */}
           <div className="flex gap-3 items-center">
-            {/* Mobile Tabs */}
-            <div
-              className={`sm:hidden flex rounded-xl p-1 mr-1 ${isDark ? "bg-white/5" : "bg-stone-100/80"}`}
-            >
-              <button
-                onClick={() => setActiveTab("active")}
-                className={`p-2 rounded-lg transition-all ${
-                  activeTab === "active"
-                    ? isDark
-                      ? "bg-[#333] text-orange-400"
-                      : "bg-white shadow-sm text-orange-600"
-                    : "text-stone-400"
-                }`}
-              >
-                <ListTodo size={18} />
-              </button>
-              <button
-                onClick={() => setActiveTab("archive")}
-                className={`p-2 rounded-lg transition-all ${
-                  activeTab === "archive"
-                    ? isDark
-                      ? "bg-[#333] text-stone-200"
-                      : "bg-white shadow-sm text-stone-600"
-                    : "text-stone-400"
-                }`}
-              >
-                <Archive size={18} />
-              </button>
-            </div>
-
             <button
               className={`btn btn-sm h-10 px-5 rounded-full border-0 shadow-lg gap-2 transition-transform active:scale-95
                 ${isDark ? "bg-orange-600 hover:bg-orange-500 text-white shadow-orange-500/10" : "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-500/20"}
@@ -583,13 +504,9 @@ const FutureLogModal = ({ onClose }: Props) => {
                 title={t.futureLog.undetermined}
                 yearGroups={{ undefined: filteredUndetermined }}
                 flatCount={undeterminedCount}
-                icon={Archive}
+                icon={ListTodo}
                 isSpecial={true}
-                emptyText={
-                  activeTab === "active"
-                    ? t.futureLog.emptySomeday
-                    : "No archived items"
-                }
+                emptyText={t.futureLog.emptySomeday}
               />
             </div>
 
@@ -612,11 +529,7 @@ const FutureLogModal = ({ onClose }: Props) => {
                   yearGroups={filteredYearGroups}
                   flatCount={totalCount}
                   icon={CalendarDays}
-                  emptyText={
-                    activeTab === "active"
-                      ? t.futureLog.emptyMonth
-                      : "No archived items"
-                  }
+                  emptyText={t.futureLog.emptyMonth}
                 />
               );
             })}

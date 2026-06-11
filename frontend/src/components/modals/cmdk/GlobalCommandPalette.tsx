@@ -30,7 +30,6 @@ import {
   Monitor,
   Languages,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 
 import { uiEvents } from "../../../lib/uiEvents";
 import { entryService } from "../../../services/entryService";
@@ -64,7 +63,6 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function GlobalCommandPalette() {
-  const navigate = useNavigate();
   const { t, lang, toggleLang } = useTranslation();
   const { themeMode, cycleTheme } = useTheme();
 
@@ -460,12 +458,6 @@ export default function GlobalCommandPalette() {
                   label={t.command?.futureLog}
                   value={`${t.command?.futureLog} future log plan calendar`}
                   onSelect={() => run(() => uiEvents.emit("OPEN_FUTURE_LOG"))}
-                />
-                <Item
-                  icon={<Archive />}
-                  label={t.common?.archive || "Archive"}
-                  value="archive archived entries 归档"
-                  onSelect={() => run(() => navigate("/archive"))}
                 />
                 <Item
                   icon={<Search />}

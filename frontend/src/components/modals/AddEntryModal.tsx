@@ -3,6 +3,7 @@ import {
   useImperativeHandle,
   forwardRef,
   useState,
+  useMemo,
   type DragEvent,
   type ClipboardEvent,
   type KeyboardEvent,
@@ -14,6 +15,7 @@ import MarkdownToolbar from "../shared/MarkdownToolbar";
 import TypeSelector from "../shared/TypeSelector";
 import FutureLogOptions from "../shared/FutureLogOptions";
 import { entryService } from "../../services/entryService";
+import { useTagCache } from "../../context/TagCacheContext";
 import {
   X,
   CalendarDays,
@@ -50,6 +52,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
     const dragCounter = useRef(0);
 
     const { t } = useTranslation();
+    const { allTags, refreshTags } = useTagCache();
 
     const [mode, setMode] = useState<"daily" | "future">("daily");
 
@@ -60,6 +63,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
     const [type, setType] = useState<EntryType>("task");
     const [tags, setTags] = useState<string[]>([]);
     const [tagDraft, setTagDraft] = useState("");
+    const [tagInputFocused, setTagInputFocused] = useState(false);
     const [loading, setLoading] = useState(false);
 
     const [isUploading, setIsUploading] = useState(false);
@@ -75,6 +79,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
     useImperativeHandle(ref, () => ({
       showModal: (options = {}) => {
         const { date: openDate, mode: openMode, entry } = options;
+        void refreshTags();
 
         // Reset UI states
         setIsUploading(false);
@@ -87,6 +92,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           setType(entry.entry_type || "task");
           setTags(Array.isArray(entry.tags) ? entry.tags : []);
           setTagDraft("");
+          setTagInputFocused(false);
 
           // Determine mode based on entry data
           if (entry.is_future) {
@@ -113,6 +119,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           setContent("");
           setTags([]);
           setTagDraft("");
+          setTagInputFocused(false);
           // setType("task"); // Optional: keep last used type or reset
 
           setMode(openMode || "daily");
@@ -290,6 +297,25 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         .replace(/^#+/, "")
         .replace(/^[,，;；:：\s]+|[,，;；:：\s]+$/g, "");
 
+    const filteredTagSuggestions = useMemo(() => {
+      if (!tagInputFocused) return [];
+      const needle = normalizeTag(tagDraft).toLowerCase();
+      return allTags
+        .filter(
+          (tag) =>
+            !tags.some((item) => item.toLowerCase() === tag.toLowerCase()),
+        )
+        .filter((tag) => !needle || tag.toLowerCase().includes(needle))
+        .sort((a, b) => {
+          if (!needle) return 0;
+          const aStarts = a.toLowerCase().startsWith(needle);
+          const bStarts = b.toLowerCase().startsWith(needle);
+          if (aStarts === bStarts) return 0;
+          return aStarts ? -1 : 1;
+        })
+        .slice(0, 8);
+    }, [allTags, tagDraft, tagInputFocused, tags]);
+
     const addTag = (value: string) => {
       const tag = normalizeTag(value);
       if (!tag || /\s/.test(tag)) return;
@@ -446,7 +472,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
             <div className="px-6 py-4 bg-base-100">
               <TypeSelector currentType={type} onChange={setType} />
 
-              <div className="mt-4 rounded-2xl border border-base-200/70 bg-base-200/25 px-3 py-2">
+              <div className="relative mt-4 rounded-2xl border border-base-200/70 bg-base-200/25 px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
@@ -479,10 +505,30 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
                     value={tagDraft}
                     onChange={(e) => setTagDraft(e.target.value)}
                     onKeyDown={handleTagKeyDown}
-                    onBlur={() => addTag(tagDraft)}
+                    onFocus={() => setTagInputFocused(true)}
+                    onBlur={() => {
+                      addTag(tagDraft);
+                      setTagInputFocused(false);
+                    }}
                     placeholder="添加标签"
                   />
                 </div>
+                {filteredTagSuggestions.length > 0 && (
+                  <div className="absolute left-3 right-3 top-full z-40 mt-2 max-h-44 overflow-y-auto rounded-xl border border-base-200 bg-base-100/95 p-1 shadow-xl backdrop-blur-md">
+                    {filteredTagSuggestions.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => addTag(tag)}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-base-content/75 hover:bg-base-200/70"
+                      >
+                        <Hash size={13} className="text-primary/70" />
+                        <span className="truncate">{tag}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Only show Future Date Picker when Creating Future Log (too complex for edit) */}

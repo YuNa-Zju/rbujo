@@ -9,7 +9,6 @@ import {
   type ReactNode,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useNavigate } from "react-router-dom";
 import {
   uiEvents,
   type AddEntryPayload,
@@ -55,7 +54,6 @@ interface ModalControllerValue {
 const ModalControllerContext = createContext<ModalControllerValue | null>(null);
 
 export function ModalControllerProvider({ children }: { children: ReactNode }) {
-  const navigate = useNavigate();
   const requestSeq = useRef(0);
   const [search, setSearch] = useState({
     open: false,
@@ -192,11 +190,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
         unlisten.push(await listen("menu:new-entry", () => openAddEntry({})));
         unlisten.push(await listen("menu:search", () => openSearch(null)));
         unlisten.push(await listen("menu:future-log", openFutureLog));
-        unlisten.push(
-          await listen("menu:archive", () => {
-            navigate("/archive");
-          }),
-        );
         unlisten.push(await listen("menu:backup", openBackup));
       } catch {
         return;
@@ -211,7 +204,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       disposed = true;
       unlisten.forEach((dispose) => dispose());
     };
-  }, [navigate, openAddEntry, openBackup, openFutureLog, openSearch]);
+  }, [openAddEntry, openBackup, openFutureLog, openSearch]);
 
   const value = useMemo<ModalControllerValue>(
     () => ({

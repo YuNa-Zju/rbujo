@@ -11,7 +11,9 @@ import { entryEventBus } from "../lib/entryEventBus";
 
 interface TagCacheContextType {
   cache: Record<string, any[]>;
+  allTags: string[];
   prefetch: (tag: string) => Promise<void>;
+  refreshTags: () => Promise<void>;
   clearCache: () => void;
   getCachedResults: (tag: string) => any[] | undefined;
 }
@@ -20,6 +22,7 @@ const TagCacheContext = createContext<TagCacheContextType | null>(null);
 
 export function TagCacheProvider({ children }: { children: React.ReactNode }) {
   const [cache, setCache] = useState<Record<string, any[]>>({});
+  const [allTags, setAllTags] = useState<string[]>([]);
   const fetchingRef = useRef<Record<string, boolean>>({});
   const cacheRef = useRef(cache);
 
@@ -34,6 +37,34 @@ export function TagCacheProvider({ children }: { children: React.ReactNode }) {
   const clearCache = useCallback(() => {
     setCache({});
     fetchingRef.current = {};
+  }, []);
+
+  const refreshTags = useCallback(async () => {
+    try {
+      const entries = await entryService.search({
+        q: "",
+        mode: "text",
+        include_archived: true,
+        limit: 1000,
+      });
+      const tags = new Map<string, string>();
+      entries.forEach((entry) => {
+        if (!Array.isArray(entry.tags)) return;
+        entry.tags.forEach((tag: string) => {
+          const trimmed = tag.trim();
+          if (!trimmed) return;
+          const key = trimmed.toLowerCase();
+          if (!tags.has(key)) tags.set(key, trimmed);
+        });
+      });
+      setAllTags(
+        Array.from(tags.values()).sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: "base" }),
+        ),
+      );
+    } catch (error) {
+      console.error("Failed to refresh tags", error);
+    }
   }, []);
 
   // 🟢 核心逻辑：执行标签搜索并更新缓存
@@ -70,7 +101,12 @@ export function TagCacheProvider({ children }: { children: React.ReactNode }) {
 
   // 🔴 核心：监听 Entry 总线，实现静默热更新
   useEffect(() => {
+    refreshTags();
+  }, [refreshTags]);
+
+  useEffect(() => {
     const handleAutoRefresh = () => {
+      refreshTags();
       const activeTags = Object.keys(cacheRef.current);
       if (activeTags.length > 0) {
         console.log(
@@ -93,11 +129,18 @@ export function TagCacheProvider({ children }: { children: React.ReactNode }) {
       entryEventBus.off("entry:status_change", handleAutoRefresh);
       entryEventBus.off("entry:migrate", handleAutoRefresh);
     };
-  }, [executeFetch]);
+  }, [executeFetch, refreshTags]);
 
   return (
     <TagCacheContext.Provider
-      value={{ cache, prefetch, clearCache, getCachedResults }}
+      value={{
+        cache,
+        allTags,
+        prefetch,
+        refreshTags,
+        clearCache,
+        getCachedResults,
+      }}
     >
       {children}
     </TagCacheContext.Provider>
