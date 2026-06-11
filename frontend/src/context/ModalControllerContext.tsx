@@ -31,6 +31,7 @@ interface ModalControllerValue {
   search: { open: boolean; initialQuery: string | null };
   tagSearch: { open: boolean; tag: string | null };
   commandPaletteOpen: boolean;
+  commandPaletteRequestId: number;
   futureLogOpen: boolean;
   backupOpen: boolean;
   addEntryRequest: AddEntryRequest | null;
@@ -67,6 +68,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     tag: null as string | null,
   });
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteRequestId, setCommandPaletteRequestId] = useState(0);
   const [futureLogOpen, setFutureLogOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [addEntryRequest, setAddEntryRequest] =
@@ -98,6 +100,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openCommandPalette = useCallback(() => {
+    setCommandPaletteRequestId((current) => current + 1);
     setCommandPaletteOpen(true);
   }, []);
 
@@ -226,6 +229,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       search,
       tagSearch,
       commandPaletteOpen,
+      commandPaletteRequestId,
       futureLogOpen,
       backupOpen,
       addEntryRequest,
@@ -258,6 +262,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       closeFutureLog,
       closeSearch,
       closeTagSearch,
+      commandPaletteRequestId,
       entryActionRequest,
       commandPaletteOpen,
       futureLogOpen,

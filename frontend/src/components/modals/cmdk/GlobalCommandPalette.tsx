@@ -1,4 +1,11 @@
-import { useEffect, useState, useMemo, useCallback, useLayoutEffect } from "react";
+import {
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+  useLayoutEffect,
+} from "react";
+import { createPortal } from "react-dom";
 import { Command } from "cmdk";
 import {
   Search,
@@ -76,6 +83,7 @@ export default function GlobalCommandPalette() {
   const { allTags, refreshTags } = useTagCache();
   const {
     commandPaletteOpen,
+    commandPaletteRequestId,
     openCommandPalette,
     closeCommandPalette,
   } = useModalController();
@@ -265,14 +273,15 @@ export default function GlobalCommandPalette() {
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
+      key={commandPaletteRequestId}
       className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-0 sm:p-4"
       role="dialog"
       aria-modal="true"
     >
       <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm cmdk-backdrop-enter"
         onClick={closeCommandPalette}
       />
 
@@ -282,8 +291,7 @@ export default function GlobalCommandPalette() {
         className={`
           relative w-full max-w-2xl bg-base-100/95 backdrop-blur-2xl shadow-2xl border border-base-content/10 overflow-hidden
           flex flex-col h-auto max-h-[85vh] rounded-t-[2rem] sm:rounded-3xl
-          animate-in slide-in-from-bottom-10 duration-300 ease-out
-          sm:h-auto sm:max-h-[600px] sm:zoom-in-95
+          sm:h-auto sm:max-h-[600px] cmdk-panel-enter
         `}
       >
         <div className="flex justify-center pt-3 pb-1 sm:hidden w-full bg-base-100/50">
@@ -593,6 +601,7 @@ export default function GlobalCommandPalette() {
 
         <div className="h-1.5 bg-gradient-to-r from-primary/20 via-secondary/20 to-accent/20" />
       </Command>
-    </div>
+    </div>,
+    document.body,
   );
 }
