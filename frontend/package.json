@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:frontend": "node --test tests/*.test.ts",
     "test:update": "node --test tests/updateService.test.ts",
     "preview": "vite preview",
     "tauri": "cd .. && frontend/node_modules/.bin/tauri",

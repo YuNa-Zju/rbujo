@@ -9,6 +9,7 @@ import { uiEvents } from "../../lib/uiEvents";
 import { type EntryType } from "../../config/entryTheme";
 import { useTranslation } from "../../hooks/useTranslation";
 import { showArchiveUndoToast } from "../../lib/archiveUndoToast";
+import { canToggleEntryStatus } from "./entryStatusPolicy";
 
 export function useEntryActions(
   entry: any,
@@ -108,6 +109,7 @@ export function useEntryActions(
   };
 
   const handleStatusToggle = () => {
+    if (!canToggleEntryStatus(entry)) return;
     if (isEditing) return;
     if (isMigrated) {
       handleReopen();

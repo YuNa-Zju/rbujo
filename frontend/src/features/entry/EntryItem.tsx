@@ -17,6 +17,7 @@ import { useEntryActions } from "./useEntryActions";
 import EntryDisplay from "./EntryDisplay";
 import EntryEditor from "./EntryEditor";
 import EntryActions from "./EntryActions";
+import { canToggleEntryStatus } from "./entryStatusPolicy";
 
 interface EntryItemProps {
   entry: any;
@@ -50,7 +51,6 @@ export default function EntryItem({
     isEditing,
     loading,
     isTask,
-    isMigrated,
     setEditingState,
     handleStatusToggle,
     handleSaveEdit,
@@ -66,6 +66,7 @@ export default function EntryItem({
 
   const theme = ENTRY_THEME[entry.entry_type as EntryType] || ENTRY_THEME.task;
   const isCompletedTask = isTask && entry.status === "completed";
+  const canToggleStatus = canToggleEntryStatus(entry);
   const isMigratedTargetArchived =
     Boolean(entry.migrated_to_archived_at) && Boolean(entry.migrated_to_entry_id);
   const openMigratedTarget = (fallbackTarget: string | null | undefined) => {
@@ -96,7 +97,7 @@ export default function EntryItem({
       {/* Status Toggle / Icon */}
       <button
         className={`w-7 h-7 flex items-center justify-center shrink-0 mt-[1px] rounded-full transition-all duration-200 ${
-          isTask || isMigrated
+          canToggleStatus
             ? `cursor-pointer active:scale-90 hover:bg-base-200/80 ${theme.softHover}`
             : "cursor-default"
         } ${isCompletedTask ? "opacity-50 grayscale-[0.5]" : ""}`}
@@ -104,7 +105,7 @@ export default function EntryItem({
           e.stopPropagation();
           handleStatusToggle();
         }}
-        disabled={loading || isEditing}
+        disabled={loading || isEditing || !canToggleStatus}
       >
         {renderIcon()}
       </button>
