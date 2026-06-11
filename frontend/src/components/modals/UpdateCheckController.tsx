@@ -5,6 +5,7 @@ import { Download, Loader2, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { EscModalWrapper } from "../common/EscModalWrapper";
+import MarkdownViewer from "../MarkdownViewer";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import {
   checkForUpdates,
@@ -13,6 +14,46 @@ import {
   type UpdateMetadata,
 } from "../../services/updateService";
 import type { UpdateCheckSource } from "../../services/updatePromptPolicy";
+import { getUpdateReleaseNotes } from "../../services/updateReleaseNotes";
+
+const UPDATE_NOTES_MARKDOWN_STYLES = `
+  .update-release-notes.prose-custom-scale h1,
+  .update-release-notes.prose-custom-scale h2,
+  .update-release-notes.prose-custom-scale h3,
+  .update-release-notes.prose-custom-scale h4,
+  .update-release-notes.prose-custom-scale h5,
+  .update-release-notes.prose-custom-scale h6 {
+    font-size: 0.95rem !important;
+    line-height: 1.45 !important;
+    margin: 0.85rem 0 0.45rem !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    text-align: left !important;
+  }
+
+  .update-release-notes.prose-custom-scale h1::after {
+    display: none !important;
+  }
+
+  .update-release-notes.prose-custom-scale p,
+  .update-release-notes.prose-custom-scale li {
+    font-size: 0.875rem !important;
+    line-height: 1.7 !important;
+    margin-bottom: 0.55rem !important;
+    text-align: left !important;
+  }
+
+  .update-release-notes.prose-custom-scale ul,
+  .update-release-notes.prose-custom-scale ol {
+    margin: 0.4rem 0 0.75rem 1.1rem !important;
+    padding-left: 0.55rem !important;
+  }
+
+  .update-release-notes.prose-custom-scale pre {
+    margin: 0.65rem 0 !important;
+  }
+`;
 
 export default function UpdateCheckController() {
   const [update, setUpdate] = useState<UpdateMetadata | null>(null);
@@ -140,6 +181,7 @@ function UpdatePromptModal({
 }) {
   const { styles } = useAppTheme();
   const open = Boolean(update);
+  const releaseNotes = update ? getUpdateReleaseNotes(update) : "";
 
   return (
     <EscModalWrapper id="UpdatePromptModal" isOpen={open} onClose={onClose}>
@@ -160,7 +202,7 @@ function UpdatePromptModal({
               exit={{ scale: 0.96, opacity: 0, y: 12 }}
               transition={{ duration: 0.16, ease: "easeOut" }}
               className={`
-                relative w-full max-w-md overflow-hidden rounded-3xl border p-6 shadow-2xl
+                relative w-full max-w-lg overflow-hidden rounded-3xl border p-6 shadow-2xl
                 ${styles.modal.base}
               `}
             >
@@ -186,9 +228,42 @@ function UpdatePromptModal({
                   <p
                     className={`mt-2 text-sm leading-relaxed ${styles.card.textSecondary}`}
                   >
-                    当前版本 {update.currentVersion}，可更新到 {update.version}。
-                    更新会自动下载并安装，完成后应用会重启。
+                    可以安装新的版本。更新会自动下载并安装，完成后应用会重启。
                   </p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <VersionBadge label="当前版本" version={update.currentVersion} />
+                <VersionBadge label="最新版本" version={update.version} />
+              </div>
+
+              <div
+                className={`
+                  mt-5 rounded-2xl border p-4
+                  ${styles.card.bg} ${styles.card.border}
+                `}
+              >
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span className={`text-sm font-bold ${styles.modal.title}`}>
+                    更新日志
+                  </span>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${styles.card.textSecondary} bg-base-200/60`}
+                  >
+                    Markdown
+                  </span>
+                </div>
+                <div className="max-h-64 overflow-y-auto pr-1">
+                  <MarkdownViewer
+                    content={releaseNotes}
+                    disableOverflowCheck
+                    isTagClickable={false}
+                    readOnly
+                    entryType="event"
+                    className="update-release-notes"
+                  />
+                  <style>{UPDATE_NOTES_MARKDOWN_STYLES}</style>
                 </div>
               </div>
 
@@ -220,5 +295,25 @@ function UpdatePromptModal({
         )}
       </AnimatePresence>
     </EscModalWrapper>
+  );
+}
+
+function VersionBadge({ label, version }: { label: string; version: string }) {
+  const { styles } = useAppTheme();
+
+  return (
+    <div
+      className={`
+        rounded-2xl border px-3 py-2.5
+        ${styles.card.bg} ${styles.card.border}
+      `}
+    >
+      <div className={`text-[11px] font-bold ${styles.card.textSecondary}`}>
+        {label}
+      </div>
+      <div className={`mt-1 truncate font-mono text-sm ${styles.card.textPrimary}`}>
+        v{version}
+      </div>
+    </div>
   );
 }

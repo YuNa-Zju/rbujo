@@ -26,6 +26,7 @@ struct PendingUpdate(Mutex<Option<Update>>);
 struct UpdateMetadata {
     version: String,
     current_version: String,
+    body: Option<String>,
 }
 
 #[tauri::command]
@@ -42,6 +43,7 @@ async fn check_for_update(
     let metadata = update.as_ref().map(|update| UpdateMetadata {
         version: update.version.clone(),
         current_version: update.current_version.clone(),
+        body: update.body.clone(),
     });
 
     *pending_update

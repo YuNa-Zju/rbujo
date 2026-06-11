@@ -9,6 +9,7 @@ import {
 export type UpdateMetadata = {
   version: string;
   currentVersion: string;
+  body?: string | null;
 };
 
 export type UpdateCheckResult =
