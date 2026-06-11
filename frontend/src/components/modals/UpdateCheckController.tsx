@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { EscModalWrapper } from "../common/EscModalWrapper";
 import MarkdownViewer from "../MarkdownViewer";
 import { useAppTheme } from "../../hooks/useAppTheme";
+import { uiEvents } from "../../lib/uiEvents";
 import {
   checkForUpdates,
   dismissUpdate,
@@ -109,13 +110,24 @@ export default function UpdateCheckController() {
   }, [runCheck]);
 
   useEffect(() => {
+    const handleCheckUpdate = () => {
+      void runCheck("manual");
+    };
+
+    uiEvents.on("OPEN_CHECK_UPDATE", handleCheckUpdate);
+    return () => {
+      uiEvents.off("OPEN_CHECK_UPDATE", handleCheckUpdate);
+    };
+  }, [runCheck]);
+
+  useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
 
     const register = async () => {
       try {
         unlisten = await listen("menu:check-update", () => {
-          void runCheck("manual");
+          uiEvents.emit("OPEN_CHECK_UPDATE");
         });
       } catch {
         return;
@@ -131,7 +143,7 @@ export default function UpdateCheckController() {
       disposed = true;
       unlisten?.();
     };
-  }, [runCheck]);
+  }, []);
 
   const close = useCallback(() => {
     if (!update || installing) {

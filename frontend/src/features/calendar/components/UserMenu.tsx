@@ -7,6 +7,7 @@ import {
   Archive,
   FileArchive,
   Rss,
+  RefreshCw,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -32,6 +33,10 @@ export default function UserMenu() {
 
   const handleOpenBackup = () => {
     uiEvents.emit("OPEN_BACKUP");
+  };
+
+  const handleCheckUpdate = () => {
+    uiEvents.emit("OPEN_CHECK_UPDATE");
   };
 
   const handleOpenArchive = () => {
@@ -116,6 +121,11 @@ export default function UserMenu() {
             icon={FileArchive}
             label={t.backup?.title || "Backup & Export"}
             onClick={handleOpenBackup}
+          />
+          <MenuItem
+            icon={RefreshCw}
+            label={t.common?.checkUpdate || "Check for Updates"}
+            onClick={handleCheckUpdate}
           />
           <MenuItem
             icon={

@@ -309,6 +309,17 @@ async fn batch_delete_entries(
         .map_err(to_error)
 }
 
+fn menu_event_name(menu_id: &str) -> Option<&'static str> {
+    match menu_id {
+        "new_entry" => Some("menu:new-entry"),
+        "search" => Some("menu:search"),
+        "future_log" => Some("menu:future-log"),
+        "backup" => Some("menu:backup"),
+        "check_update" => Some("menu:check-update"),
+        _ => None,
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -378,16 +389,12 @@ pub fn run() {
             Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &view_menu])
         })
         .on_menu_event(|app, event| {
-            let event_name = match event.id().as_ref() {
-                "new_entry" => Some("menu:new-entry"),
-                "search" => Some("menu:search"),
-                "future_log" => Some("menu:future-log"),
-                "backup" => Some("menu:backup"),
-                "check_update" => Some("menu:check-update"),
-                _ => None,
-            };
-            if let Some(event_name) = event_name {
-                let _ = app.emit(event_name, ());
+            if let Some(event_name) = menu_event_name(event.id().as_ref()) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit(event_name, ());
+                } else {
+                    let _ = app.emit(event_name, ());
+                }
             }
         })
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -439,4 +446,19 @@ pub fn run() {
 
 fn to_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::menu_event_name;
+
+    #[test]
+    fn maps_native_menu_ids_to_frontend_events() {
+        assert_eq!(menu_event_name("new_entry"), Some("menu:new-entry"));
+        assert_eq!(menu_event_name("search"), Some("menu:search"));
+        assert_eq!(menu_event_name("future_log"), Some("menu:future-log"));
+        assert_eq!(menu_event_name("backup"), Some("menu:backup"));
+        assert_eq!(menu_event_name("check_update"), Some("menu:check-update"));
+        assert_eq!(menu_event_name("unknown"), None);
+    }
 }
