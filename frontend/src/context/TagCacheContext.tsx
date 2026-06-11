@@ -24,6 +24,7 @@ export function TagCacheProvider({ children }: { children: React.ReactNode }) {
   const [cache, setCache] = useState<Record<string, any[]>>({});
   const [allTags, setAllTags] = useState<string[]>([]);
   const fetchingRef = useRef<Record<string, boolean>>({});
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const cacheRef = useRef(cache);
 
   useEffect(() => {
@@ -40,31 +41,34 @@ export function TagCacheProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshTags = useCallback(async () => {
-    try {
-      const entries = await entryService.search({
-        q: "",
-        mode: "text",
-        include_archived: true,
-        limit: 1000,
-      });
-      const tags = new Map<string, string>();
-      entries.forEach((entry) => {
-        if (!Array.isArray(entry.tags)) return;
-        entry.tags.forEach((tag: string) => {
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+
+    const refresh = (async () => {
+      try {
+        const tags = await entryService.listTags();
+        const normalized = new Map<string, string>();
+        tags.forEach((tag) => {
           const trimmed = tag.trim();
           if (!trimmed) return;
           const key = trimmed.toLowerCase();
-          if (!tags.has(key)) tags.set(key, trimmed);
+          if (!normalized.has(key)) normalized.set(key, trimmed);
         });
-      });
-      setAllTags(
-        Array.from(tags.values()).sort((a, b) =>
-          a.localeCompare(b, undefined, { sensitivity: "base" }),
-        ),
-      );
-    } catch (error) {
-      console.error("Failed to refresh tags", error);
-    }
+        setAllTags(
+          Array.from(normalized.values()).sort((a, b) =>
+            a.localeCompare(b, undefined, { sensitivity: "base" }),
+          ),
+        );
+      } catch (error) {
+        console.error("Failed to refresh tags", error);
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    })();
+
+    refreshInFlightRef.current = refresh;
+    return refresh;
   }, []);
 
   // 🟢 核心逻辑：执行标签搜索并更新缓存

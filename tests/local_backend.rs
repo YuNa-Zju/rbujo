@@ -154,6 +154,65 @@ async fn native_tag_search_is_case_insensitive() {
 }
 
 #[tokio::test]
+async fn native_tag_list_reads_tags_without_entry_search() {
+    let dir = temp_app_dir("native-tag-list");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "标签列表来源一".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-11".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["课程".to_string(), "AI".to_string()],
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "标签列表来源二".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["ai".to_string(), "数学".to_string()],
+        })
+        .await
+        .unwrap();
+    let stale = backend
+        .create_entry(CreateEntryInput {
+            content: "临时标签稍后移除".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-13".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["临时".to_string()],
+        })
+        .await
+        .unwrap();
+
+    let tags = backend.list_tags().await.unwrap();
+
+    assert_eq!(tags, vec!["AI", "临时", "数学", "课程"]);
+
+    backend
+        .update_entry(
+            stale.id,
+            EntryPatch {
+                tags: Some(Vec::new()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let tags = backend.list_tags().await.unwrap();
+    assert_eq!(tags, vec!["AI", "数学", "课程"]);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn tag_migration_script_parses_existing_text_tags_once() {
     let dir = temp_app_dir("text-tag-migration");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();

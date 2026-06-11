@@ -197,12 +197,8 @@ async fn rebuild_search_index(state: State<'_, DesktopState>) -> Result<usize, S
 }
 
 #[tauri::command]
-async fn migrate_text_tags_to_native(state: State<'_, DesktopState>) -> Result<usize, String> {
-    state
-        .backend
-        .migrate_text_tags_to_native()
-        .await
-        .map_err(to_error)
+async fn list_tags(state: State<'_, DesktopState>) -> Result<Vec<String>, String> {
+    state.backend.list_tags().await.map_err(to_error)
 }
 
 #[tauri::command]
@@ -341,7 +337,6 @@ pub fn run() {
         .setup(|app| {
             let app_dir = app.path().app_data_dir()?;
             let backend = tauri::async_runtime::block_on(LocalBackend::open(app_dir))?;
-            tauri::async_runtime::block_on(backend.migrate_text_tags_to_native())?;
             app.manage(DesktopState {
                 backend: Arc::new(backend),
             });
@@ -365,7 +360,7 @@ pub fn run() {
             get_migration_chain,
             search_entries,
             rebuild_search_index,
-            migrate_text_tags_to_native,
+            list_tags,
             store_upload,
             get_all_entries_for_backup,
             import_entries,

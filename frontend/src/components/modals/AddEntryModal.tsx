@@ -4,6 +4,7 @@ import {
   forwardRef,
   useState,
   useMemo,
+  useEffect,
   type DragEvent,
   type ClipboardEvent,
   type KeyboardEvent,
@@ -64,6 +65,8 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
     const [tags, setTags] = useState<string[]>([]);
     const [tagDraft, setTagDraft] = useState("");
     const [tagInputFocused, setTagInputFocused] = useState(false);
+    const [highlightedTagSuggestionIndex, setHighlightedTagSuggestionIndex] =
+      useState(-1);
     const [loading, setLoading] = useState(false);
 
     const [isUploading, setIsUploading] = useState(false);
@@ -93,6 +96,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           setTags(Array.isArray(entry.tags) ? entry.tags : []);
           setTagDraft("");
           setTagInputFocused(false);
+          setHighlightedTagSuggestionIndex(-1);
 
           // Determine mode based on entry data
           if (entry.is_future) {
@@ -120,6 +124,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           setTags([]);
           setTagDraft("");
           setTagInputFocused(false);
+          setHighlightedTagSuggestionIndex(-1);
           // setType("task"); // Optional: keep last used type or reset
 
           setMode(openMode || "daily");
@@ -316,6 +321,14 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         .slice(0, 8);
     }, [allTags, tagDraft, tagInputFocused, tags]);
 
+    useEffect(() => {
+      setHighlightedTagSuggestionIndex((current) => {
+        if (filteredTagSuggestions.length === 0) return -1;
+        if (current >= filteredTagSuggestions.length) return -1;
+        return current;
+      });
+    }, [filteredTagSuggestions.length]);
+
     const addTag = (value: string) => {
       const tag = normalizeTag(value);
       if (!tag || /\s/.test(tag)) return;
@@ -326,6 +339,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         return [...current, tag];
       });
       setTagDraft("");
+      setHighlightedTagSuggestionIndex(-1);
     };
 
     const removeTag = (tag: string) => {
@@ -342,7 +356,27 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
     };
 
     const handleTagKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter" || e.key === "," || e.key === "，") {
+      if (e.key === "ArrowDown" && filteredTagSuggestions.length > 0) {
+        e.preventDefault();
+        setHighlightedTagSuggestionIndex((current) =>
+          current < 0 ? 0 : (current + 1) % filteredTagSuggestions.length,
+        );
+      } else if (e.key === "ArrowUp" && filteredTagSuggestions.length > 0) {
+        e.preventDefault();
+        setHighlightedTagSuggestionIndex((current) =>
+          current < 0
+            ? filteredTagSuggestions.length - 1
+            : (current - 1 + filteredTagSuggestions.length) %
+              filteredTagSuggestions.length,
+        );
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        addTag(
+          highlightedTagSuggestionIndex >= 0
+            ? filteredTagSuggestions[highlightedTagSuggestionIndex]
+            : tagDraft,
+        );
+      } else if (e.key === "," || e.key === "，") {
         e.preventDefault();
         addTag(tagDraft);
       } else if (e.key === "Backspace" && !tagDraft && tags.length > 0) {
@@ -503,30 +537,49 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
                     ref={tagInputRef}
                     className="min-w-28 flex-1 bg-transparent text-sm outline-none placeholder:text-base-content/30"
                     value={tagDraft}
-                    onChange={(e) => setTagDraft(e.target.value)}
+                    onChange={(e) => {
+                      setTagDraft(e.target.value);
+                      setHighlightedTagSuggestionIndex(-1);
+                    }}
                     onKeyDown={handleTagKeyDown}
                     onFocus={() => setTagInputFocused(true)}
                     onBlur={() => {
                       addTag(tagDraft);
                       setTagInputFocused(false);
+                      setHighlightedTagSuggestionIndex(-1);
                     }}
                     placeholder="添加标签"
                   />
                 </div>
                 {filteredTagSuggestions.length > 0 && (
-                  <div className="absolute left-3 right-3 top-full z-40 mt-2 max-h-44 overflow-y-auto rounded-xl border border-base-200 bg-base-100/95 p-1 shadow-xl backdrop-blur-md">
-                    {filteredTagSuggestions.map((tag) => (
-                      <button
-                        key={tag}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => addTag(tag)}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-base-content/75 hover:bg-base-200/70"
-                      >
-                        <Hash size={13} className="text-primary/70" />
-                        <span className="truncate">{tag}</span>
-                      </button>
-                    ))}
+                  <div
+                    className="absolute left-3 right-3 top-full z-40 mt-2 max-h-44 overflow-y-auto rounded-xl border border-base-200 bg-base-100/95 p-1 shadow-xl backdrop-blur-md"
+                    role="listbox"
+                  >
+                    {filteredTagSuggestions.map((tag, index) => {
+                      const selected = index === highlightedTagSuggestionIndex;
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onMouseEnter={() =>
+                            setHighlightedTagSuggestionIndex(index)
+                          }
+                          onClick={() => addTag(tag)}
+                          className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+                            selected
+                              ? "bg-primary/10 text-primary"
+                              : "text-base-content/75 hover:bg-base-200/70"
+                          }`}
+                        >
+                          <Hash size={13} className="text-primary/70" />
+                          <span className="truncate">{tag}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>

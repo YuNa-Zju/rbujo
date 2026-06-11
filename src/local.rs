@@ -603,6 +603,30 @@ impl LocalBackend {
         Ok(migrated)
     }
 
+    pub async fn list_tags(&self) -> AppResult<Vec<String>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT tags.name AS name
+            FROM tags
+            JOIN entry_tags
+              ON entry_tags.tag_id = tags.id
+             AND entry_tags.owner_id = tags.owner_id
+            JOIN entries
+              ON entries.id = entry_tags.entry_id
+             AND entries.owner_id = tags.owner_id
+            WHERE tags.owner_id = ?
+            ORDER BY lower(tags.name) ASC, tags.name ASC
+            "#,
+        )
+        .bind(self.owner_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| row.try_get::<String, _>("name").map_err(AppError::from))
+            .collect()
+    }
+
     pub async fn rebuild_search_index(&self) -> AppResult<usize> {
         let entries = sqlx::query_as::<_, Entry>(&format!(
             "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"

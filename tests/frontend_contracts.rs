@@ -35,6 +35,10 @@ fn tag_inputs_offer_existing_native_tag_suggestions() {
         "TagCacheContext should expose known native tags"
     );
     assert!(
+        tag_cache.contains("entryService.listTags"),
+        "TagCacheContext should refresh known tags through the native tag list command"
+    );
+    assert!(
         add_entry.contains("filteredTagSuggestions"),
         "AddEntryModal should show matching existing tag suggestions"
     );
@@ -61,6 +65,45 @@ fn tag_inputs_offer_existing_native_tag_suggestions() {
 }
 
 #[test]
+fn command_palette_places_tags_above_settings_near_bottom() {
+    let command_palette =
+        read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+
+    let tools = command_palette
+        .find("t.command?.tools")
+        .expect("Tools group should exist");
+    let tags = command_palette
+        .find("t.command?.tagMenu")
+        .expect("Tag group should exist");
+    let settings = command_palette
+        .find("t.command?.settings")
+        .expect("Settings group should exist");
+
+    assert!(
+        tools < tags && tags < settings,
+        "Command palette should render tag suggestions after tools and before settings"
+    );
+}
+
+#[test]
+fn add_entry_tag_suggestions_support_keyboard_selection() {
+    let source = read_file("frontend/src/components/modals/AddEntryModal.tsx");
+
+    assert!(
+        source.contains("highlightedTagSuggestionIndex"),
+        "AddEntryModal should track the highlighted tag suggestion"
+    );
+    assert!(
+        source.contains("ArrowDown") && source.contains("ArrowUp"),
+        "AddEntryModal tag input should support arrow-key suggestion navigation"
+    );
+    assert!(
+        source.contains("aria-selected"),
+        "AddEntryModal should expose the highlighted suggestion to assistive technologies"
+    );
+}
+
+#[test]
 fn ui_events_replay_open_events_emitted_before_listeners_mount() {
     let source = read_file("frontend/src/lib/uiEvents.ts");
 
@@ -71,6 +114,20 @@ fn ui_events_replay_open_events_emitted_before_listeners_mount() {
     assert!(
         source.contains("replayableEvents"),
         "uiEvents should only replay modal-opening events"
+    );
+}
+
+#[test]
+fn tauri_setup_does_not_block_window_on_text_tag_migration() {
+    let source = read_file("src-tauri/src/lib.rs");
+
+    assert!(
+        !source.contains("block_on(backend.migrate_text_tags_to_native())"),
+        "Tauri setup should not synchronously scan all entries for legacy text tags before showing the window"
+    );
+    assert!(
+        source.contains("async fn list_tags"),
+        "Tauri should expose a lightweight native tag list command"
     );
 }
 

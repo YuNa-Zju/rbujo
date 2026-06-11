@@ -24,7 +24,7 @@ cargo run -- migrate-db --source bullet_journal.db --target bullet_journal_v2.db
 
 迁移器不会覆盖 source 数据库。默认服务数据库为 `sqlite://bullet_journal_v2.db`。
 
-原生 tag 回填会把旧正文里的 `#标签` 写入新的 `tags` / `entry_tags` 表。Tauri 启动时会自动执行一次；需要手动重跑时使用:
+新建和编辑条目时，tag 会直接写入 `tags` / `entry_tags` 表，Tauri 启动时不做正文 tag 解析或回填，避免启动阶段扫描全库。只有确实需要处理旧正文里的 `#标签` 时，才手动运行:
 
 ```bash
 cargo run -- migrate-text-tags --app-dir ".rbujo-local"

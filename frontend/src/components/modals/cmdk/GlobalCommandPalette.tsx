@@ -191,7 +191,6 @@ export default function GlobalCommandPalette() {
   useEffect(() => {
     const handleOpenSignal = () => {
       setOpen(true);
-      void refreshTags();
       resetContext();
     };
     uiEvents.on("OPEN_CMD_PALETTE", handleOpenSignal);
@@ -357,26 +356,6 @@ export default function GlobalCommandPalette() {
                       )
                     }
                   />
-                </Command.Group>
-              )}
-
-              {filteredTagSuggestions.length > 0 && (
-                <Command.Group
-                  heading={t.command?.tagMenu || "Tags"}
-                  className="space-y-2"
-                >
-                  {filteredTagSuggestions.map((tag) => (
-                    <Item
-                      key={tag}
-                      icon={<Hash />}
-                      label={`#${tag}`}
-                      value={`tag filter hashtag ${tag}`}
-                      subLabel={t.command?.filterTag}
-                      onSelect={() =>
-                        run(() => uiEvents.emit("OPEN_TAG_SEARCH", tag))
-                      }
-                    />
-                  ))}
                 </Command.Group>
               )}
 
@@ -546,6 +525,26 @@ export default function GlobalCommandPalette() {
                   onSelect={() => run(() => uiEvents.emit("OPEN_BACKUP"))}
                 />
               </Command.Group>
+
+              {filteredTagSuggestions.length > 0 && (
+                <Command.Group
+                  heading={t.command?.tagMenu || "Tags"}
+                  className="space-y-2"
+                >
+                  {filteredTagSuggestions.map((tag) => (
+                    <Item
+                      key={tag}
+                      icon={<Hash />}
+                      label={`#${tag}`}
+                      value={`tag filter hashtag ${tag}`}
+                      subLabel={t.command?.filterTag}
+                      onSelect={() =>
+                        run(() => uiEvents.emit("OPEN_TAG_SEARCH", tag))
+                      }
+                    />
+                  ))}
+                </Command.Group>
+              )}
 
               {/* Settings (新增) */}
               <Command.Group

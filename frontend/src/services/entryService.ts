@@ -234,6 +234,10 @@ export const entryService = {
       .filter((entry) => !params.status || entry.status === params.status);
   },
 
+  listTags: async () => {
+    return invoke<string[]>("list_tags");
+  },
+
   getFutureLog: async () => {
     const data = await invoke<any>("get_future_log", {
       includeArchived: false,
@@ -312,7 +316,4 @@ export const entryService = {
     return true;
   },
 
-  migrateTextTagsToNative: async () => {
-    return invoke<number>("migrate_text_tags_to_native");
-  },
 };
