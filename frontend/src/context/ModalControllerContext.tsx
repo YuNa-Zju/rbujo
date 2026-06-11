@@ -14,6 +14,7 @@ import {
   type AddEntryPayload,
   type EntryActionPayload,
 } from "../lib/uiEvents";
+import { debugLog } from "../lib/debugLog";
 
 type EntryActionKind = "migrate" | "future" | "delete" | "edit";
 
@@ -30,6 +31,7 @@ interface EntryActionRequest {
 interface ModalControllerValue {
   search: { open: boolean; initialQuery: string | null };
   tagSearch: { open: boolean; tag: string | null };
+  commandPaletteOpen: boolean;
   futureLogOpen: boolean;
   backupOpen: boolean;
   addEntryRequest: AddEntryRequest | null;
@@ -40,6 +42,8 @@ interface ModalControllerValue {
   closeSearch: () => void;
   openTagSearch: (tag?: string | null) => void;
   closeTagSearch: () => void;
+  openCommandPalette: () => void;
+  closeCommandPalette: () => void;
   openFutureLog: () => void;
   closeFutureLog: () => void;
   openBackup: () => void;
@@ -63,6 +67,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     open: false,
     tag: null as string | null,
   });
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [futureLogOpen, setFutureLogOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [addEntryRequest, setAddEntryRequest] =
@@ -93,11 +98,23 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     setTagSearch((current) => ({ ...current, open: false }));
   }, []);
 
+  const openCommandPalette = useCallback(() => {
+    debugLog("modalController", "open command palette");
+    setCommandPaletteOpen(true);
+  }, []);
+
+  const closeCommandPalette = useCallback(() => {
+    debugLog("modalController", "close command palette");
+    setCommandPaletteOpen(false);
+  }, []);
+
   const openFutureLog = useCallback(() => {
+    debugLog("modalController", "open future log");
     setFutureLogOpen(true);
   }, []);
 
   const closeFutureLog = useCallback(() => {
+    debugLog("modalController", "close future log");
     setFutureLogOpen(false);
   }, []);
 
@@ -152,6 +169,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     uiEvents.on("OPEN_DELETE_ENTRY", remove);
     uiEvents.on("OPEN_SEARCH", openSearch);
     uiEvents.on("OPEN_TAG_SEARCH", openTagSearch);
+    uiEvents.on("OPEN_CMD_PALETTE", openCommandPalette);
     uiEvents.on("OPEN_FUTURE_LOG", openFutureLog);
     uiEvents.on("OPEN_TIMELINE", openTimeline);
     uiEvents.on("OPEN_CALENDAR_SYNC", openCalendarSync);
@@ -165,6 +183,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       uiEvents.off("OPEN_DELETE_ENTRY", remove);
       uiEvents.off("OPEN_SEARCH", openSearch);
       uiEvents.off("OPEN_TAG_SEARCH", openTagSearch);
+      uiEvents.off("OPEN_CMD_PALETTE", openCommandPalette);
       uiEvents.off("OPEN_FUTURE_LOG", openFutureLog);
       uiEvents.off("OPEN_TIMELINE", openTimeline);
       uiEvents.off("OPEN_CALENDAR_SYNC", openCalendarSync);
@@ -174,6 +193,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     openAddEntry,
     openBackup,
     openCalendarSync,
+    openCommandPalette,
     openEntryAction,
     openFutureLog,
     openSearch,
@@ -210,6 +230,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     () => ({
       search,
       tagSearch,
+      commandPaletteOpen,
       futureLogOpen,
       backupOpen,
       addEntryRequest,
@@ -220,6 +241,8 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       closeSearch,
       openTagSearch,
       closeTagSearch,
+      openCommandPalette,
+      closeCommandPalette,
       openFutureLog,
       closeFutureLog,
       openBackup,
@@ -236,14 +259,17 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       calendarSyncRequestId,
       clearEntryAction,
       closeBackup,
+      closeCommandPalette,
       closeFutureLog,
       closeSearch,
       closeTagSearch,
       entryActionRequest,
+      commandPaletteOpen,
       futureLogOpen,
       openAddEntry,
       openBackup,
       openCalendarSync,
+      openCommandPalette,
       openEntryAction,
       openFutureLog,
       openSearch,

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Search, CalendarCheck, Clock } from "lucide-react";
 import { motion } from "framer-motion";
 import { uiEvents } from "../../../lib/uiEvents";
+import { debugLog } from "../../../lib/debugLog";
 import { useTranslation } from "../../../hooks/useTranslation";
 import UserMenu from "./UserMenu";
 
@@ -39,9 +40,18 @@ export default function HeaderActionTrigger() {
   // ✅ 获取当前是否为暗色模式
   const isDark = useIsDark();
 
-  const openCmd = () => uiEvents.emit("OPEN_CMD_PALETTE");
-  const openFutureLog = () => uiEvents.emit("OPEN_FUTURE_LOG");
-  const openTimeline = () => uiEvents.emit("OPEN_TIMELINE");
+  const openCmd = () => {
+    debugLog("header", "click command palette");
+    uiEvents.emit("OPEN_CMD_PALETTE");
+  };
+  const openFutureLog = () => {
+    debugLog("header", "click future log");
+    uiEvents.emit("OPEN_FUTURE_LOG");
+  };
+  const openTimeline = () => {
+    debugLog("header", "click timeline");
+    uiEvents.emit("OPEN_TIMELINE");
+  };
 
   // ⚡️ 弹簧动画配置
   const springAnim = {

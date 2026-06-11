@@ -120,8 +120,7 @@ fn ui_events_replay_open_events_emitted_before_listeners_mount() {
 #[test]
 fn cmd_palette_open_event_is_not_replayed_later() {
     let ui_events = read_file("frontend/src/lib/uiEvents.ts");
-    let command_palette =
-        read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+    let modal_controller = read_file("frontend/src/context/ModalControllerContext.tsx");
     let replayable_start = ui_events
         .find("private replayableEvents")
         .expect("uiEvents should define replayableEvents");
@@ -136,9 +135,49 @@ fn cmd_palette_open_event_is_not_replayed_later() {
         "CmdK open events are transient and should not replay after another modal opens"
     );
     assert!(
-        command_palette.contains("useLayoutEffect")
-            && command_palette.contains("uiEvents.on(\"OPEN_CMD_PALETTE\""),
-        "GlobalCommandPalette should register its open listener before first paint"
+        modal_controller.contains("uiEvents.on(\"OPEN_CMD_PALETTE\"")
+            && modal_controller.contains("commandPaletteOpen"),
+        "ModalController should own the CmdK open listener and state"
+    );
+}
+
+#[test]
+fn ui_debug_mode_is_gated_and_traces_cmdk_event_flow() {
+    let debug_log = read_file("frontend/src/lib/debugLog.ts");
+    let ui_events = read_file("frontend/src/lib/uiEvents.ts");
+    let header_actions =
+        read_file("frontend/src/features/calendar/components/HeaderActionTrigger.tsx");
+    let command_palette =
+        read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+    let modal_controller = read_file("frontend/src/context/ModalControllerContext.tsx");
+    let calendar_page = read_file("frontend/src/features/calendar/CalendarPage.tsx");
+
+    assert!(
+        debug_log.contains("rbujo_debug_ui"),
+        "Debug logging should be gated by a localStorage key"
+    );
+    assert!(
+        ui_events.contains("debugLog") && ui_events.contains("listenerCount"),
+        "uiEvents should trace event listener and emit state in debug mode"
+    );
+    assert!(
+        header_actions.contains("OPEN_CMD_PALETTE")
+            && header_actions.contains("debugLog"),
+        "Header action buttons should log CmdK open attempts"
+    );
+    assert!(
+        command_palette.contains("debugLog")
+            && command_palette.contains("commandPaletteOpen"),
+        "CmdK should log its controlled open state"
+    );
+    assert!(
+        modal_controller.contains("commandPaletteOpen")
+            && modal_controller.contains("OPEN_CMD_PALETTE"),
+        "ModalController should own CmdK open state and the OPEN_CMD_PALETTE listener"
+    );
+    assert!(
+        calendar_page.contains("debugLog") && calendar_page.contains("viewMode"),
+        "CalendarPage should log view mode transitions for CmdK reproduction"
     );
 }
 

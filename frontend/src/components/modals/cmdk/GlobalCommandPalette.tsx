@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 
 import { uiEvents } from "../../../lib/uiEvents";
+import { debugLog } from "../../../lib/debugLog";
 import { entryService } from "../../../services/entryService";
 import { ENTRY_THEME, type EntryType } from "../../../config/entryTheme";
 import { getSmartSummary } from "../../../utils/markdownUtils";
@@ -39,6 +40,7 @@ import { useTranslation } from "../../../hooks/useTranslation";
 import { useTheme } from "../../../hooks/useTheme";
 import { cacheStorage } from "../../../utils/cacheStorage";
 import { useTagCache } from "../../../context/TagCacheContext";
+import { useModalController } from "../../../context/ModalControllerContext";
 
 import { Kbd, Item } from "./CmdkComponents";
 import EntryActionView from "./EntryActionView";
@@ -73,8 +75,13 @@ export default function GlobalCommandPalette() {
   const { t, lang, toggleLang } = useTranslation();
   const { themeMode, cycleTheme } = useTheme();
   const { allTags, refreshTags } = useTagCache();
+  const {
+    commandPaletteOpen,
+    openCommandPalette,
+    closeCommandPalette,
+  } = useModalController();
 
-  const [open, setOpen] = useState(false);
+  const open = commandPaletteOpen;
   const [inputValue, setInputValue] = useState("");
 
   const [view, setView] = useState<ViewState>("ROOT");
@@ -120,7 +127,7 @@ export default function GlobalCommandPalette() {
 
   const run = (action: () => void) => {
     action();
-    setOpen(false);
+    closeCommandPalette();
     setTimeout(resetContext, 300);
   };
 
@@ -132,6 +139,11 @@ export default function GlobalCommandPalette() {
   useEffect(() => {
     if (open && view === "ROOT") {
       const loadData = async () => {
+        debugLog("cmdk", "load focused daily entries", {
+          focusDateStr,
+          view,
+          commandPaletteOpen,
+        });
         setLoadingEntries(true);
         try {
           const cachedData = await cacheStorage.loadDaily();
@@ -162,10 +174,16 @@ export default function GlobalCommandPalette() {
     const down = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        setOpen((p) => {
-          if (!p) resetContext();
-          return !p;
+        debugLog("cmdk", "keyboard shortcut", {
+          open,
+          key: e.key,
         });
+        if (open) {
+          closeCommandPalette();
+        } else {
+          resetContext();
+          openCommandPalette();
+        }
       }
       if (
         document.activeElement?.tagName === "INPUT" ||
@@ -186,18 +204,23 @@ export default function GlobalCommandPalette() {
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, [focusDateStr, resetContext]);
+  }, [
+    closeCommandPalette,
+    focusDateStr,
+    open,
+    openCommandPalette,
+    resetContext,
+  ]);
 
-  useLayoutEffect(() => {
-    const handleOpenSignal = () => {
-      setOpen(true);
+  useEffect(() => {
+    debugLog("cmdk", "commandPaletteOpen changed", {
+      commandPaletteOpen,
+      view,
+    });
+    if (commandPaletteOpen) {
       resetContext();
-    };
-    uiEvents.on("OPEN_CMD_PALETTE", handleOpenSignal);
-    return () => {
-      uiEvents.off("OPEN_CMD_PALETTE", handleOpenSignal);
-    };
-  }, [refreshTags, resetContext]);
+    }
+  }, [commandPaletteOpen, resetContext, view]);
 
   useEffect(() => {
     if (open) void refreshTags();
@@ -206,7 +229,7 @@ export default function GlobalCommandPalette() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       if (view === "ROOT" || (view === "ENTRY_ACTIONS" && !inputValue)) {
-        setOpen(false);
+        closeCommandPalette();
         return;
       }
     }
@@ -264,7 +287,7 @@ export default function GlobalCommandPalette() {
     >
       <div
         className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
-        onClick={() => setOpen(false)}
+        onClick={closeCommandPalette}
       />
 
       <Command

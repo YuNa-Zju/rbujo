@@ -19,6 +19,7 @@ import { useJournalData } from "../../hooks/useJournalData";
 
 // ✅ 引入 UI 总线
 import { uiEvents } from "../../lib/uiEvents";
+import { debugLog } from "../../lib/debugLog";
 
 // ✅ 引入新组件
 import HeaderActionTrigger from "./components/HeaderActionTrigger";
@@ -88,10 +89,22 @@ export default function CalendarPage() {
   useEffect(() => {
     const state = location.state as any;
     if (state?.openFutureLog) {
+      debugLog("calendar", "route state requests future log", {
+        viewMode,
+        pathname: location.pathname,
+      });
       uiEvents.emit("OPEN_FUTURE_LOG");
       navigate(location.pathname, { replace: true, state: {} });
     }
-  }, [location, navigate]);
+  }, [location, navigate, viewMode]);
+
+  useEffect(() => {
+    debugLog("calendar", "viewMode changed", {
+      viewMode,
+      currentDate: currentDate.toISOString(),
+      selectedDate: selectedDate.toISOString(),
+    });
+  }, [currentDate, selectedDate, viewMode]);
 
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
