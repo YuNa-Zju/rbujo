@@ -10,10 +10,9 @@ test("release workflow uploads updater metadata and fails on publish errors", as
   );
   const workflow = await readFile(workflowPath, "utf8");
 
-  assert.match(workflow, /uses:\s*tauri-apps\/tauri-action@v1/);
+  assert.match(workflow, /uses:\s*tauri-apps\/tauri-action@v0\.6\.2/);
   assert.match(workflow, /args:\s*--bundles app,dmg/);
-  assert.match(workflow, /uploadUpdaterJson:\s*true/);
+  assert.match(workflow, /includeUpdaterJson:\s*true/);
   assert.match(workflow, /Missing macOS updater artifacts/);
-  assert.doesNotMatch(workflow, /includeUpdaterJson:/);
   assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
 });
