@@ -118,6 +118,31 @@ fn ui_events_replay_open_events_emitted_before_listeners_mount() {
 }
 
 #[test]
+fn cmd_palette_open_event_is_not_replayed_later() {
+    let ui_events = read_file("frontend/src/lib/uiEvents.ts");
+    let command_palette =
+        read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+    let replayable_start = ui_events
+        .find("private replayableEvents")
+        .expect("uiEvents should define replayableEvents");
+    let replayable_end = ui_events[replayable_start..]
+        .find("]);")
+        .map(|offset| replayable_start + offset)
+        .expect("replayableEvents should be a static event list");
+    let replayable_block = &ui_events[replayable_start..replayable_end];
+
+    assert!(
+        !replayable_block.contains("OPEN_CMD_PALETTE"),
+        "CmdK open events are transient and should not replay after another modal opens"
+    );
+    assert!(
+        command_palette.contains("useLayoutEffect")
+            && command_palette.contains("uiEvents.on(\"OPEN_CMD_PALETTE\""),
+        "GlobalCommandPalette should register its open listener before first paint"
+    );
+}
+
+#[test]
 fn tauri_setup_does_not_block_window_on_text_tag_migration() {
     let source = read_file("src-tauri/src/lib.rs");
 
@@ -150,14 +175,14 @@ fn future_log_modal_does_not_mix_archive_tab_into_future_log() {
 }
 
 #[test]
-fn archive_is_not_exposed_from_app_menus() {
+fn archive_is_exposed_from_user_menu_only() {
     let user_menu = read_file("frontend/src/features/calendar/components/UserMenu.tsx");
     let command_palette = read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
     let tauri_menu = read_file("src-tauri/src/lib.rs");
 
     assert!(
-        !user_menu.contains("navigate(\"/archive\")"),
-        "User menu should not navigate to archive"
+        user_menu.contains("navigate(\"/archive\")"),
+        "User menu should navigate to archive"
     );
     assert!(
         !command_palette.contains("navigate(\"/archive\")"),

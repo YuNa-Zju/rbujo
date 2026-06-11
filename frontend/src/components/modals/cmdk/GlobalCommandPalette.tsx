@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useLayoutEffect } from "react";
 import { Command } from "cmdk";
 import {
   Search,
@@ -158,7 +158,7 @@ export default function GlobalCommandPalette() {
   }, [open, view, focusDateStr]);
 
   // 快捷键
-  useEffect(() => {
+  useLayoutEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
@@ -188,7 +188,7 @@ export default function GlobalCommandPalette() {
     return () => document.removeEventListener("keydown", down);
   }, [focusDateStr, resetContext]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const handleOpenSignal = () => {
       setOpen(true);
       resetContext();

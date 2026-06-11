@@ -72,7 +72,6 @@ class UIEventEmitter {
     "OPEN_FUTURE_ENTRY",
     "OPEN_DELETE_ENTRY",
     "OPEN_EDIT_ENTRY",
-    "OPEN_CMD_PALETTE",
     "OPEN_BACKUP",
   ]);
 
