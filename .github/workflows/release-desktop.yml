@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: --bundles dmg
+            args: --bundles app,dmg
             artifact_name: macos-dmg
           - platform: windows-latest
             args: --bundles nsis,msi
@@ -46,8 +46,7 @@ jobs:
         run: npm install --prefix frontend
 
       - name: Build and publish desktop installer
-        continue-on-error: true
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -59,14 +58,15 @@ jobs:
           releaseBody: |
             ## 更新日志
 
-            - 新增菜单栏“检查更新...”，支持手动检查更新。
-            - 启动后自动检查新版本；选择“暂不更新”后，同一个版本不再自动弹窗，直到下一次更新。
-            - 更新弹窗现在显示当前版本、最新版本和 Markdown 更新日志。
-            - 修复 Windows 构建缺少 Tauri 图标资源导致安装包生成失败的问题。
+            - 修复 Tauri 2 capability 缺失导致的原生菜单失效问题。
+            - 修复检查更新缺少 updater 权限和 release 元数据导致的失败提示。
+            - 修复 release workflow 的 updater JSON 上传参数，确保 `latest.json` 会发布到 GitHub Release。
+            - 显式生成 updater artifacts，保证 0.1.x 客户端可以检测到 0.2.0 更新。
           releaseDraft: false
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           updaterJsonPreferNsis: true
+          retryAttempts: 2
           args: ${{ matrix.args }}
 
       - name: Upload desktop installers as workflow artifacts
@@ -95,8 +95,14 @@ jobs:
             }
           } else {
             $dmg = Get-ChildItem "src-tauri/target/release/bundle/dmg" -Filter "*.dmg" -ErrorAction SilentlyContinue
+            $updater = Get-ChildItem "src-tauri/target/release/bundle/macos" -Filter "*.tar.gz" -ErrorAction SilentlyContinue
+            $signature = Get-ChildItem "src-tauri/target/release/bundle/macos" -Filter "*.sig" -ErrorAction SilentlyContinue
             if (-not $dmg) {
               Write-Error "Missing macOS DMG artifact."
+              exit 1
+            }
+            if (-not $updater -or -not $signature) {
+              Write-Error "Missing macOS updater artifacts."
               exit 1
             }
           }
