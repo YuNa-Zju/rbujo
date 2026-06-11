@@ -8,14 +8,9 @@ import GlobalUIModals from "./components/modals/GlobalUIModals";
 import GlobalCommandPalette from "./components/modals/cmdk/GlobalCommandPalette";
 import { ModalControllerProvider } from "./context/ModalControllerContext";
 import { Toaster } from "sonner";
-import { useEffect } from "react";
-import { checkForUpdatesOnStartup } from "./services/updateService";
+import UpdateCheckController from "./components/modals/UpdateCheckController";
 
 export default function App() {
-  useEffect(() => {
-    void checkForUpdatesOnStartup();
-  }, []);
-
   return (
     <EntryModalProvider>
       <BrowserRouter>
@@ -31,6 +26,7 @@ export default function App() {
 
           <GlobalEntryModals />
           <GlobalUIModals />
+          <UpdateCheckController />
           <Toaster
             position="bottom-center"
             expand={false}

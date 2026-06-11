@@ -318,6 +318,14 @@ pub fn run() {
                 &[
                     &PredefinedMenuItem::about(app, Some("关于 rbujo"), None)?,
                     &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(
+                        app,
+                        "check_update",
+                        "检查更新...",
+                        true,
+                        Some("CmdOrCtrl+Shift+U"),
+                    )?,
+                    &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::hide(app, Some("隐藏 rbujo"))?,
                     &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
                     &PredefinedMenuItem::show_all(app, Some("全部显示"))?,
@@ -373,6 +381,7 @@ pub fn run() {
                 "search" => Some("menu:search"),
                 "future_log" => Some("menu:future-log"),
                 "backup" => Some("menu:backup"),
+                "check_update" => Some("menu:check-update"),
                 _ => None,
             };
             if let Some(event_name) = event_name {
