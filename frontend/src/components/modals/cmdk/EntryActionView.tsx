@@ -20,6 +20,7 @@ import { useTranslation } from "../../../hooks/useTranslation";
 import { uiEvents } from "../../../lib/uiEvents";
 import { entryService } from "../../../services/entryService";
 import { entryEventBus } from "../../../lib/entryEventBus";
+import { showArchiveUndoToast } from "../../../lib/archiveUndoToast";
 
 interface EntryActionViewProps {
   entry: any;
@@ -102,6 +103,12 @@ export default function EntryActionView({
           migrated_to_archived_at: archived.archived_at,
         });
       }
+      showArchiveUndoToast(archived, {
+        archived: t.common?.archived || "Archived",
+        undo: t.common?.undo || "Undo",
+        restored: t.common?.restored || "Restored",
+        undoFailed: t.common?.undoFailed || "Undo failed",
+      });
     } catch (e) {
       console.error("Archive failed", e);
     }

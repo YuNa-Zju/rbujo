@@ -24,6 +24,10 @@ export const translations = {
       close: "关闭",
       back: "返回",
       archive: "归档",
+      archived: "已归档",
+      undo: "撤回",
+      restored: "已恢复",
+      undoFailed: "撤回失败",
       // ✅ 新增
       next: "下一步",
       to: "To",
@@ -428,6 +432,10 @@ export const translations = {
       close: "Close",
       back: "Back",
       archive: "Archive",
+      archived: "Archived",
+      undo: "Undo",
+      restored: "Restored",
+      undoFailed: "Undo failed",
       // ✅ Added
       next: "Next",
       to: "To",

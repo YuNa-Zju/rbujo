@@ -7,6 +7,8 @@ import { useTagCache } from "../../context/TagCacheContext";
 import { entryEventBus, type MigratePayload } from "../../lib/entryEventBus";
 import { uiEvents } from "../../lib/uiEvents";
 import { type EntryType } from "../../config/entryTheme";
+import { useTranslation } from "../../hooks/useTranslation";
+import { showArchiveUndoToast } from "../../lib/archiveUndoToast";
 
 export function useEntryActions(
   entry: any,
@@ -21,6 +23,7 @@ export function useEntryActions(
 ) {
   const { handleJump } = useEntryNavigation();
   const { clearCache } = useTagCache();
+  const { t } = useTranslation();
 
   // --- State ---
   const [isEditing, setIsEditing] = useState(false);
@@ -202,6 +205,12 @@ export function useEntryActions(
           migrated_to_archived_at: archived.archived_at,
         });
       }
+      showArchiveUndoToast(archived, {
+        archived: t.common?.archived || "Archived",
+        undo: t.common?.undo || "Undo",
+        restored: t.common?.restored || "Restored",
+        undoFailed: t.common?.undoFailed || "Undo failed",
+      });
       clearCache();
       refresh();
     });
