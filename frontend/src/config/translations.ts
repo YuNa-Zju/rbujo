@@ -21,7 +21,6 @@ export const translations = {
       newEntry: "新条目",
       today: "今天",
       results: "篇条目",
-      update: "刷新所有条目",
       close: "关闭",
       archive: "归档",
       // ✅ 新增
@@ -413,7 +412,6 @@ export const translations = {
       newEntry: "New Entry",
       today: "Today",
       results: "Entries found",
-      update: "Refresh All Entries",
       close: "Close",
       archive: "Archive",
       // ✅ Added
