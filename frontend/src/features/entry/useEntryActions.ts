@@ -193,9 +193,15 @@ export function useEntryActions(
   };
 
   const performArchive = () => {
-    entryEventBus.emit("entry:delete", entry.id);
     execute(async () => {
-      await entryService.archive(entry.id);
+      const archived = await entryService.archive(entry.id);
+      entryEventBus.emit("entry:delete", entry.id);
+      if (archived.source_entry_id) {
+        entryEventBus.emit("entry:update", {
+          id: archived.source_entry_id,
+          migrated_to_archived_at: archived.archived_at,
+        });
+      }
       clearCache();
       refresh();
     });
@@ -292,6 +298,17 @@ export function useEntryActions(
   const performDelete = (hard: boolean) => {
     if (hard) {
       entryEventBus.emit("entry:delete", entry.id);
+      if (entry.source_entry_id) {
+        entryEventBus.emit("entry:update", {
+          id: entry.source_entry_id,
+          status: "open",
+          migrated_to_date: null,
+          migrated_to_month: null,
+          migrated_to_entry_id: null,
+          migrated_to_archived_at: null,
+          target_month: null,
+        });
+      }
     } else {
       const updatedEntry = { ...entry, status: "cancelled" };
       entryEventBus.emit("entry:update", updatedEntry);

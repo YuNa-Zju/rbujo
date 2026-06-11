@@ -3,7 +3,8 @@ import {
   Edit3,
   MoveRight,
   Copy,
-  Trash2,
+  Archive,
+  XCircle,
   Undo,
   CornerDownLeft,
   Delete,
@@ -89,6 +90,31 @@ export default function EntryActionView({
     const dateStr = entry.target_date || entry.date;
     if (!dateStr) return new Date(); // 如果没有日期，回退到今天
     return typeof dateStr === "string" ? parseISO(dateStr) : new Date(dateStr);
+  };
+
+  const handleArchive = async () => {
+    try {
+      const archived = await entryService.archive(entry.id);
+      entryEventBus.emit("entry:delete", entry.id);
+      if (archived.source_entry_id) {
+        entryEventBus.emit("entry:update", {
+          id: archived.source_entry_id,
+          migrated_to_archived_at: archived.archived_at,
+        });
+      }
+    } catch (e) {
+      console.error("Archive failed", e);
+    }
+  };
+
+  const handleCancel = async () => {
+    try {
+      await entryService.delete(entry.id, false);
+      entryEventBus.emit("entry:update", { ...entry, status: "cancelled" });
+      entryEventBus.emit("entry:status_change", { id: entry.id, status: "cancelled" });
+    } catch (e) {
+      console.error("Cancel failed", e);
+    }
   };
 
   return (
@@ -192,18 +218,21 @@ export default function EntryActionView({
             run(() => {});
           }}
         />
-        <Item
-          icon={<Trash2 />}
-          label={t.command?.delete}
-          danger
-          onSelect={() =>
-            run(() =>
-              uiEvents.emit("OPEN_DELETE_ENTRY", {
-                entry: entry,
-              }),
-            )
-          }
-        />
+        {!entry.archived_at && (
+          <Item
+            icon={<Archive />}
+            label={t.common?.archive || "Archive"}
+            onSelect={() => run(handleArchive)}
+          />
+        )}
+        {entry.status !== "cancelled" && (
+          <Item
+            icon={<XCircle />}
+            label={t.entry?.softDelete || "Mark as Cancelled"}
+            danger
+            onSelect={() => run(handleCancel)}
+          />
+        )}
       </Command.Group>
 
       <Command.Group className="mt-4 pt-4 border-t border-base-content/5">

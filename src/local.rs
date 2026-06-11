@@ -270,14 +270,7 @@ impl LocalBackend {
         let entry = self.fetch_entry(&id).await?;
         self.collect_and_delete_children(&id).await?;
         if let Some(parent_id) = entry.source_entry_id {
-            sqlx::query(
-                "UPDATE entries SET migrated_to_entry_id = NULL WHERE id = ? AND owner_id = ? AND migrated_to_entry_id = ?",
-            )
-            .bind(parent_id)
-            .bind(self.owner_id)
-            .bind(&id)
-            .execute(&self.pool)
-            .await?;
+            self.restore_parent_after_child_removal(&parent_id, &id).await?;
         }
         sqlx::query("DELETE FROM entries WHERE id = ? AND owner_id = ?")
             .bind(id)
@@ -996,7 +989,39 @@ impl LocalBackend {
         let tags = self.get_entry_tags(&entry.id).await?;
         let mut response = EntryResponse::from(entry);
         response.tags = tags;
+        if let Some(next_id) = response.migrated_to_entry_id.clone() {
+            response.migrated_to_archived_at = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT archived_at FROM entries WHERE id = ? AND owner_id = ?",
+            )
+            .bind(next_id)
+            .bind(self.owner_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten();
+        }
         Ok(response)
+    }
+
+    async fn restore_parent_after_child_removal(
+        &self,
+        parent_id: &str,
+        child_id: &str,
+    ) -> AppResult<()> {
+        let mut parent = self.fetch_entry(parent_id).await?;
+        if parent.migrated_to_entry_id.as_deref() != Some(child_id) {
+            return Ok(());
+        }
+
+        parent.status = STATUS_OPEN.to_string();
+        parent.migrated_to_date = None;
+        parent.migrated_to_month = None;
+        parent.migrated_to_entry_id = None;
+        parent.target_month = None;
+        parent.is_future = 0;
+        normalize_entry_state(&mut parent);
+        self.save_entry(&parent).await?;
+        self.index_entry(&parent).await?;
+        Ok(())
     }
 
     async fn responses_from_entries(&self, entries: Vec<Entry>) -> AppResult<Vec<EntryResponse>> {

@@ -10,6 +10,7 @@ import {
 import { ENTRY_THEME, type EntryType } from "../../config/entryTheme";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useEntryNavigation } from "../../hooks/useEntryNavigation";
+import { useNavigate } from "react-router-dom";
 
 import { useEntryActions } from "./useEntryActions";
 
@@ -40,6 +41,7 @@ export default function EntryItem({
 }: EntryItemProps) {
   const { t } = useTranslation();
   const { handleJump } = useEntryNavigation();
+  const navigate = useNavigate();
 
   // 🔴 修复 1：参数对齐
   // useEntryActions 的签名是 (entry, refresh, refs, onEditingChange)
@@ -64,6 +66,15 @@ export default function EntryItem({
 
   const theme = ENTRY_THEME[entry.entry_type as EntryType] || ENTRY_THEME.task;
   const isCompletedTask = isTask && entry.status === "completed";
+  const isMigratedTargetArchived =
+    Boolean(entry.migrated_to_archived_at) && Boolean(entry.migrated_to_entry_id);
+  const openMigratedTarget = (fallbackTarget: string | null | undefined) => {
+    if (isMigratedTargetArchived) {
+      navigate(`/archive?focus=${entry.migrated_to_entry_id}`);
+      return;
+    }
+    if (fallbackTarget) handleJump(fallbackTarget);
+  };
 
   const renderIcon = () => {
     if (["migrated_future", "future"].includes(entry.status))
@@ -131,11 +142,13 @@ export default function EntryItem({
                     className="flex items-center gap-1.5 text-info/90 hover:text-info cursor-pointer font-medium bg-info/5 hover:bg-info/10 px-2 py-0.5 rounded-full transition-colors border border-info/10"
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleJump(entry.migrated_to_date!);
+                      openMigratedTarget(entry.migrated_to_date);
                     }}
                   >
                     <ArrowRight size={10} strokeWidth={3} />{" "}
-                    {t.entry.migratedTo}{" "}
+                    {isMigratedTargetArchived
+                      ? t.archivePage?.archivedTarget || "Archived to"
+                      : t.entry.migratedTo}{" "}
                     <span className="font-mono">{entry.migrated_to_date}</span>
                   </span>
                 )}
@@ -147,10 +160,19 @@ export default function EntryItem({
                   ["migrated_future", "future"].includes(entry.status) && (
                     <span
                       className="flex items-center gap-1.5 cursor-pointer font-medium px-2 py-0.5 rounded-full transition-colors border text-amber-600/90 hover:text-amber-700 bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/10"
-                      onClick={(e) => handleOpenFutureLog(e)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isMigratedTargetArchived) {
+                          navigate(`/archive?focus=${entry.migrated_to_entry_id}`);
+                        } else {
+                          handleOpenFutureLog(e);
+                        }
+                      }}
                     >
                       <CalendarClock size={11} strokeWidth={2.5} />
-                      {t.entry.movedToFuture}{" "}
+                      {isMigratedTargetArchived
+                        ? t.archivePage?.archivedTarget || "Archived to"
+                        : t.entry.movedToFuture}{" "}
                       <span className="font-mono">
                         {entry.target_month || t.futureLog.undetermined}
                       </span>

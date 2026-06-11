@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
   ArrowLeft,
@@ -17,6 +17,7 @@ import { useTranslation } from "../../hooks/useTranslation";
 
 export default function ArchivePage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useTranslation();
   const [entries, setEntries] = useState<any[]>([]);
   const [query, setQuery] = useState("");
@@ -43,6 +44,11 @@ export default function ArchivePage() {
     loadArchived();
   }, [loadArchived]);
 
+  const focusId = useMemo(
+    () => new URLSearchParams(location.search).get("focus"),
+    [location.search],
+  );
+
   const filteredEntries = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) return entries;
@@ -57,12 +63,29 @@ export default function ArchivePage() {
     const restored = await entryService.unarchive(entry.id);
     setEntries((prev) => prev.filter((item) => item.id !== entry.id));
     entryEventBus.emit("entry:update", restored);
+    if (restored.source_entry_id) {
+      entryEventBus.emit("entry:update", {
+        id: restored.source_entry_id,
+        migrated_to_archived_at: null,
+      });
+    }
   };
 
   const handleDelete = async (entry: any) => {
     await entryService.delete(entry.id, true);
     setEntries((prev) => prev.filter((item) => item.id !== entry.id));
     entryEventBus.emit("entry:delete", entry.id);
+    if (entry.source_entry_id) {
+      entryEventBus.emit("entry:update", {
+        id: entry.source_entry_id,
+        status: "open",
+        migrated_to_date: null,
+        migrated_to_month: null,
+        migrated_to_entry_id: null,
+        migrated_to_archived_at: null,
+        target_month: null,
+      });
+    }
   };
 
   const handleJump = (entry: any) => {
@@ -126,18 +149,41 @@ export default function ArchivePage() {
           ) : (
             <div className="flex flex-col gap-4 pb-24">
               {filteredEntries.map((entry) => (
-                <div key={entry.id} className="group">
+                <div
+                  key={entry.id}
+                  className={`group rounded-3xl transition-all ${
+                    focusId === entry.id
+                      ? "ring-2 ring-primary/60 ring-offset-4 ring-offset-base-100"
+                      : ""
+                  }`}
+                >
                   <div className="flex items-center justify-between gap-3 mb-2 px-1">
-                    <button
-                      onClick={() => handleJump(entry)}
-                      className="flex items-center gap-2 text-xs font-mono font-bold text-base-content/45 hover:text-primary transition-colors"
-                    >
-                      <CalendarDays size={13} />
-                      {entry.target_date ||
-                        entry.target_month ||
-                        t.archivePage?.future ||
-                        "Future"}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-mono font-bold text-base-content/45">
+                      <button
+                        onClick={() => handleJump(entry)}
+                        className="flex items-center gap-1.5 hover:text-primary transition-colors"
+                      >
+                        <CalendarDays size={13} />
+                        {entry.target_date ||
+                          entry.target_month ||
+                          t.archivePage?.future ||
+                          "Future"}
+                      </button>
+                      {entry.from_date && (
+                        <span className="rounded-full bg-base-200/70 px-2 py-0.5">
+                          {t.archivePage?.from || "From"} {entry.from_date}
+                        </span>
+                      )}
+                      {(entry.migrated_to_date || entry.migrated_to_month) && (
+                        <span className="rounded-full bg-base-200/70 px-2 py-0.5">
+                          {t.archivePage?.to || "To"}{" "}
+                          {entry.migrated_to_date ||
+                            entry.migrated_to_month ||
+                            t.archivePage?.future ||
+                            "Future"}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1">
                       <button
                         className="btn btn-xs btn-ghost rounded-full gap-1"
@@ -145,7 +191,7 @@ export default function ArchivePage() {
                         title={t.archivePage?.restore || "Restore"}
                       >
                         <RotateCcw size={13} />
-                        {t.archivePage?.restore || "Restore"}
+                        {t.archivePage?.restoreOne || "Restore this"}
                       </button>
                       <button
                         className="btn btn-xs btn-ghost text-error rounded-full"

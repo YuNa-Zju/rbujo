@@ -58,6 +58,7 @@ pub struct EntryResponse {
     pub archived_at: Option<String>,
     pub chain_root_id: Option<String>,
     pub migrated_to_entry_id: Option<String>,
+    pub migrated_to_archived_at: Option<String>,
 }
 
 impl From<Entry> for EntryResponse {
@@ -80,6 +81,7 @@ impl From<Entry> for EntryResponse {
             archived_at: entry.archived_at,
             chain_root_id: entry.chain_root_id,
             migrated_to_entry_id: entry.migrated_to_entry_id,
+            migrated_to_archived_at: None,
         }
     }
 }

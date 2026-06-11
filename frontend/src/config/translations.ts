@@ -41,8 +41,12 @@ export const translations = {
       searchPlaceholder: "搜索归档条目",
       empty: "暂无归档条目",
       restore: "恢复",
+      restoreOne: "恢复此条",
       deletePermanently: "彻底删除",
       future: "未来",
+      from: "来自",
+      to: "去往",
+      archivedTarget: "已归档至",
     },
     auth: {
       // --- 登录 / 注册页面 ---
@@ -441,8 +445,12 @@ export const translations = {
       searchPlaceholder: "Search archived entries",
       empty: "No archived entries",
       restore: "Restore",
+      restoreOne: "Restore this",
       deletePermanently: "Delete permanently",
       future: "Future",
+      from: "From",
+      to: "To",
+      archivedTarget: "Archived to",
     },
     auth: {
       // --- Login / Register Page ---
