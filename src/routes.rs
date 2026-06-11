@@ -57,14 +57,12 @@ pub fn router(state: AppState) -> Router {
             patch(update_entry).delete(delete_entry),
         )
         .route("/entries/{entry_id}/migrate", post(migrate_entry))
-        .route("/entries/{entry_id}/share", post(share_entry))
         .route("/log/reopen/{entry_id}", post(reopen_entry))
         .route("/log/daily/{date_str}", get(get_daily_log))
         .route("/log/future", get(get_future_log))
         .route("/log/future/batch_update", post(batch_update_future_log))
         .route("/log/month_overview/{month_str}", get(get_month_overview))
         .route("/log/range_overview", get(get_range_overview))
-        .route("/share/{token}", get(view_shared_entry))
         .route("/export/markdown", get(export_entries_markdown))
         .route("/export/zip", get(export_entries_zip))
         .route("/calendar/feed/{*token_path}", get(get_calendar_feed))
@@ -818,80 +816,6 @@ async fn search_entries(
         }
     }
     Ok(Json(results))
-}
-
-async fn share_entry(
-    State(state): State<AppState>,
-    CurrentUser(user): CurrentUser,
-    Path(entry_id): Path<String>,
-) -> AppResult<Json<ShareLinkResponse>> {
-    fetch_entry_owned(&state, &entry_id, user.id).await?;
-    let existing: Option<String> = sqlx::query_scalar(
-        "SELECT token FROM shared_links WHERE target_id = ? ORDER BY id LIMIT 1",
-    )
-    .bind(&entry_id)
-    .fetch_optional(state.db())
-    .await?;
-
-    let token = if let Some(token) = existing {
-        token
-    } else {
-        let token = Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO shared_links(target_id, token) VALUES (?, ?)")
-            .bind(entry_id)
-            .bind(&token)
-            .execute(state.db())
-            .await?;
-        token
-    };
-
-    Ok(Json(ShareLinkResponse {
-        share_url: format!("/s/{token}"),
-        token,
-    }))
-}
-
-async fn view_shared_entry(
-    State(state): State<AppState>,
-    Path(token): Path<String>,
-) -> AppResult<Json<PublicEntryResponse>> {
-    let entry = sqlx::query_as::<_, Entry>(&format!(
-        r#"{ENTRY_SELECT}
-        INNER JOIN shared_links ON shared_links.target_id = entries.id
-        WHERE shared_links.token = ?"#
-    ))
-    .bind(token)
-    .fetch_optional(state.db())
-    .await?
-    .ok_or_else(|| AppError::NotFound("Link expired or invalid".to_string()))?;
-
-    let author =
-        sqlx::query_as::<_, User>("SELECT id, username, hashed_password FROM users WHERE id = ?")
-            .bind(entry.owner_id)
-            .fetch_optional(state.db())
-            .await?;
-    let author_name = author
-        .as_ref()
-        .map(|user| user.username.clone())
-        .unwrap_or_else(|| "Unknown".to_string());
-    let author_avatar = author_name
-        .chars()
-        .take(2)
-        .collect::<String>()
-        .to_uppercase();
-
-    Ok(Json(PublicEntryResponse {
-        content: entry.content,
-        entry_type: entry.entry_type,
-        status: entry.status,
-        created_at: entry.created_at,
-        author_name,
-        author_avatar: if author_avatar.is_empty() {
-            "??".to_string()
-        } else {
-            author_avatar
-        },
-    }))
 }
 
 async fn export_all_entries(

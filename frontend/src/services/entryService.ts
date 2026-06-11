@@ -23,20 +23,6 @@ export interface UpdateEntryPayload {
   tags?: string[];
 }
 
-export interface ShareEntryResponse {
-  share_url: string;
-  [key: string]: any;
-}
-
-export interface SharedEntryData {
-  content: string;
-  entry_type: EntryType;
-  status: string;
-  created_at: string;
-  author_name: string;
-  author_avatar: string;
-}
-
 export interface ImportResponse {
   success: boolean;
   message: string;
@@ -246,19 +232,6 @@ export const entryService = {
         },
       }))
       .filter((entry) => !params.status || entry.status === params.status);
-  },
-
-  share: async (id: string): Promise<ShareEntryResponse> => {
-    const entries = await entryService.search({ q: "", include_archived: true });
-    const entry = entries.find((item) => item.id === id);
-    const content = entry?.content || "";
-    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    return { share_url: url };
-  },
-
-  getSharedEntry: async (_token: string): Promise<SharedEntryData> => {
-    throw new Error("Public sharing is not available in the local desktop app.");
   },
 
   getFutureLog: async () => {

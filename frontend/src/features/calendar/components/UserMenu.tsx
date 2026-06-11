@@ -7,7 +7,6 @@ import {
   Archive,
   FileArchive,
   Rss,
-  ChevronRight,
   RefreshCw,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -55,11 +54,13 @@ export default function UserMenu() {
   const MenuItem = ({
     icon: Icon,
     label,
+    value,
     onClick,
     danger = false,
   }: {
     icon: any;
     label: string;
+    value?: string;
     onClick: () => void;
     danger?: boolean;
   }) => (
@@ -89,44 +90,11 @@ export default function UserMenu() {
         </div>
         <span className="text-sm font-medium tracking-wide">{label}</span>
       </div>
-      {!danger && (
-        <ChevronRight
-          size={14}
-          className="opacity-0 -translate-x-2 group-hover:opacity-40 group-hover:translate-x-0 transition-all duration-300"
-        />
-      )}
-    </button>
-  );
-
-  const ControlItem = ({
-    icon: Icon,
-    label,
-    value,
-    onClick,
-  }: {
-    icon: any;
-    label: string;
-    value: string;
-    onClick: () => void;
-  }) => (
-    <button
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={onClick}
-      className="flex flex-col justify-between p-3 rounded-xl bg-base-200/40 hover:bg-base-200 border border-transparent hover:border-base-300/50 transition-all duration-200 text-left h-20 group relative overflow-hidden"
-    >
-      <div className="flex justify-between items-start w-full z-10">
-        <Icon
-          size={16}
-          className="text-base-content/60 group-hover:text-primary transition-colors"
-        />
-        <span className="text-[10px] font-bold font-mono opacity-40 bg-base-100 px-1.5 py-0.5 rounded-md">
+      {value && (
+        <span className="text-[10px] font-bold font-mono opacity-50 bg-base-200/70 px-1.5 py-0.5 rounded-md">
           {value}
         </span>
-      </div>
-      <span className="text-xs font-medium text-base-content/70 group-hover:text-base-content z-10">
-        {label}
-      </span>
-      <div className="absolute -right-4 -bottom-4 w-12 h-12 bg-primary/5 rounded-full blur-xl group-hover:bg-primary/10 transition-all" />
+      )}
     </button>
   );
 
@@ -142,66 +110,43 @@ export default function UserMenu() {
 
       <div
         tabIndex={0}
-        className="dropdown-content mt-3 z-50 w-64 p-1.5 origin-top-right transform transition-all duration-200"
+        className="dropdown-content mt-3 z-50 w-60 p-1.5 origin-top-right transform transition-all duration-200"
       >
-        <div className="bg-base-100/80 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/5 border border-white/10 dark:border-white/5 flex flex-col gap-1.5 p-1.5">
-          <div className="px-3 py-3 bg-linear-to-br from-base-100 to-base-200/50 rounded-xl border border-base-200/50 flex items-center gap-3 select-none">
-            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center shadow-inner shrink-0">
-              <Menu size={18} />
-            </div>
-            <div className="flex flex-col min-w-0 justify-center">
-              <span className="text-sm font-bold text-base-content truncate">
-                菜单
-              </span>
-            </div>
-          </div>
-
-          <div className="bg-base-100/50 rounded-xl border border-base-200/30 p-1 flex flex-col gap-0.5">
-            <MenuItem
-              icon={Archive}
-              label={t.common?.archive || "Archive"}
-              onClick={handleOpenArchive}
-            />
-
-            <MenuItem
-              icon={RefreshCw}
-              label={t.common?.update || "Update"}
-              onClick={handleUpdate}
-            />
-
-            <MenuItem
-              icon={Rss}
-              label={t.ics?.title || "Calendar Sync"}
-              onClick={handleOpenCalendarSync}
-            />
-
-            <MenuItem
-              icon={FileArchive}
-              label={t.backup?.title || "Backup & Export"}
-              onClick={handleOpenBackup}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-1.5">
-            <ControlItem
-              icon={
-                themeMode === "light"
-                  ? Sun
-                  : themeMode === "dark"
-                    ? Moon
-                    : Monitor
-              }
-              label={t?.calendar?.theme || "Theme"}
-              value={t.common.theme[themeMode]}
-              onClick={cycleTheme}
-            />
-            <ControlItem
-              icon={Languages}
-              label={t?.common?.language || "Language"}
-              value={LANG_MAP[lang] || lang.toUpperCase()}
-              onClick={toggleLang}
-            />
-          </div>
+        <div className="bg-base-100/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/5 border border-white/10 dark:border-white/5 flex flex-col gap-0.5 p-1.5">
+          <MenuItem
+            icon={Archive}
+            label={t.common?.archive || "Archive"}
+            onClick={handleOpenArchive}
+          />
+          <MenuItem
+            icon={RefreshCw}
+            label={t.common?.update || "Update"}
+            onClick={handleUpdate}
+          />
+          <MenuItem
+            icon={Rss}
+            label={t.ics?.title || "Calendar Sync"}
+            onClick={handleOpenCalendarSync}
+          />
+          <MenuItem
+            icon={FileArchive}
+            label={t.backup?.title || "Backup & Export"}
+            onClick={handleOpenBackup}
+          />
+          <MenuItem
+            icon={
+              themeMode === "light" ? Sun : themeMode === "dark" ? Moon : Monitor
+            }
+            label={t?.calendar?.theme || "Theme"}
+            value={t.common.theme[themeMode]}
+            onClick={cycleTheme}
+          />
+          <MenuItem
+            icon={Languages}
+            label={t?.common?.language || "Language"}
+            value={LANG_MAP[lang] || lang.toUpperCase()}
+            onClick={toggleLang}
+          />
         </div>
       </div>
     </div>

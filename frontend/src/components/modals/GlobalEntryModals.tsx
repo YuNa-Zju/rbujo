@@ -6,9 +6,6 @@ import { useModalController } from "../../context/ModalControllerContext";
 import MigrateModal from "./MigrateModal";
 import FutureModal from "./FutureModal";
 import DeleteModal from "./DeleteModal";
-import ShareEntryModal, {
-  type ShareEntryModalRef,
-} from "../../components/modals/ShareEntryModal";
 
 export default function GlobalEntryModals() {
   const { entryActionRequest, clearEntryAction } = useModalController();
@@ -20,7 +17,6 @@ export default function GlobalEntryModals() {
   const migrateRef = useRef<HTMLDialogElement>(null);
   const futureRef = useRef<HTMLDialogElement>(null);
   const deleteRef = useRef<HTMLDialogElement>(null);
-  const shareRef = useRef<ShareEntryModalRef>(null);
 
   useEffect(() => {
     if (!entryActionRequest || entryActionRequest.kind === "edit") return;
@@ -49,10 +45,6 @@ export default function GlobalEntryModals() {
     if (entryActionRequest.kind === "delete") {
       deleteRef.current?.showModal();
       return;
-    }
-
-    if (entryActionRequest.kind === "share") {
-      shareRef.current?.open(String(entry.id));
     }
   }, [entryActionRequest]);
 
@@ -235,7 +227,6 @@ export default function GlobalEntryModals() {
         onSoftDelete={() => handleDeleteConfirm(false)}
         onHardDelete={() => handleDeleteConfirm(true)}
       />
-      <ShareEntryModal ref={shareRef} onClose={handleClose} />
     </>
   );
 }

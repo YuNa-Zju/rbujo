@@ -308,31 +308,6 @@ username=alice&password=secret
 
 后端会清理 Markdown 标记后匹配正文，并过滤 `forward`/`future` 迁移痕迹。
 
-## Share
-
-### `POST /api/entries/{entry_id}/share`
-
-需要 Bearer token。为条目创建或复用公开分享 token。
-
-```json
-{ "token": "uuid", "share_url": "/s/uuid" }
-```
-
-### `GET /api/share/{token}`
-
-公开接口，无需登录。返回公开条目。
-
-```json
-{
-  "content": "...",
-  "entry_type": "task",
-  "status": "open",
-  "created_at": "2026-06-09 12:00:00",
-  "author_name": "alice",
-  "author_avatar": "AL"
-}
-```
-
 ## Upload
 
 ### `POST /api/upload`

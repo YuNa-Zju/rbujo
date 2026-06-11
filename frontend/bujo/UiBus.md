@@ -11,4 +11,3 @@
 | **`OPEN_MIGRATE_ENTRY`**   | **打开“迁移”弹窗**    | `{ entry: any }`                                    | **修复重点**：用于将 Daily 条目迁移到其他日期       |
 | **`OPEN_FUTURE_ENTRY`**    | **打开“规划到未来”弹窗** | `{ entry: any }`                                    | **修复重点**：用于将条目移动到某个月份 (Future Log) |
 | **`OPEN_DELETE_ENTRY`**    | **打开“删除确认”弹窗**  | `{ entry: any }`                                    | **修复重点**：用于删除条目                    |
-| **`OPEN_SHARE_ENTRY`**     | 打开分享弹窗          | `{ entry: any }`                                    |                                    |

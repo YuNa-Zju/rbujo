@@ -7,7 +7,6 @@ import {
   Copy,
   Check,
   RotateCcw,
-  Share, // 修正为 Share 图标更标准
   Archive,
 } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
@@ -24,7 +23,6 @@ interface Props {
   onFuture: () => void;
   onDelete: () => void;
   onToggleStatus: () => void;
-  onShare: () => void;
   onArchive: () => void;
   isArchived?: boolean;
 }
@@ -39,7 +37,6 @@ export default function EntryActions({
   onFuture,
   onDelete,
   onToggleStatus,
-  onShare,
   onArchive,
   isArchived = false,
 }: Props) {
@@ -120,17 +117,6 @@ export default function EntryActions({
             data-tip={t.common.copy}
           >
             <Copy size={18} className="text-base-content/70" />
-          </button>
-        </li>
-
-        {/* 分享 */}
-        <li>
-          <button
-            onClick={handleAction(onShare)}
-            className="tooltip tooltip-bottom p-2 rounded-lg hover:bg-base-200"
-            data-tip={t.common.share || "Share"}
-          >
-            <Share size={18} className="text-base-content/70" />
           </button>
         </li>
 

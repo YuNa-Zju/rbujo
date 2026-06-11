@@ -198,22 +198,6 @@ pub struct RangeOverviewResponse {
     pub status: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ShareLinkResponse {
-    pub token: String,
-    pub share_url: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PublicEntryResponse {
-    pub content: String,
-    pub entry_type: String,
-    pub status: String,
-    pub created_at: String,
-    pub author_name: String,
-    pub author_avatar: String,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EntryExportSchema {
     pub id: String,

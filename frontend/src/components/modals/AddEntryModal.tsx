@@ -22,6 +22,7 @@ import {
   Loader2,
   PenLine,
   Hash,
+  Plus,
 } from "lucide-react";
 import { entryEventBus } from "../../lib/entryEventBus";
 
@@ -45,6 +46,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
   ({ onSuccess }, ref) => {
     const dialogRef = useRef<HTMLDialogElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const tagInputRef = useRef<HTMLInputElement>(null);
     const dragCounter = useRef(0);
 
     const { t } = useTranslation();
@@ -322,6 +324,14 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
       }
     };
 
+    const handleTagButtonClick = () => {
+      if (tagDraft.trim()) {
+        addTag(tagDraft);
+        return;
+      }
+      tagInputRef.current?.focus();
+    };
+
     // --- Submit Logic (Create or Update) ---
     const handleSubmit = async () => {
       if (!content.trim()) return;
@@ -438,7 +448,20 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
 
               <div className="mt-4 rounded-2xl border border-base-200/70 bg-base-200/25 px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Hash size={15} className="text-base-content/35 shrink-0" />
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={handleTagButtonClick}
+                    className="btn btn-ghost btn-xs btn-circle text-base-content/45 hover:text-primary hover:bg-primary/10"
+                    aria-label="添加标签"
+                    title="添加标签"
+                  >
+                    {tagDraft.trim() ? (
+                      <Plus size={14} strokeWidth={2.5} />
+                    ) : (
+                      <Hash size={14} strokeWidth={2.5} />
+                    )}
+                  </button>
                   {tags.map((tag) => (
                     <button
                       key={tag}
@@ -451,6 +474,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
                     </button>
                   ))}
                   <input
+                    ref={tagInputRef}
                     className="min-w-28 flex-1 bg-transparent text-sm outline-none placeholder:text-base-content/30"
                     value={tagDraft}
                     onChange={(e) => setTagDraft(e.target.value)}

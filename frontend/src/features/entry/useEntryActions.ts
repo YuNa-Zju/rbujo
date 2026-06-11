@@ -192,10 +192,6 @@ export function useEntryActions(
     }
   };
 
-  const openShare = () => {
-    uiEvents.emit("OPEN_SHARE_ENTRY", { entry });
-  };
-
   const performArchive = () => {
     entryEventBus.emit("entry:delete", entry.id);
     execute(async () => {
@@ -416,7 +412,6 @@ export function useEntryActions(
       openMigrate,
       openFuture,
       openDelete,
-      openShare,
       confirmMigrate,
       confirmFuture,
       performDelete,

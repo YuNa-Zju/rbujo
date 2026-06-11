@@ -39,7 +39,6 @@ npm run build
 - 静态资源由 Vite 以 `/assets/*` 形式引用。
 - 所有 API 请求走 `/api/*`。
 - 上传文件访问路径为 `/static/uploads/*`。
-- 公开分享页面路径为 `/s/:token`。
 
 ## API Client
 
@@ -58,10 +57,9 @@ npm run build
 - `/login`: 登录/注册页。
 - `/`: 私有日历主页。
 - `/daily/:dateStr`: 私有每日记录页。
-- `/s/:token`: 公开分享页，不需要登录。
 - 其他路径 fallback 到 `/`。
 
-`PrivateRoute` 负责登录态检查；公开分享页必须保持不被登录态阻断。
+`PrivateRoute` 负责登录态检查。
 
 ## 主要 Service
 
@@ -83,7 +81,6 @@ npm run build
 - 日期迁移、Future Log 迁移、reopen。
 - reorder。
 - 搜索。
-- 分享链接。
 - Daily Log、Future Log、range/month overview。
 - `.bjk` 备份导入导出和 ZIP/Markdown 下载。
 
@@ -113,12 +110,9 @@ npm run build
 
 - API base URL。
 - 部署 basename。
-- 分享链接的 origin 计算。
 - 与 Rust 后端兼容所需的非视觉逻辑。
 
 ## 与 Rust 后端的兼容点
 
-- 前端请求 `/api/share/{token}` 获取公开条目；页面路由仍是 `/s/{token}`。
-- 后端返回 `share_url: "/s/{token}"`，前端用 `window.location.origin` 拼完整链接。
 - `users/me.calendar_feed_url` 已是完整订阅地址，可直接展示和复制。
 - `migrated_to_month` 是后端新增字段，旧前端不强依赖；后续如果要显示迁移目标月份，应优先使用该字段。

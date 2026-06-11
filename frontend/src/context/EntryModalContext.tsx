@@ -6,7 +6,7 @@ import {
   useCallback,
 } from "react";
 
-type ModalType = "migrate" | "future" | "delete" | "share" | null;
+type ModalType = "migrate" | "future" | "delete" | null;
 
 interface EntryModalContextType {
   activeModal: ModalType;

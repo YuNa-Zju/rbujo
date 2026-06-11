@@ -16,7 +16,7 @@ import {
   type EntryActionPayload,
 } from "../lib/uiEvents";
 
-type EntryActionKind = "migrate" | "future" | "delete" | "share" | "edit";
+type EntryActionKind = "migrate" | "future" | "delete" | "edit";
 
 interface AddEntryRequest extends AddEntryPayload {
   requestId: number;
@@ -146,15 +146,12 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       openEntryAction("future", payload);
     const remove = (payload: EntryActionPayload) =>
       openEntryAction("delete", payload);
-    const share = (payload: EntryActionPayload) =>
-      openEntryAction("share", payload);
 
     uiEvents.on("OPEN_ADD_ENTRY", add);
     uiEvents.on("OPEN_EDIT_ENTRY", edit);
     uiEvents.on("OPEN_MIGRATE_ENTRY", migrate);
     uiEvents.on("OPEN_FUTURE_ENTRY", future);
     uiEvents.on("OPEN_DELETE_ENTRY", remove);
-    uiEvents.on("OPEN_SHARE_ENTRY", share);
     uiEvents.on("OPEN_SEARCH", openSearch);
     uiEvents.on("OPEN_TAG_SEARCH", openTagSearch);
     uiEvents.on("OPEN_FUTURE_LOG", openFutureLog);
@@ -168,7 +165,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       uiEvents.off("OPEN_MIGRATE_ENTRY", migrate);
       uiEvents.off("OPEN_FUTURE_ENTRY", future);
       uiEvents.off("OPEN_DELETE_ENTRY", remove);
-      uiEvents.off("OPEN_SHARE_ENTRY", share);
       uiEvents.off("OPEN_SEARCH", openSearch);
       uiEvents.off("OPEN_TAG_SEARCH", openTagSearch);
       uiEvents.off("OPEN_FUTURE_LOG", openFutureLog);

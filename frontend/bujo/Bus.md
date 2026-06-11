@@ -4,7 +4,6 @@
 |`DeleteModal.tsx`|**Entry Bus**|(已在 GlobalEntryModals) 删除确认|
 |`MigrateModal.tsx`|**Entry Bus**|(已在 GlobalEntryModals) 迁移任务|
 |`FutureModal.tsx`|**Entry Bus**|(已在 GlobalEntryModals) 推延到未来|
-|`ShareEntryModal.tsx`|**Entry Bus**|(已在 GlobalEntryModals) 分享笔记|
 |`SessionExpiredModal.tsx`|**Auth Events**|(独立) Token 过期强制弹窗|
 |`CommandPalette.tsx`|**Trigger**|(独立) 它不是弹窗，它是**触发器**|
 |`GlobalEntryModals.tsx`|**Container**|(容器) Entry Bus 的渲染容器|

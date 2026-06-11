@@ -16,7 +16,6 @@ import { useEntryActions } from "./useEntryActions";
 import EntryDisplay from "./EntryDisplay";
 import EntryEditor from "./EntryEditor";
 import EntryActions from "./EntryActions";
-import { uiEvents } from "../../lib/uiEvents";
 
 interface EntryItemProps {
   entry: any;
@@ -63,11 +62,6 @@ export default function EntryItem({
 
   const theme = ENTRY_THEME[entry.entry_type as EntryType] || ENTRY_THEME.task;
   const isCompletedTask = isTask && entry.status === "completed";
-
-  const handleShare = () => {
-    console.log("📢 [EntryItem] Emitting OPEN_SHARE_ENTRY for id:", entry.id);
-    uiEvents.emit("OPEN_SHARE_ENTRY", { entry });
-  };
 
   const renderIcon = () => {
     if (["migrated_future", "future"].includes(entry.status))
@@ -194,8 +188,6 @@ export default function EntryItem({
             onMigrate={actions.openMigrate}
             onFuture={actions.openFuture}
             onDelete={actions.openDelete}
-            // 🔴 修复 2：防止 actions.openShare 未定义导致崩溃
-            onShare={handleShare}
             onArchive={actions.performArchive}
             isArchived={Boolean(entry.archived_at)}
           />

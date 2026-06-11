@@ -33,7 +33,6 @@ Default service URL: `http://localhost:10001`.
 - Frontend: `/`
 - REST API: `/api/*`
 - Uploads: `/static/uploads/*`
-- Share pages: `/s/{token}`
 
 ## Documentation
 

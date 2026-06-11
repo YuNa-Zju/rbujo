@@ -2,7 +2,6 @@ import { Command } from "cmdk";
 import {
   Edit3,
   MoveRight,
-  Share,
   Copy,
   Trash2,
   Undo,
@@ -185,17 +184,6 @@ export default function EntryActionView({
           </>
         )}
 
-        <Item
-          icon={<Share />}
-          label={t.command?.share}
-          onSelect={() =>
-            run(() =>
-              uiEvents.emit("OPEN_SHARE_ENTRY", {
-                entry: entry,
-              }),
-            )
-          }
-        />
         <Item
           icon={<Copy />}
           label={t.command?.copy}

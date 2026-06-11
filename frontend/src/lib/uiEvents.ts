@@ -30,7 +30,6 @@ type UIEventType =
   | "OPEN_FUTURE_ENTRY"
   | "OPEN_DELETE_ENTRY"
   | "OPEN_EDIT_ENTRY"
-  | "OPEN_SHARE_ENTRY"
   | "OPEN_CMD_PALETTE"
   | "OPEN_BACKUP"
   // ✅ 新增：统一关闭信号
@@ -47,7 +46,6 @@ interface UIEventPayloads {
   OPEN_MIGRATE_ENTRY: EntryActionPayload;
   OPEN_FUTURE_ENTRY: EntryActionPayload;
   OPEN_DELETE_ENTRY: EntryActionPayload;
-  OPEN_SHARE_ENTRY: EntryActionPayload;
   OPEN_EDIT_ENTRY: EntryActionPayload;
   OPEN_CMD_PALETTE: void;
   OPEN_BACKUP: void;
