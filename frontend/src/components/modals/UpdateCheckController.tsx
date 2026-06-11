@@ -14,6 +14,7 @@ import {
   installUpdate,
   type UpdateMetadata,
 } from "../../services/updateService";
+import { getUpdateCheckFailureMessage } from "../../services/updateCheckErrors";
 import type { UpdateCheckSource } from "../../services/updatePromptPolicy";
 import { getUpdateReleaseNotes } from "../../services/updateReleaseNotes";
 
@@ -98,7 +99,7 @@ export default function UpdateCheckController() {
       }
       console.warn("Update check failed", error);
       if (source === "manual") {
-        toast.error("检查更新失败，请稍后重试");
+        toast.error(getUpdateCheckFailureMessage(error));
       }
     } finally {
       checkingRef.current = false;
@@ -129,7 +130,8 @@ export default function UpdateCheckController() {
         unlisten = await listen("menu:check-update", () => {
           uiEvents.emit("OPEN_CHECK_UPDATE");
         });
-      } catch {
+      } catch (error) {
+        console.warn("Native update menu listener registration failed", error);
         return;
       }
 

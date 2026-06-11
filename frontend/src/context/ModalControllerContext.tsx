@@ -209,7 +209,8 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
         unlisten.push(await listen("menu:search", () => openSearch(null)));
         unlisten.push(await listen("menu:future-log", openFutureLog));
         unlisten.push(await listen("menu:backup", openBackup));
-      } catch {
+      } catch (error) {
+        console.warn("Native menu listener registration failed", error);
         return;
       }
       if (disposed) {
