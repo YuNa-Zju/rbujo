@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Search, CalendarCheck, Clock } from "lucide-react";
 import { motion } from "framer-motion";
 import { uiEvents } from "../../../lib/uiEvents";
-import { debugLog } from "../../../lib/debugLog";
 import { useTranslation } from "../../../hooks/useTranslation";
 import { useModalController } from "../../../context/ModalControllerContext";
 import UserMenu from "./UserMenu";
@@ -43,15 +42,12 @@ export default function HeaderActionTrigger() {
   const isDark = useIsDark();
 
   const openCmd = () => {
-    debugLog("header", "click command palette");
     openCommandPalette();
   };
   const openFutureLog = () => {
-    debugLog("header", "click future log");
     uiEvents.emit("OPEN_FUTURE_LOG");
   };
   const openTimeline = () => {
-    debugLog("header", "click timeline");
     uiEvents.emit("OPEN_TIMELINE");
   };
 

@@ -14,7 +14,6 @@ import {
   type AddEntryPayload,
   type EntryActionPayload,
 } from "../lib/uiEvents";
-import { debugLog } from "../lib/debugLog";
 
 type EntryActionKind = "migrate" | "future" | "delete" | "edit";
 
@@ -99,22 +98,18 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openCommandPalette = useCallback(() => {
-    debugLog("modalController", "open command palette");
     setCommandPaletteOpen(true);
   }, []);
 
   const closeCommandPalette = useCallback(() => {
-    debugLog("modalController", "close command palette");
     setCommandPaletteOpen(false);
   }, []);
 
   const openFutureLog = useCallback(() => {
-    debugLog("modalController", "open future log");
     setFutureLogOpen(true);
   }, []);
 
   const closeFutureLog = useCallback(() => {
-    debugLog("modalController", "close future log");
     setFutureLogOpen(false);
   }, []);
 

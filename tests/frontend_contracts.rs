@@ -142,46 +142,6 @@ fn cmd_palette_open_event_is_not_replayed_later() {
 }
 
 #[test]
-fn ui_debug_mode_is_gated_and_traces_cmdk_event_flow() {
-    let debug_log = read_file("frontend/src/lib/debugLog.ts");
-    let ui_events = read_file("frontend/src/lib/uiEvents.ts");
-    let header_actions =
-        read_file("frontend/src/features/calendar/components/HeaderActionTrigger.tsx");
-    let command_palette =
-        read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
-    let modal_controller = read_file("frontend/src/context/ModalControllerContext.tsx");
-    let calendar_page = read_file("frontend/src/features/calendar/CalendarPage.tsx");
-
-    assert!(
-        debug_log.contains("rbujo_debug_ui"),
-        "Debug logging should be gated by a localStorage key"
-    );
-    assert!(
-        ui_events.contains("debugLog") && ui_events.contains("listenerCount"),
-        "uiEvents should trace event listener and emit state in debug mode"
-    );
-    assert!(
-        header_actions.contains("openCommandPalette")
-            && header_actions.contains("debugLog"),
-        "Header action buttons should log CmdK open attempts"
-    );
-    assert!(
-        command_palette.contains("debugLog")
-            && command_palette.contains("commandPaletteOpen"),
-        "CmdK should log its controlled open state"
-    );
-    assert!(
-        modal_controller.contains("commandPaletteOpen")
-            && modal_controller.contains("OPEN_CMD_PALETTE"),
-        "ModalController should own CmdK open state and the OPEN_CMD_PALETTE listener"
-    );
-    assert!(
-        calendar_page.contains("debugLog") && calendar_page.contains("viewMode"),
-        "CalendarPage should log view mode transitions for CmdK reproduction"
-    );
-}
-
-#[test]
 fn header_cmdk_button_uses_modal_controller_directly() {
     let header_actions =
         read_file("frontend/src/features/calendar/components/HeaderActionTrigger.tsx");
@@ -198,6 +158,31 @@ fn header_cmdk_button_uses_modal_controller_directly() {
         !header_actions.contains("uiEvents.emit(\"OPEN_CMD_PALETTE\")"),
         "Header CmdK button should not depend on the uiEvents bridge"
     );
+}
+
+#[test]
+fn production_frontend_does_not_include_ui_debug_logging() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        !root.join("frontend/src/lib/debugLog.ts").exists(),
+        "Production frontend should not include the UI debug helper"
+    );
+
+    for path in [
+        "frontend/src/lib/uiEvents.ts",
+        "frontend/src/context/ModalControllerContext.tsx",
+        "frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx",
+        "frontend/src/features/calendar/CalendarPage.tsx",
+        "frontend/src/features/calendar/components/HeaderActionTrigger.tsx",
+    ] {
+        let source = read_file(path);
+        assert!(
+            !source.contains("debugLog")
+                && !source.contains("rbujo_debug_ui")
+                && !source.contains("[rbujo-ui:"),
+            "{path} should not include UI debug logging in production"
+        );
+    }
 }
 
 #[test]

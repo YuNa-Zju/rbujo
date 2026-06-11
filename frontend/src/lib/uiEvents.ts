@@ -1,5 +1,4 @@
 // src/lib/uiEvents.ts
-import { debugLog } from "./debugLog";
 
 // 1. 定义通用载荷
 export interface AddEntryPayload {
@@ -81,19 +80,9 @@ class UIEventEmitter {
       this.events.set(event, []);
     }
     this.events.get(event)?.push(listener);
-    debugLog("uiEvents", "listener added", {
-      event,
-      listenerCount: this.events.get(event)?.length ?? 0,
-      pending: this.pendingEvents.has(event),
-    });
     if (this.pendingEvents.has(event)) {
       const payload = this.pendingEvents.get(event) as UIEventPayloads[T];
       this.pendingEvents.delete(event);
-      debugLog("uiEvents", "replaying pending event", {
-        event,
-        listenerCount: this.events.get(event)?.length ?? 0,
-        payload,
-      });
       listener(payload);
     }
   }
@@ -105,31 +94,15 @@ class UIEventEmitter {
         event,
         listeners.filter((l) => l !== listener),
       );
-      debugLog("uiEvents", "listener removed", {
-        event,
-        listenerCount: this.events.get(event)?.length ?? 0,
-      });
     }
   }
 
   emit<T extends UIEventType>(event: T, payload?: UIEventPayloads[T]) {
     const listeners = this.events.get(event);
-    const listenerCount = listeners?.length ?? 0;
-    debugLog("uiEvents", "emit", {
-      event,
-      listenerCount,
-      replayable: this.replayableEvents.has(event),
-      payload,
-    });
     if (listeners && listeners.length > 0) {
       listeners.forEach((listener) => listener(payload as any));
     } else if (this.replayableEvents.has(event)) {
       this.pendingEvents.set(event, payload);
-      debugLog("uiEvents", "queued pending event", {
-        event,
-        listenerCount,
-        payload,
-      });
     }
   }
 }

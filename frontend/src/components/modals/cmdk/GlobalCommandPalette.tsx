@@ -32,7 +32,6 @@ import {
 } from "lucide-react";
 
 import { uiEvents } from "../../../lib/uiEvents";
-import { debugLog } from "../../../lib/debugLog";
 import { entryService } from "../../../services/entryService";
 import { ENTRY_THEME, type EntryType } from "../../../config/entryTheme";
 import { getSmartSummary } from "../../../utils/markdownUtils";
@@ -139,11 +138,6 @@ export default function GlobalCommandPalette() {
   useEffect(() => {
     if (open && view === "ROOT") {
       const loadData = async () => {
-        debugLog("cmdk", "load focused daily entries", {
-          focusDateStr,
-          view,
-          commandPaletteOpen,
-        });
         setLoadingEntries(true);
         try {
           const cachedData = await cacheStorage.loadDaily();
@@ -174,10 +168,6 @@ export default function GlobalCommandPalette() {
     const down = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        debugLog("cmdk", "keyboard shortcut", {
-          open,
-          key: e.key,
-        });
         if (open) {
           closeCommandPalette();
         } else {
@@ -213,14 +203,10 @@ export default function GlobalCommandPalette() {
   ]);
 
   useEffect(() => {
-    debugLog("cmdk", "commandPaletteOpen changed", {
-      commandPaletteOpen,
-      view,
-    });
     if (commandPaletteOpen) {
       resetContext();
     }
-  }, [commandPaletteOpen, resetContext, view]);
+  }, [commandPaletteOpen, resetContext]);
 
   useEffect(() => {
     if (open) void refreshTags();
