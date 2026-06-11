@@ -17,7 +17,7 @@ import {
   UploadCloud,
   Loader2,
 } from "lucide-react";
-import api from "../../lib/api";
+import { entryService } from "../../services/entryService";
 
 interface Props {
   initialContent: string;
@@ -108,12 +108,8 @@ export default function EntryEditor({
 
   // --- 3. 图片/文件插入逻辑 ---
   const uploadFile = async (file: File): Promise<string> => {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await api.post<{ url: string }>("/upload", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data.url;
+    const stored = await entryService.uploadFile(file);
+    return stored.url;
   };
 
   const insertMarkdownAsset = (url: string, file: File) => {

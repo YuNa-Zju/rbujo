@@ -1,16 +1,16 @@
 import {
   User,
-  LogOut,
   Moon,
   Sun,
   Monitor,
   Languages,
   Archive,
+  FileArchive,
   Rss,
   ChevronRight,
   RefreshCw,
-  Lock,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { useTheme } from "../../../hooks/useTheme";
 import { useTranslation } from "../../../hooks/useTranslation";
@@ -25,12 +25,13 @@ const LANG_MAP: Record<string, string> = {
 };
 
 export default function UserMenu() {
+  const navigate = useNavigate();
   const { themeMode, cycleTheme } = useTheme();
   const { lang, toggleLang, t } = useTranslation();
 
   // 1. 业务逻辑保留
-  const user = JSON.parse(localStorage.getItem("user") || "{}");
-  const username = user.username || "Guest";
+  const user = { username: "Local" };
+  const username = user.username;
   const avatarLetter = username.slice(0, 2).toUpperCase();
 
   const handleUpdate = async () => {
@@ -43,20 +44,16 @@ export default function UserMenu() {
     }
   };
 
-  const handleOpenChangePassword = () => {
-    uiEvents.emit("OPEN_CHANGE_PASSWORD");
-  };
-
   const handleOpenCalendarSync = () => {
     uiEvents.emit("OPEN_CALENDAR_SYNC");
   };
 
-  const handleOpenLogoutConfirm = () => {
-    uiEvents.emit("OPEN_LOGOUT_CONFIRM");
-  };
-
   const handleOpenBackup = () => {
     uiEvents.emit("OPEN_BACKUP");
+  };
+
+  const handleOpenArchive = () => {
+    navigate("/archive");
   };
   // --- 子组件 (样式保持不变) ---
 
@@ -174,9 +171,9 @@ export default function UserMenu() {
 
           <div className="bg-base-100/50 rounded-xl border border-base-200/30 p-1 flex flex-col gap-0.5">
             <MenuItem
-              icon={Lock}
-              label={t.auth?.changePassword || "Change Password"}
-              onClick={handleOpenChangePassword}
+              icon={Archive}
+              label={t.common?.archive || "Archive"}
+              onClick={handleOpenArchive}
             />
 
             <MenuItem
@@ -192,7 +189,7 @@ export default function UserMenu() {
             />
 
             <MenuItem
-              icon={Archive} // 换个图标更合适，Archive 或 Download 都可以
+              icon={FileArchive}
               label={t.backup?.title || "Backup & Export"}
               onClick={handleOpenBackup}
             />
@@ -216,15 +213,6 @@ export default function UserMenu() {
               label={t?.common?.language || "Language"}
               value={LANG_MAP[lang] || lang.toUpperCase()}
               onClick={toggleLang}
-            />
-          </div>
-
-          <div className="mt-1">
-            <MenuItem
-              icon={LogOut}
-              label={t?.calendar?.logout || "Log out"}
-              onClick={handleOpenLogoutConfirm}
-              danger
             />
           </div>
         </div>

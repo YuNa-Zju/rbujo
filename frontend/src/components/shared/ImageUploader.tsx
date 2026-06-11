@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ImagePlus, Loader2 } from "lucide-react";
-import { api } from "../../lib/api";
+import { entryService } from "../../services/entryService";
 
 interface Props {
   onUploadSuccess: (markdown: string) => void;
@@ -15,15 +15,10 @@ export default function ImageUploader({ onUploadSuccess }: Props) {
     if (!file) return;
 
     setUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
 
     try {
-      const res = await api.post("/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      // 假设后端返回 { url: "..." }
-      onUploadSuccess(`\n![image](${res.data.url})\n`);
+      const stored = await entryService.uploadFile(file);
+      onUploadSuccess(`\n![image](${stored.url})\n`);
     } catch (error) {
       console.error("Upload failed:", error);
       alert("图片上传失败");

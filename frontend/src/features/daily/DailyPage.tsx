@@ -116,10 +116,7 @@ export default function DailyPage() {
 
     setLoadingMap((prev) => ({ ...prev, [targetDateStr]: true }));
     try {
-      const res = await entryService.search({
-        start_date: targetDateStr,
-        end_date: targetDateStr,
-      });
+      const res = await entryService.getDailyEntries(targetDateStr);
       setDailyCache((prev) => ({ ...prev, [targetDateStr]: res || [] }));
     } catch (e) {
       console.error(e);

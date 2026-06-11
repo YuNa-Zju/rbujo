@@ -22,7 +22,6 @@ import {
   Loader2,
   PenLine,
 } from "lucide-react";
-import api from "../../lib/api";
 import { entryEventBus } from "../../lib/entryEventBus";
 
 // ✅ 1. Update Open Options to include optional 'entry' for editing
@@ -200,12 +199,8 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
 
     // --- File Upload Logic ---
     const uploadFile = async (file: File): Promise<string> => {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await api.post<{ url: string }>("/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      return res.data.url;
+      const stored = await entryService.uploadFile(file);
+      return stored.url;
     };
 
     const insertMarkdownAsset = (url: string, file: File) => {

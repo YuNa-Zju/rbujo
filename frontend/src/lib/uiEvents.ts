@@ -25,8 +25,6 @@ type UIEventType =
   | "OPEN_FUTURE_LOG"
   | "OPEN_TIMELINE"
   | "OPEN_CALENDAR_SYNC"
-  | "OPEN_CHANGE_PASSWORD"
-  | "OPEN_LOGOUT_CONFIRM"
   | "OPEN_ADD_ENTRY"
   | "OPEN_MIGRATE_ENTRY"
   | "OPEN_FUTURE_ENTRY"
@@ -45,8 +43,6 @@ interface UIEventPayloads {
   OPEN_FUTURE_LOG: void;
   OPEN_TIMELINE: void;
   OPEN_CALENDAR_SYNC: void;
-  OPEN_CHANGE_PASSWORD: void;
-  OPEN_LOGOUT_CONFIRM: void;
   OPEN_ADD_ENTRY: AddEntryPayload;
   OPEN_MIGRATE_ENTRY: EntryActionPayload;
   OPEN_FUTURE_ENTRY: EntryActionPayload;

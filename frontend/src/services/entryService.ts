@@ -1,10 +1,10 @@
-import api from "../lib/api";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { type EntryType } from "../config/entryTheme";
 
 export interface CreateEntryPayload {
   content: string;
   entry_type: EntryType;
-  status: "open" | "completed" | "cancelled" | "forward" | "future";
+  status?: "open" | "completed" | "cancelled" | "forward" | "future";
   target_date?: string | null;
   is_future?: boolean;
   target_month?: string | null;
@@ -26,7 +26,6 @@ export interface ShareEntryResponse {
   [key: string]: any;
 }
 
-// 公开分享页面的数据结构
 export interface SharedEntryData {
   content: string;
   entry_type: EntryType;
@@ -38,22 +37,105 @@ export interface SharedEntryData {
 
 export interface ImportResponse {
   success: boolean;
-  message: string; // 后端返回的汇总消息
-  inserted_count: number; // 新增数
-  updated_count: number; // 更新数
-  skipped_count: number; // 跳过数
-  inserted_ids: string[]; // 纯净的撤回名单
+  message: string;
+  inserted_count: number;
+  updated_count: number;
+  skipped_count: number;
+  inserted_ids: string[];
 }
+
+type SearchMode = "text" | "regex" | "semantic";
+
+interface SearchResult {
+  entry: any;
+  score: number;
+  match_type: string;
+  snippet: string;
+}
+
+const normalizeEntry = (entry: any) => {
+  if (!entry) return entry;
+  return {
+    ...entry,
+    date: entry.date ?? entry.target_date ?? null,
+  };
+};
+
+const normalizeEntries = (entries: any[]) => entries.map(normalizeEntry);
+
+const normalizeMigrationResult = (result: any) => {
+  const updatedSource = normalizeEntry(result.updated_source);
+  const createdEntry = normalizeEntry(result.created_entry);
+  return {
+    success: true,
+    updated_source: updatedSource,
+    created_entry: createdEntry,
+    new_entry: createdEntry,
+  };
+};
+
+const saveBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
+const entriesToMarkdown = (entries: any[]) => {
+  const grouped = new Map<string, any[]>();
+  normalizeEntries(entries).forEach((entry) => {
+    const key =
+      entry.target_date || entry.target_month || (entry.is_future ? "Future" : "Undated");
+    grouped.set(key, [...(grouped.get(key) || []), entry]);
+  });
+
+  return Array.from(grouped.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, items]) => {
+      const body = items
+        .map((entry) => {
+          const marker =
+            entry.entry_type === "task" ? "- [ ]" : entry.entry_type === "event" ? "- o" : "-";
+          const status = entry.status && entry.status !== "open" ? ` (${entry.status})` : "";
+          return `${marker} ${entry.content}${status}`;
+        })
+        .join("\n");
+      return `## ${key}\n\n${body}`;
+    })
+    .join("\n\n");
+};
 
 export const entryService = {
   create: async (payload: CreateEntryPayload) => {
-    const response = await api.post("/entries", payload);
-    return response.data;
+    const entry = await invoke<any>("create_entry", {
+      input: {
+        content: payload.content,
+        entry_type: payload.entry_type,
+        target_date: payload.target_date ?? null,
+        target_month: payload.target_month ?? null,
+        is_future: Boolean(payload.is_future),
+      },
+    });
+    return normalizeEntry(entry);
   },
 
   update: async (id: string, payload: UpdateEntryPayload) => {
-    const response = await api.patch(`/entries/${id}`, payload);
-    return response.data;
+    const entry = await invoke<any>("update_entry", {
+      id,
+      patch: {
+        content: payload.content,
+        entry_type: payload.entry_type,
+        status: payload.status,
+        target_date: payload.target_date ?? undefined,
+        target_month: payload.target_month ?? undefined,
+        is_future: payload.is_future,
+      },
+    });
+    return normalizeEntry(entry);
   },
 
   toggleStatus: async (id: string, currentStatus: string) => {
@@ -61,171 +143,189 @@ export const entryService = {
     return entryService.update(id, { status: newStatus });
   },
 
-  // --- Daily Log 专用 ---
-
   migrate: async (id: string, date: string) => {
-    const response = await api.post(`/entries/${id}/migrate`, {
-      target_date: date,
+    const result = await invoke<any>("migrate_entry_to_date", {
+      id,
+      targetDate: date,
     });
-    return response.data;
+    return normalizeMigrationResult(result);
   },
 
   reopen: async (id: string) => {
-    const response = await api.post(`/log/reopen/${id}`);
-    return response.data;
+    const result = await invoke<any>("reopen_entry", { id });
+    return {
+      ...result,
+      updated_entry: normalizeEntry(result.updated_entry),
+    };
   },
 
   moveToFuture: async (id: string, month: string | null) => {
-    return entryService.update(id, {
-      status: "future",
-      migration_month: month,
+    const result = await invoke<any>("migrate_entry_to_future", {
+      id,
+      targetMonth: month,
     });
+    return normalizeMigrationResult(result).new_entry;
   },
 
-  // --- Future Log 专用 ---
-
   rescheduleFutureEntry: async (id: string, date: string) => {
-    return entryService.update(id, {
-      is_future: false,
-      status: "open",
-      target_date: date,
-      target_month: null,
+    const result = await invoke<any>("migrate_entry_to_date", {
+      id,
+      targetDate: date,
     });
+    return normalizeMigrationResult(result).new_entry;
   },
 
   moveFutureEntry: async (id: string, month: string | null) => {
-    return entryService.update(id, {
-      is_future: true,
-      status: "open",
-      target_date: null,
-      target_month: month,
+    const entry = await invoke<any>("move_future_entry", {
+      id,
+      targetMonth: month,
     });
+    return normalizeEntry(entry);
   },
 
   delete: async (id: string, hard: boolean = false) => {
-    if (hard) await api.delete(`/entries/${id}`);
-    else await api.patch(`/entries/${id}`, { status: "cancelled" });
+    if (hard) {
+      await invoke<void>("delete_entry", { id });
+    } else {
+      await entryService.update(id, { status: "cancelled" });
+    }
+  },
+
+  archive: async (id: string) => {
+    const entry = await invoke<any>("archive_entry", { id });
+    return normalizeEntry(entry);
+  },
+
+  unarchive: async (id: string) => {
+    const entry = await invoke<any>("unarchive_entry", { id });
+    return normalizeEntry(entry);
   },
 
   reorder: async (entryIds: string[]) => {
-    await api.patch("/entries/reorder", { entry_ids: entryIds });
+    await invoke<void>("reorder_entries", { entryIds });
   },
 
   search: async (params: {
     q?: string;
-    mode?: "text" | "regex";
+    mode?: SearchMode;
     entry_type?: string[];
     start_date?: string;
     end_date?: string;
     status?: string;
+    include_archived?: boolean;
+    limit?: number;
   }) => {
-    const response = await api.get("/entries/search", {
-      params,
-      paramsSerializer: {
-        indexes: null,
+    const results = await invoke<SearchResult[]>("search_entries", {
+      options: {
+        query: params.q ?? "",
+        mode: params.mode ?? "text",
+        include_archived: Boolean(params.include_archived),
+        entry_type: params.entry_type ?? [],
+        start_date: params.start_date ?? null,
+        end_date: params.end_date ?? null,
+        limit: params.limit ?? 80,
       },
     });
-    return Array.isArray(response.data)
-      ? response.data
-      : response.data?.data || [];
+    return results
+      .map((result) => ({
+        ...normalizeEntry(result.entry),
+        _search: {
+          score: result.score,
+          type: result.match_type,
+          snippet: result.snippet,
+        },
+      }))
+      .filter((entry) => !params.status || entry.status === params.status);
   },
 
-  // --- Share 专用 ---
-
-  share: async (id: string) => {
-    const response = await api.post<ShareEntryResponse>(`/entries/${id}/share`);
-    return response.data;
+  share: async (id: string): Promise<ShareEntryResponse> => {
+    const entries = await entryService.search({ q: "", include_archived: true });
+    const entry = entries.find((item) => item.id === id);
+    const content = entry?.content || "";
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    return { share_url: url };
   },
 
-  getSharedEntry: async (token: string) => {
-    const response = await api.get<SharedEntryData>(`/share/${token}`);
-    return response.data;
+  getSharedEntry: async (_token: string): Promise<SharedEntryData> => {
+    throw new Error("Public sharing is not available in the local desktop app.");
   },
-
-  // --- Lists & Overview ---
 
   getFutureLog: async () => {
-    const response = await api.get("/log/future");
-    const data = response.data;
-    let allItems: any[] = [];
-    if (data.future_log && Array.isArray(data.future_log))
-      allItems = allItems.concat(data.future_log);
+    const data = await invoke<any>("get_future_log", {
+      includeArchived: false,
+    });
+    const allItems: any[] = [];
+    if (Array.isArray(data.future_log)) {
+      allItems.push(...normalizeEntries(data.future_log));
+    }
     if (data.monthly_log && typeof data.monthly_log === "object") {
       Object.values(data.monthly_log).forEach((monthItems: any) => {
-        if (Array.isArray(monthItems)) allItems = allItems.concat(monthItems);
+        if (Array.isArray(monthItems)) allItems.push(...normalizeEntries(monthItems));
       });
     }
     return allItems;
   },
 
   getRangeOverview: async (startDate: string, endDate: string) => {
-    const response = await api.get("/log/range_overview", {
-      params: { start_date: startDate, end_date: endDate },
+    return invoke<any[]>("get_range_overview", {
+      startDate,
+      endDate,
+      includeArchived: false,
     });
-    return response.data;
   },
 
-  getDailyEntries: async (dateStr: string) => {
-    const response = await api.get<any[]>(`/log/daily/${dateStr}`);
-    return response.data;
+  getMonthOverview: async (month: string) => {
+    return invoke<Record<string, any[]>>("get_month_overview", {
+      month,
+      includeArchived: false,
+    });
   },
 
-  // ==========================================
-  // ✅ Backup & Restore (Import / Export)
-  // ==========================================
+  getDailyEntries: async (dateStr: string, includeArchived = false) => {
+    const entries = await invoke<any[]>("get_daily_log", {
+      date: dateStr,
+      includeArchived,
+    });
+    return normalizeEntries(entries);
+  },
 
-  // 1. 全量导出 (用于生成 .bjk 文件)
   getAllForBackup: async () => {
-    const response = await api.get<any[]>("/entries/all");
-    return response.data;
+    return invoke<any[]>("get_all_entries_for_backup");
   },
 
-  // 2. 批量导入 (返回插入的 ID 列表，用于 Undo)
   bulkImport: async (entries: any[]) => {
-    const response = await api.post<ImportResponse>("/entries/import", {
-      entries,
-    });
-    return response.data;
+    return invoke<ImportResponse>("import_entries", { entries });
   },
 
-  // 3. 批量撤回 (根据 ID 删除)
   batchDelete: async (ids: string[]) => {
     if (!ids || ids.length === 0) return;
-    await api.post("/entries/batch-delete", { ids });
+    await invoke<void>("batch_delete_entries", { ids });
   },
 
-  // 2. ✅ 新增: 下载 ZIP 归档 (Markdown 格式)
+  uploadFile: async (file: File) => {
+    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+    const stored = await invoke<{ relative_path: string; absolute_path: string }>(
+      "store_upload",
+      {
+        filename: file.name,
+        bytes,
+      },
+    );
+    return {
+      ...stored,
+      url: convertFileSrc(stored.absolute_path),
+    };
+  },
+
   downloadBackup: async () => {
-    try {
-      const response = await api.get("/export/zip", {
-        responseType: "blob", // 关键：告诉 axios 这是一个二进制流
-      });
-
-      // 创建 Blob 对象
-      const blob = new Blob([response.data], { type: "application/zip" });
-
-      // 创建临时的 URL 对象
-      const url = window.URL.createObjectURL(blob);
-
-      // 创建隐藏的 <a> 标签触发下载
-      const link = document.createElement("a");
-      link.href = url;
-      // 这里的命名只是个保底，后端通常会在 Content-Disposition Header 中指定文件名
-      link.setAttribute(
-        "download",
-        `bujo_backup_${new Date().toISOString().split("T")[0]}.zip`,
-      );
-      document.body.appendChild(link);
-      link.click();
-
-      // 清理
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
-      return true;
-    } catch (error) {
-      console.error("ZIP Export failed:", error);
-      throw error;
-    }
+    const entries = await entryService.getAllForBackup();
+    const markdown = entriesToMarkdown(entries);
+    const dateStr = new Date().toISOString().split("T")[0];
+    saveBlob(
+      new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
+      `bujo_archive_${dateStr}.md`,
+    );
+    return true;
   },
 };

@@ -4,6 +4,7 @@ import {
   X,
   Hash,
   Code,
+  Sparkles,
   Calendar,
   ArrowRight,
   Loader2,
@@ -49,7 +50,7 @@ const SearchModal = ({ isOpen, onClose }: Props) => {
 
   // 搜索状态
   const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<"text" | "regex">("text");
+  const [mode, setMode] = useState<"text" | "regex" | "semantic">("text");
   const [selectedTypes, setSelectedTypes] = useState<EntryType[]>([
     "task",
     "idea",
@@ -156,7 +157,7 @@ const SearchModal = ({ isOpen, onClose }: Props) => {
     (entry: any) => {
       if (query) {
         const content = entry.content || "";
-        if (mode === "text") {
+        if (mode === "text" || mode === "semantic") {
           if (!content.toLowerCase().includes(query.toLowerCase()))
             return false;
         } else {
@@ -328,6 +329,15 @@ const SearchModal = ({ isOpen, onClose }: Props) => {
                   >
                     <Code size={12} strokeWidth={2.5} />{" "}
                     {t.search?.modeRegex || "Regex"}
+                  </button>
+                  <button
+                    onClick={() => setMode("semantic")}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+                      mode === "semantic" ? modeBtnActive : modeBtnInactive
+                    }`}
+                  >
+                    <Sparkles size={12} strokeWidth={2.5} />{" "}
+                    {t.search?.modeSemantic || "Semantic"}
                   </button>
                 </div>
 

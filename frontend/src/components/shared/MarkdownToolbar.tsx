@@ -17,7 +17,7 @@ import {
   Hash,
 } from "lucide-react";
 import { useRef, useState } from "react";
-import { api } from "../../lib/api";
+import { entryService } from "../../services/entryService";
 import ImageUploader from "./ImageUploader";
 
 interface Props {
@@ -240,14 +240,12 @@ export default function MarkdownToolbar({ textareaRef }: Props) {
       textarea.focus();
 
       for (const file of Array.from(files)) {
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await api.post("/upload", formData);
+        const stored = await entryService.uploadFile(file);
 
         const isImg = file.type.startsWith("image/");
         const linkText = isImg
-          ? `![img](${res.data.url})`
-          : `[${file.name}](${res.data.url})`;
+          ? `![img](${stored.url})`
+          : `[${file.name}](${stored.url})`;
 
         const text = textarea.value;
         const hasBefore = currentPos === 0 || text[currentPos - 1] === "\n";

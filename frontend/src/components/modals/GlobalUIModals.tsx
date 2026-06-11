@@ -18,20 +18,9 @@ import TimelineModal, { type TimelineModalRef } from "./TimelineModal";
 import CalendarSyncModal, {
   type CalendarSyncModalRef,
 } from "./CalendarSyncModal";
-import ChangePasswordModal, {
-  type ChangePasswordModalRef,
-} from "./ChangePasswordModal";
-import LogoutModal, { type LogoutModalRef } from "./LogoutModal";
-import RecoveryKeyModal, {
-  type RecoveryKeyModalRef,
-} from "../../features/auth/components/RecoveryKeyModal";
 import BackupModal from "./BackupModal";
 
-import { useAuth } from "../../features/auth/useAuth";
-
 export default function GlobalUIModals() {
-  const { logout } = useAuth();
-
   // --- 状态管理 ---
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [tagSearchState, setTagSearchState] = useState<{
@@ -44,13 +33,7 @@ export default function GlobalUIModals() {
   const addEntryRef = useRef<AddEntryModalRef>(null);
   const timelineRef = useRef<TimelineModalRef>(null);
   const syncRef = useRef<CalendarSyncModalRef>(null);
-  const changePwRef = useRef<ChangePasswordModalRef>(null);
-  const logoutRef = useRef<LogoutModalRef>(null);
-  const recoveryKeyRef = useRef<RecoveryKeyModalRef>(null);
-  const handleLogoutConfirm = async () => {
-    logoutRef.current?.close(); // 1. 先关闭 UI
-    await logout(); // 2. 再清除状态
-  };
+
   // --- 监听 UI 总线 ---
   useEffect(() => {
     // 1. 打开新建
@@ -71,8 +54,6 @@ export default function GlobalUIModals() {
 
     const openTimeline = () => timelineRef.current?.open();
     const openCalendarSync = () => syncRef.current?.open();
-    const openChangePassword = () => changePwRef.current?.open();
-    const openLogoutConfirm = () => logoutRef.current?.showModal();
 
     // 注册监听
     uiEvents.on("OPEN_ADD_ENTRY", openAddEntry);
@@ -82,8 +63,6 @@ export default function GlobalUIModals() {
     uiEvents.on("OPEN_FUTURE_LOG", openFutureLog);
     uiEvents.on("OPEN_TIMELINE", openTimeline);
     uiEvents.on("OPEN_CALENDAR_SYNC", openCalendarSync);
-    uiEvents.on("OPEN_CHANGE_PASSWORD", openChangePassword);
-    uiEvents.on("OPEN_LOGOUT_CONFIRM", openLogoutConfirm);
 
     return () => {
       uiEvents.off("OPEN_ADD_ENTRY", openAddEntry);
@@ -93,14 +72,8 @@ export default function GlobalUIModals() {
       uiEvents.off("OPEN_FUTURE_LOG", openFutureLog);
       uiEvents.off("OPEN_TIMELINE", openTimeline);
       uiEvents.off("OPEN_CALENDAR_SYNC", openCalendarSync);
-      uiEvents.off("OPEN_CHANGE_PASSWORD", openChangePassword);
-      uiEvents.off("OPEN_LOGOUT_CONFIRM", openLogoutConfirm);
     };
   }, []);
-
-  const handleChangePasswordSuccess = (newKey: string) => {
-    recoveryKeyRef.current?.open(newKey);
-  };
 
   return (
     <>
@@ -130,12 +103,6 @@ export default function GlobalUIModals() {
       )}
 
       <CalendarSyncModal ref={syncRef} />
-      <ChangePasswordModal
-        ref={changePwRef}
-        onSuccess={handleChangePasswordSuccess}
-      />
-      <LogoutModal ref={logoutRef} onConfirm={handleLogoutConfirm} />
-      <RecoveryKeyModal ref={recoveryKeyRef} />
       <BackupModal />
     </>
   );

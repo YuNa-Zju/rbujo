@@ -47,6 +47,9 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
             from_date TEXT,
             migrated_to_date TEXT,
             migrated_to_month TEXT,
+            archived_at TEXT,
+            chain_root_id TEXT,
+            migrated_to_entry_id TEXT,
             CHECK(target_date IS NULL OR length(target_date) = 10),
             CHECK(target_month IS NULL OR length(target_month) = 7),
             CHECK(migrated_to_date IS NULL OR length(migrated_to_date) = 10),
@@ -61,6 +64,10 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
             ON entries(owner_id, target_month, position, created_at);
         CREATE INDEX IF NOT EXISTS ix_entries_source
             ON entries(source_entry_id);
+        CREATE INDEX IF NOT EXISTS ix_entries_chain_root
+            ON entries(owner_id, chain_root_id);
+        CREATE INDEX IF NOT EXISTS ix_entries_archived
+            ON entries(owner_id, archived_at);
 
         CREATE TABLE IF NOT EXISTS shared_links (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,6 +78,20 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
 
         CREATE INDEX IF NOT EXISTS ix_shared_links_token ON shared_links(token);
         CREATE INDEX IF NOT EXISTS ix_shared_links_target_id ON shared_links(target_id);
+
+        CREATE TABLE IF NOT EXISTS search_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            chunk_text TEXT NOT NULL,
+            embedding_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_search_chunks_entry
+            ON search_chunks(entry_id);
+        CREATE INDEX IF NOT EXISTS ix_search_chunks_owner
+            ON search_chunks(owner_id);
 
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -89,6 +110,9 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
     add_column_if_missing(pool, "entries", "position", "INTEGER NOT NULL DEFAULT 0").await?;
     add_column_if_missing(pool, "entries", "from_date", "TEXT").await?;
     add_column_if_missing(pool, "entries", "migrated_to_date", "TEXT").await?;
+    add_column_if_missing(pool, "entries", "archived_at", "TEXT").await?;
+    add_column_if_missing(pool, "entries", "chain_root_id", "TEXT").await?;
+    add_column_if_missing(pool, "entries", "migrated_to_entry_id", "TEXT").await?;
 
     repair_created_at_dates(pool).await?;
     Ok(())

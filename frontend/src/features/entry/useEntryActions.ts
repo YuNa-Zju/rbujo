@@ -196,6 +196,15 @@ export function useEntryActions(
     uiEvents.emit("OPEN_SHARE_ENTRY", { entry });
   };
 
+  const performArchive = () => {
+    entryEventBus.emit("entry:delete", entry.id);
+    execute(async () => {
+      await entryService.archive(entry.id);
+      clearCache();
+      refresh();
+    });
+  };
+
   // --- 🔴 核心逻辑：确认迁移 (Confirm Migrate) ---
   // 这对应“弹窗确认”后的逻辑，包含了你要求的“三角形更新”修复
 
@@ -411,6 +420,7 @@ export function useEntryActions(
       confirmMigrate,
       confirmFuture,
       performDelete,
+      performArchive,
     },
   };
 }

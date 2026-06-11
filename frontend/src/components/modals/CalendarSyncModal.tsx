@@ -3,14 +3,13 @@ import { createPortal } from "react-dom"; // ✅ 引入 createPortal
 import {
   X,
   Copy,
-  Check,
   Globe,
   Calendar as CalendarIcon,
   Smartphone,
   ChevronRight,
+  Info,
 } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
-import api from "../../lib/api";
 
 // --- SVG Icons (保持不变) ---
 const AppleLogo = ({ className }: { className?: string }) => (
@@ -49,7 +48,6 @@ const CalendarSyncModal = forwardRef<CalendarSyncModalRef, any>((_, ref) => {
   const { t } = useTranslation();
 
   const [feedUrl, setFeedUrl] = useState("");
-  const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useImperativeHandle(ref, () => ({
@@ -62,23 +60,13 @@ const CalendarSyncModal = forwardRef<CalendarSyncModalRef, any>((_, ref) => {
   const fetchLink = async () => {
     if (feedUrl) return;
     setLoading(true);
-    try {
-      const res = await api.get("/users/me");
-      if (res.data.calendar_feed_url) {
-        setFeedUrl(res.data.calendar_feed_url);
-      }
-    } catch (e) {
-      console.error("Failed to fetch calendar link", e);
-    } finally {
-      setLoading(false);
-    }
+    setFeedUrl("");
+    setLoading(false);
   };
 
   const handleCopy = () => {
     if (!feedUrl) return;
     navigator.clipboard.writeText(feedUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const getWebcalLink = () => {
@@ -156,8 +144,17 @@ const CalendarSyncModal = forwardRef<CalendarSyncModalRef, any>((_, ref) => {
         {/* Scrollable Content */}
         <div className="px-6 pb-8 pt-2 overflow-y-auto max-h-[70vh]">
           <p className="text-sm text-base-content/70 leading-relaxed mb-6">
-            {t.ics?.desc}
+            {t.ics?.desc ||
+              "Local desktop data is stored on this device. Calendar subscription export is not enabled in this build."}
           </p>
+
+          <div className="alert rounded-2xl bg-info/10 border-info/20 text-info mb-6">
+            <Info size={18} />
+            <span className="text-sm font-medium">
+              Desktop local mode keeps calendar data private and does not expose
+              a public subscription URL.
+            </span>
+          </div>
 
           <div className="space-y-6">
             {/* Primary Action */}
@@ -207,19 +204,15 @@ const CalendarSyncModal = forwardRef<CalendarSyncModalRef, any>((_, ref) => {
                 />
                 <button
                   className={`btn btn-sm h-9 min-h-0 px-4 rounded-lg font-medium transition-all shadow-sm ${
-                    copied
-                      ? "btn-success text-white border-none"
-                      : "bg-base-100 hover:bg-white border-base-200 hover:border-base-300 text-base-content/70"
+                    "bg-base-100 hover:bg-white border-base-200 hover:border-base-300 text-base-content/70"
                   }`}
                   onClick={handleCopy}
                   disabled={loading || !feedUrl}
                 >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                  <Copy size={14} />
                   {/* ✅ 硬编码修复 */}
                   <span className="text-xs ml-1.5">
-                    {copied
-                      ? t.common?.copied || "Copied"
-                      : t.common?.copy || "Copy"}
+                    {t.common?.copy || "Copy"}
                   </span>
                 </button>
               </div>

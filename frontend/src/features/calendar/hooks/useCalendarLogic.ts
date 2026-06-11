@@ -12,7 +12,7 @@ import {
   parseISO,
   isValid,
 } from "date-fns";
-import { api } from "../../../lib/api";
+import { entryService } from "../../../services/entryService";
 import type {
   ViewMode,
   DayOverview,
@@ -62,10 +62,11 @@ export function useCalendarLogic() {
       // 这里为了演示“乐观更新”，我们允许它在切换月份时总是请求最新
       setLoading(true);
       try {
-        const res = await api.get<Record<string, DayOverview[]>>(
-          `/log/month_overview/${monthStr}`,
-        );
-        setOverviewCache((prev) => ({ ...prev, ...res.data }));
+        const data = await entryService.getMonthOverview(monthStr);
+        setOverviewCache((prev) => ({
+          ...prev,
+          ...(data as Record<string, DayOverview[]>),
+        }));
       } catch (e) {
         console.error("Failed to fetch overview", e);
       } finally {

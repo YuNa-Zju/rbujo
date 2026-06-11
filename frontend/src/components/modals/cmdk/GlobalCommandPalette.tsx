@@ -3,10 +3,8 @@ import { Command } from "cmdk";
 import {
   Search,
   PenLine,
-  LogOut,
   Hash,
   CalendarCheck,
-  ShieldCheck,
   ArrowRight,
   CornerDownLeft,
   Loader2,
@@ -32,6 +30,7 @@ import {
   Monitor,
   Languages,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { uiEvents } from "../../../lib/uiEvents";
 import { entryService } from "../../../services/entryService";
@@ -65,6 +64,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function GlobalCommandPalette() {
+  const navigate = useNavigate();
   const { t, lang, toggleLang } = useTranslation();
   const { themeMode, cycleTheme } = useTheme();
 
@@ -462,6 +462,12 @@ export default function GlobalCommandPalette() {
                   onSelect={() => run(() => uiEvents.emit("OPEN_FUTURE_LOG"))}
                 />
                 <Item
+                  icon={<Archive />}
+                  label={t.common?.archive || "Archive"}
+                  value="archive archived entries 归档"
+                  onSelect={() => run(() => navigate("/archive"))}
+                />
+                <Item
                   icon={<Search />}
                   label={t.command?.openSearch}
                   value={`${t.command?.openSearch} search find s`}
@@ -514,27 +520,6 @@ export default function GlobalCommandPalette() {
                   value="switch language 切换语言 lang chinese english"
                   // ⚡️ 修复：直接调用
                   onSelect={() => toggleLang()}
-                />
-              </Command.Group>
-
-              {/* Account */}
-              <Command.Group heading={t.command?.account} className="space-y-2">
-                <Item
-                  icon={<ShieldCheck />}
-                  label={t.command?.changePassword}
-                  value={`${t.command?.changePassword} password change secure`}
-                  onSelect={() =>
-                    run(() => uiEvents.emit("OPEN_CHANGE_PASSWORD"))
-                  }
-                />
-                <Item
-                  icon={<LogOut />}
-                  label={t.command?.logout}
-                  value={`${t.command?.logout} logout signout exit`}
-                  danger
-                  onSelect={() =>
-                    run(() => uiEvents.emit("OPEN_LOGOUT_CONFIRM"))
-                  }
                 />
               </Command.Group>
             </>

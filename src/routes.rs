@@ -29,7 +29,9 @@ const ENTRY_SELECT: &str = r#"
            entries.is_future AS is_future, entries.source_entry_id AS source_entry_id,
            entries.owner_id AS owner_id, entries.position AS position,
            entries.from_date AS from_date, entries.migrated_to_date AS migrated_to_date,
-           entries.migrated_to_month AS migrated_to_month
+           entries.migrated_to_month AS migrated_to_month, entries.archived_at AS archived_at,
+           entries.chain_root_id AS chain_root_id,
+           entries.migrated_to_entry_id AS migrated_to_entry_id
     FROM entries
 "#;
 
@@ -1169,7 +1171,8 @@ async fn save_entry(state: &AppState, entry: &Entry) -> AppResult<()> {
         UPDATE entries SET
             content = ?, entry_type = ?, status = ?, target_date = ?, target_month = ?,
             is_future = ?, source_entry_id = ?, position = ?, from_date = ?,
-            migrated_to_date = ?, migrated_to_month = ?
+            migrated_to_date = ?, migrated_to_month = ?, archived_at = ?,
+            chain_root_id = ?, migrated_to_entry_id = ?
         WHERE id = ? AND owner_id = ?
         "#,
     )
@@ -1184,6 +1187,9 @@ async fn save_entry(state: &AppState, entry: &Entry) -> AppResult<()> {
     .bind(&entry.from_date)
     .bind(&entry.migrated_to_date)
     .bind(&entry.migrated_to_month)
+    .bind(&entry.archived_at)
+    .bind(&entry.chain_root_id)
+    .bind(&entry.migrated_to_entry_id)
     .bind(&entry.id)
     .bind(entry.owner_id)
     .execute(state.db())
@@ -1197,8 +1203,9 @@ async fn insert_full_entry(state: &AppState, entry: &Entry) -> AppResult<()> {
         INSERT INTO entries(
             id, content, entry_type, status, created_at, target_date, target_month,
             is_future, source_entry_id, owner_id, position, from_date,
-            migrated_to_date, migrated_to_month
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            migrated_to_date, migrated_to_month, archived_at, chain_root_id,
+            migrated_to_entry_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&entry.id)
@@ -1215,6 +1222,9 @@ async fn insert_full_entry(state: &AppState, entry: &Entry) -> AppResult<()> {
     .bind(&entry.from_date)
     .bind(&entry.migrated_to_date)
     .bind(&entry.migrated_to_month)
+    .bind(&entry.archived_at)
+    .bind(&entry.chain_root_id)
+    .bind(&entry.migrated_to_entry_id)
     .execute(state.db())
     .await?;
     Ok(())
@@ -1230,6 +1240,11 @@ async fn create_forward_child(
     entry.migrated_to_date = Some(target_date.to_string());
     entry.migrated_to_month = None;
     entry.is_future = 0;
+    let chain_root_id = entry
+        .chain_root_id
+        .clone()
+        .unwrap_or_else(|| entry.id.clone());
+    entry.chain_root_id = Some(chain_root_id.clone());
     let child = Entry {
         id: Uuid::new_v4().to_string(),
         content: entry.content.clone(),
@@ -1248,7 +1263,11 @@ async fn create_forward_child(
             .or_else(|| Some(entry.created_at[0..10].to_string())),
         migrated_to_date: None,
         migrated_to_month: None,
+        archived_at: None,
+        chain_root_id: Some(chain_root_id),
+        migrated_to_entry_id: None,
     };
+    entry.migrated_to_entry_id = Some(child.id.clone());
     insert_full_entry(state, &child).await?;
     Ok(child)
 }
@@ -1264,6 +1283,11 @@ async fn create_future_child(
     entry.migrated_to_date = None;
     entry.target_month = None;
     entry.is_future = 0;
+    let chain_root_id = entry
+        .chain_root_id
+        .clone()
+        .unwrap_or_else(|| entry.id.clone());
+    entry.chain_root_id = Some(chain_root_id.clone());
     let child = Entry {
         id: Uuid::new_v4().to_string(),
         content: entry.content.clone(),
@@ -1279,7 +1303,11 @@ async fn create_future_child(
         from_date: entry.target_date.clone(),
         migrated_to_date: None,
         migrated_to_month: None,
+        archived_at: None,
+        chain_root_id: Some(chain_root_id),
+        migrated_to_entry_id: None,
     };
+    entry.migrated_to_entry_id = Some(child.id.clone());
     insert_full_entry(state, &child).await?;
     Ok(child)
 }
@@ -1426,6 +1454,9 @@ fn normalize_import_entry(item: EntryExportSchema, owner_id: i64) -> AppResult<E
             .as_deref()
             .map(validate_month)
             .transpose()?,
+        archived_at: item.archived_at,
+        chain_root_id: item.chain_root_id,
+        migrated_to_entry_id: item.migrated_to_entry_id,
     };
     if entry.status == STATUS_MIGRATED_FUTURE && entry.migrated_to_month.is_none() {
         entry.migrated_to_month = entry.target_month.clone();
@@ -1449,6 +1480,9 @@ fn export_schema_from_entry(entry: Entry) -> EntryExportSchema {
         from_date: entry.from_date,
         migrated_to_date: entry.migrated_to_date,
         migrated_to_month: entry.migrated_to_month,
+        archived_at: entry.archived_at,
+        chain_root_id: entry.chain_root_id,
+        migrated_to_entry_id: entry.migrated_to_entry_id,
     }
 }
 

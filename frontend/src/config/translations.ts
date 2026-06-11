@@ -23,6 +23,7 @@ export const translations = {
       results: "篇条目",
       update: "刷新所有条目",
       close: "关闭",
+      archive: "归档",
       // ✅ 新增
       next: "下一步",
       share: "分享",
@@ -233,6 +234,7 @@ export const translations = {
       typeEvent: "日程",
       modeText: "文本模式",
       modeRegex: "正则模式",
+      modeSemantic: "语义模式",
       noResults: "未找到相关条目",
       searching: "搜索中...",
       results: "个结果",
@@ -424,6 +426,7 @@ export const translations = {
       results: "Entries found",
       update: "Refresh All Entries",
       close: "Close",
+      archive: "Archive",
       // ✅ Added
       next: "Next",
       share: "Share",
@@ -636,6 +639,7 @@ export const translations = {
       typeEvent: "Event",
       modeText: "Text Mode",
       modeRegex: "Regex Mode",
+      modeSemantic: "Semantic Mode",
       noResults: "No entries found",
       searching: "Searching...",
       results: "results",

@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react"; // ✅ 引入 useRef
 import { format, startOfYear, endOfYear } from "date-fns";
-import api from "../lib/api";
 import { entryService } from "../services/entryService";
 import { cacheStorage } from "../utils/cacheStorage";
 import { entryEventBus, type MigratePayload } from "../lib/entryEventBus";
@@ -53,10 +52,10 @@ export function useJournalData(
     if (viewMode === "year" || !isCacheLoaded) return;
     const fetchOverview = async () => {
       try {
-        const res = await api.get(
-          `/log/month_overview/${format(currentDate, "yyyy-MM")}`,
+        const data = await entryService.getMonthOverview(
+          format(currentDate, "yyyy-MM"),
         );
-        setOverviewCache((prev) => ({ ...prev, ...res.data }));
+        setOverviewCache((prev) => ({ ...prev, ...data }));
       } catch (e) {
         console.error(e);
       }
@@ -78,8 +77,7 @@ export function useJournalData(
 
     const fetchDaily = async () => {
       try {
-        const res = await api.get(`/log/daily/${dStr}`);
-        const newData = res.data || [];
+        const newData = (await entryService.getDailyEntries(dStr)) || [];
 
         setDailyCache((prev) => {
           // 只有当数据真的变了才更新 State，防止死循环
@@ -129,12 +127,12 @@ export function useJournalData(
 
   const handleSilentRefresh = useCallback(() => {
     const dStr = format(selectedDate, "yyyy-MM-dd");
-    api
-      .get(`/log/daily/${dStr}`)
-      .then((res) => setDailyCache((prev) => ({ ...prev, [dStr]: res.data })));
-    api
-      .get(`/log/month_overview/${format(currentDate, "yyyy-MM")}`)
-      .then((res) => setOverviewCache((prev) => ({ ...prev, ...res.data })));
+    entryService
+      .getDailyEntries(dStr)
+      .then((data) => setDailyCache((prev) => ({ ...prev, [dStr]: data })));
+    entryService
+      .getMonthOverview(format(currentDate, "yyyy-MM"))
+      .then((data) => setOverviewCache((prev) => ({ ...prev, ...data })));
   }, [viewMode, currentDate, selectedDate]);
 
   // -------------------------------------------------------------------------

@@ -34,6 +34,9 @@ pub struct Entry {
     pub from_date: Option<String>,
     pub migrated_to_date: Option<String>,
     pub migrated_to_month: Option<String>,
+    pub archived_at: Option<String>,
+    pub chain_root_id: Option<String>,
+    pub migrated_to_entry_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,11 +48,15 @@ pub struct EntryResponse {
     pub target_date: Option<String>,
     pub target_month: Option<String>,
     pub is_future: bool,
+    pub source_entry_id: Option<String>,
     pub migrated_to_date: Option<String>,
     pub migrated_to_month: Option<String>,
     pub from_date: Option<String>,
     pub position: i64,
     pub created_at: Option<String>,
+    pub archived_at: Option<String>,
+    pub chain_root_id: Option<String>,
+    pub migrated_to_entry_id: Option<String>,
 }
 
 impl From<Entry> for EntryResponse {
@@ -62,11 +69,15 @@ impl From<Entry> for EntryResponse {
             target_date: entry.target_date,
             target_month: entry.target_month,
             is_future: entry.is_future != 0,
+            source_entry_id: entry.source_entry_id,
             migrated_to_date: entry.migrated_to_date,
             migrated_to_month: entry.migrated_to_month,
             from_date: entry.from_date,
             position: entry.position,
             created_at: Some(entry.created_at),
+            archived_at: entry.archived_at,
+            chain_root_id: entry.chain_root_id,
+            migrated_to_entry_id: entry.migrated_to_entry_id,
         }
     }
 }
@@ -213,6 +224,9 @@ pub struct EntryExportSchema {
     pub from_date: Option<String>,
     pub migrated_to_date: Option<String>,
     pub migrated_to_month: Option<String>,
+    pub archived_at: Option<String>,
+    pub chain_root_id: Option<String>,
+    pub migrated_to_entry_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

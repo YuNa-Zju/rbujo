@@ -14,8 +14,6 @@ import { useTranslation } from "../../hooks/useTranslation";
 import { ENTRY_THEME } from "../../config/entryTheme";
 import { useAppTheme } from "../../hooks/useAppTheme"; // ✅ 1. 引入 Hook
 
-const getShareBaseUrl = () => window.location.origin;
-
 export interface ShareEntryModalRef {
   open: (entryId: string) => void;
 }
@@ -54,8 +52,7 @@ const ShareEntryModal = forwardRef<ShareEntryModalRef, ShareEntryModalProps>(
       setError("");
       try {
         const data = await entryService.share(id);
-        const fullUrl = `${getShareBaseUrl()}${data.share_url}`;
-        setLink(fullUrl);
+        setLink(data.share_url);
       } catch (e) {
         console.error("Generate share link failed:", e);
         setError(t.share?.error || "Create share link failed");

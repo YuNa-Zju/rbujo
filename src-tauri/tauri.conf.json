@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "rbujo",
+  "version": "0.1.0",
+  "identifier": "fun.yunazju.rbujo",
+  "build": {
+    "beforeDevCommand": "cd ../frontend && npm run dev -- --host 127.0.0.1",
+    "beforeBuildCommand": "cd ../frontend && npm run build",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "rbujo",
+        "width": 1180,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "category": "Productivity",
+    "icon": ["icons/icon.png"]
+  }
+}

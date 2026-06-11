@@ -1,31 +1,34 @@
-import api from "../lib/api";
+import { entryService } from "../services/entryService";
+
+const saveBlob = (blob: Blob, filename: string) => {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
 
 /**
  * 导出当前用户的所有数据为 Markdown 格式
  */
 export const exportToMarkdown = async () => {
   try {
-    const response = await api.get("/export/markdown", {
-      responseType: "blob",
-    });
-
-    // 创建 Blob URL
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-    const link = document.createElement("a");
-    link.href = url;
-
-    // 设置文件名：bujo_backup_YYYY-MM-DD.md
+    const entries = await entryService.getAllForBackup();
+    const markdown = entries
+      .map((entry: any) => {
+        const title = entry.target_date || entry.target_month || "Future";
+        const archived = entry.archived_at ? " archived" : "";
+        return `## ${title}${archived}\n\n${entry.content || ""}`;
+      })
+      .join("\n\n");
     const dateStr = new Date().toISOString().slice(0, 10);
-    link.setAttribute("download", `bujo_backup_${dateStr}.md`);
-
-    // 触发下载
-    document.body.appendChild(link);
-    link.click();
-
-    // 清理
-    link.remove();
-    window.URL.revokeObjectURL(url);
-
+    saveBlob(
+      new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
+      `bujo_backup_${dateStr}.md`,
+    );
     return true;
   } catch (e) {
     console.error("Export failed:", e);

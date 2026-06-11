@@ -8,6 +8,7 @@ import {
   Check,
   RotateCcw,
   Share, // 修正为 Share 图标更标准
+  Archive,
 } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useRef, useEffect } from "react";
@@ -24,6 +25,8 @@ interface Props {
   onDelete: () => void;
   onToggleStatus: () => void;
   onShare: () => void;
+  onArchive: () => void;
+  isArchived?: boolean;
 }
 
 export default function EntryActions({
@@ -37,6 +40,8 @@ export default function EntryActions({
   onDelete,
   onToggleStatus,
   onShare,
+  onArchive,
+  isArchived = false,
 }: Props) {
   const { t } = useTranslation();
   const detailsRef = useRef<HTMLDetailsElement>(null);
@@ -185,6 +190,18 @@ export default function EntryActions({
         )}
 
         <div className="w-px h-5 bg-base-300 mx-1"></div>
+
+        {!isArchived && (
+          <li>
+            <button
+              onClick={handleAction(onArchive)}
+              className="tooltip tooltip-bottom p-2 rounded-lg hover:bg-base-200"
+              data-tip={t.common.archive || "Archive"}
+            >
+              <Archive size={18} className="text-base-content/70" />
+            </button>
+          </li>
+        )}
 
         {/* 删除 */}
         <li>

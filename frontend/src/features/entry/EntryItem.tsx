@@ -195,6 +195,8 @@ export default function EntryItem({
             onDelete={actions.openDelete}
             // 🔴 修复 2：防止 actions.openShare 未定义导致崩溃
             onShare={handleShare}
+            onArchive={actions.performArchive}
+            isArchived={Boolean(entry.archived_at)}
           />
         </div>
       )}

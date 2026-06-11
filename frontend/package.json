@@ -8,6 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "tauri": "cd .. && frontend/node_modules/.bin/tauri",
+    "tauri:dev": "cd .. && frontend/node_modules/.bin/tauri dev",
+    "tauri:build": "cd .. && frontend/node_modules/.bin/tauri build",
     "deploy": "npm run build && C:\\Progra~1\\Git\\bin\\bash.exe -c \"rsync -avz --delete --chmod=D755,F644 dist/ hmy@yunazju.fun:/var/www/bullet-journal/\""
   },
   "dependencies": {
@@ -17,6 +20,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.1.18",
+    "@tauri-apps/api": "^2.11.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "axios": "^1.13.2",
     "clsx": "^2.1.1",
@@ -42,6 +46,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@tauri-apps/cli": "^2.11.2",
     "@types/node": "^24.10.1",
     "@types/pako": "^2.0.4",
     "@types/react": "^19.2.5",
