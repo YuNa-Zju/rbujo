@@ -27,7 +27,8 @@ fn tag_inputs_offer_existing_native_tag_suggestions() {
     let tag_cache = read_file("frontend/src/context/TagCacheContext.tsx");
     let add_entry = read_file("frontend/src/components/modals/AddEntryModal.tsx");
     let search_modal = read_file("frontend/src/components/modals/SearchModal.tsx");
-    let command_palette = read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+    let command_palette =
+        read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
 
     assert!(
         tag_cache.contains("allTags"),
@@ -50,8 +51,26 @@ fn tag_inputs_offer_existing_native_tag_suggestions() {
         "GlobalCommandPalette should show matching tag suggestions"
     );
     assert!(
+        command_palette.contains("t.command?.tagMenu"),
+        "GlobalCommandPalette should expose a visible tag search section"
+    );
+    assert!(
         command_palette.contains("entry.tags"),
         "GlobalCommandPalette should include native tags in entry matching"
+    );
+}
+
+#[test]
+fn ui_events_replay_open_events_emitted_before_listeners_mount() {
+    let source = read_file("frontend/src/lib/uiEvents.ts");
+
+    assert!(
+        source.contains("pendingEvents"),
+        "uiEvents should keep startup events emitted before listeners mount"
+    );
+    assert!(
+        source.contains("replayableEvents"),
+        "uiEvents should only replay modal-opening events"
     );
 }
 

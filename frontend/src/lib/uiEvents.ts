@@ -60,12 +60,32 @@ type UIEventListener<T extends UIEventType> = (
 
 class UIEventEmitter {
   private events: Map<string, UIEventListener<any>[]> = new Map();
+  private pendingEvents: Map<UIEventType, unknown> = new Map();
+  private replayableEvents = new Set<UIEventType>([
+    "OPEN_SEARCH",
+    "OPEN_TAG_SEARCH",
+    "OPEN_FUTURE_LOG",
+    "OPEN_TIMELINE",
+    "OPEN_CALENDAR_SYNC",
+    "OPEN_ADD_ENTRY",
+    "OPEN_MIGRATE_ENTRY",
+    "OPEN_FUTURE_ENTRY",
+    "OPEN_DELETE_ENTRY",
+    "OPEN_EDIT_ENTRY",
+    "OPEN_CMD_PALETTE",
+    "OPEN_BACKUP",
+  ]);
 
   on<T extends UIEventType>(event: T, listener: UIEventListener<T>) {
     if (!this.events.has(event)) {
       this.events.set(event, []);
     }
     this.events.get(event)?.push(listener);
+    if (this.pendingEvents.has(event)) {
+      const payload = this.pendingEvents.get(event) as UIEventPayloads[T];
+      this.pendingEvents.delete(event);
+      listener(payload);
+    }
   }
 
   off<T extends UIEventType>(event: T, listener: UIEventListener<T>) {
@@ -80,8 +100,10 @@ class UIEventEmitter {
 
   emit<T extends UIEventType>(event: T, payload?: UIEventPayloads[T]) {
     const listeners = this.events.get(event);
-    if (listeners) {
+    if (listeners && listeners.length > 0) {
       listeners.forEach((listener) => listener(payload as any));
+    } else if (this.replayableEvents.has(event)) {
+      this.pendingEvents.set(event, payload);
     }
   }
 }

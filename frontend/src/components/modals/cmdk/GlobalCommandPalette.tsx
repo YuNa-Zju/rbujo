@@ -242,12 +242,11 @@ export default function GlobalCommandPalette() {
   const normalizedTagInput = normalizeCommandTag(inputValue);
 
   const filteredTagSuggestions = useMemo(() => {
-    if (!inputValue.trim()) return [];
     const needle = normalizedTagInput.toLowerCase();
-    if (!needle) return [];
     return allTags
-      .filter((tag) => tag.toLowerCase().includes(needle))
+      .filter((tag) => !needle || tag.toLowerCase().includes(needle))
       .sort((a, b) => {
+        if (!needle) return a.localeCompare(b);
         const aStarts = a.toLowerCase().startsWith(needle);
         const bStarts = b.toLowerCase().startsWith(needle);
         if (aStarts === bStarts) return a.localeCompare(b);
@@ -358,6 +357,14 @@ export default function GlobalCommandPalette() {
                       )
                     }
                   />
+                </Command.Group>
+              )}
+
+              {filteredTagSuggestions.length > 0 && (
+                <Command.Group
+                  heading={t.command?.tagMenu || "Tags"}
+                  className="space-y-2"
+                >
                   {filteredTagSuggestions.map((tag) => (
                     <Item
                       key={tag}
