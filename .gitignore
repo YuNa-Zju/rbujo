@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+*.db
+.envrc
+.env
+./.venv
+./.venv/*
+uv.lock
+*.egg-info/
+uploads/*
+target/
+/rbullet-journal
+backups/
+**/repomix-output.xml
+**/new-repomix-output.xml
+**/now.xml
