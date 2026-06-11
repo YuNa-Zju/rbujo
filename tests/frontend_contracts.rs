@@ -161,7 +161,7 @@ fn ui_debug_mode_is_gated_and_traces_cmdk_event_flow() {
         "uiEvents should trace event listener and emit state in debug mode"
     );
     assert!(
-        header_actions.contains("OPEN_CMD_PALETTE")
+        header_actions.contains("openCommandPalette")
             && header_actions.contains("debugLog"),
         "Header action buttons should log CmdK open attempts"
     );
@@ -178,6 +178,25 @@ fn ui_debug_mode_is_gated_and_traces_cmdk_event_flow() {
     assert!(
         calendar_page.contains("debugLog") && calendar_page.contains("viewMode"),
         "CalendarPage should log view mode transitions for CmdK reproduction"
+    );
+}
+
+#[test]
+fn header_cmdk_button_uses_modal_controller_directly() {
+    let header_actions =
+        read_file("frontend/src/features/calendar/components/HeaderActionTrigger.tsx");
+
+    assert!(
+        header_actions.contains("useModalController"),
+        "HeaderActionTrigger should use ModalController for CmdK state"
+    );
+    assert!(
+        header_actions.contains("openCommandPalette()"),
+        "Header CmdK button should open the command palette directly"
+    );
+    assert!(
+        !header_actions.contains("uiEvents.emit(\"OPEN_CMD_PALETTE\")"),
+        "Header CmdK button should not depend on the uiEvents bridge"
     );
 }
 

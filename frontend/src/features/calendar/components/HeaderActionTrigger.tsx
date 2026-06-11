@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { uiEvents } from "../../../lib/uiEvents";
 import { debugLog } from "../../../lib/debugLog";
 import { useTranslation } from "../../../hooks/useTranslation";
+import { useModalController } from "../../../context/ModalControllerContext";
 import UserMenu from "./UserMenu";
 
 // ✅ 1. 内置 Hook：手动监听 data-theme 属性变化
@@ -36,13 +37,14 @@ const useIsDark = () => {
 
 export default function HeaderActionTrigger() {
   const { t } = useTranslation();
+  const { openCommandPalette } = useModalController();
 
   // ✅ 获取当前是否为暗色模式
   const isDark = useIsDark();
 
   const openCmd = () => {
     debugLog("header", "click command palette");
-    uiEvents.emit("OPEN_CMD_PALETTE");
+    openCommandPalette();
   };
   const openFutureLog = () => {
     debugLog("header", "click future log");
