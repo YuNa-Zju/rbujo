@@ -64,7 +64,7 @@ git push origin develop
 
 You can also run the `Release Windows` workflow manually from GitHub Actions.
 
-The workflow builds a macOS DMG plus Windows NSIS and MSI installers. It uploads release assets and workflow artifacts. Windows update artifacts are signed, uploaded with the setup exe, and included in `latest.json`.
+The workflow builds a macOS DMG plus Windows NSIS and MSI installers. It uploads release assets. Windows update artifacts are signed, uploaded with the setup exe, and included in `latest.json`.
 
 ## App behavior
 

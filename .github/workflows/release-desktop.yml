@@ -43,7 +43,7 @@ jobs:
         run: npm install --prefix frontend
 
       - name: Build and publish desktop installer
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -55,8 +55,6 @@ jobs:
           releaseBody: Desktop installers and updater metadata. Download the installer for your platform.
           releaseDraft: false
           prerelease: false
-          uploadUpdaterJson: true
+          includeUpdaterJson: true
           updaterJsonPreferNsis: true
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: rbujo-[platform]-[arch]-[bundle]
           args: ${{ matrix.args }}
