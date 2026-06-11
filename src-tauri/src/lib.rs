@@ -7,7 +7,10 @@ use rbullet_journal::local::{
 use rbullet_journal::models::{
     EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
 };
-use tauri::{Manager, State};
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
+    Emitter, Manager, State,
+};
 
 #[derive(Clone)]
 struct DesktopState {
@@ -194,6 +197,15 @@ async fn rebuild_search_index(state: State<'_, DesktopState>) -> Result<usize, S
 }
 
 #[tauri::command]
+async fn migrate_text_tags_to_native(state: State<'_, DesktopState>) -> Result<usize, String> {
+    state
+        .backend
+        .migrate_text_tags_to_native()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn store_upload(
     state: State<'_, DesktopState>,
     filename: String,
@@ -244,6 +256,89 @@ async fn batch_delete_entries(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .menu(|app| {
+            let app_menu = Submenu::with_items(
+                app,
+                "rbujo",
+                true,
+                &[
+                    &PredefinedMenuItem::about(app, Some("关于 rbujo"), None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::hide(app, Some("隐藏 rbujo"))?,
+                    &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
+                    &PredefinedMenuItem::show_all(app, Some("全部显示"))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, Some("退出 rbujo"))?,
+                ],
+            )?;
+            let file_menu = Submenu::with_items(
+                app,
+                "文件",
+                true,
+                &[
+                    &MenuItem::with_id(app, "new_entry", "新建条目", true, Some("CmdOrCtrl+N"))?,
+                    &MenuItem::with_id(
+                        app,
+                        "backup",
+                        "备份与导入",
+                        true,
+                        Some("CmdOrCtrl+Shift+B"),
+                    )?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::close_window(app, Some("关闭窗口"))?,
+                ],
+            )?;
+            let edit_menu = Submenu::with_items(
+                app,
+                "编辑",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, Some("撤销"))?,
+                    &PredefinedMenuItem::redo(app, Some("重做"))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, Some("剪切"))?,
+                    &PredefinedMenuItem::copy(app, Some("复制"))?,
+                    &PredefinedMenuItem::paste(app, Some("粘贴"))?,
+                    &PredefinedMenuItem::select_all(app, Some("全选"))?,
+                ],
+            )?;
+            let view_menu = Submenu::with_items(
+                app,
+                "视图",
+                true,
+                &[
+                    &MenuItem::with_id(app, "search", "搜索", true, Some("CmdOrCtrl+F"))?,
+                    &MenuItem::with_id(
+                        app,
+                        "future_log",
+                        "未来日志",
+                        true,
+                        Some("CmdOrCtrl+L"),
+                    )?,
+                    &MenuItem::with_id(
+                        app,
+                        "archive",
+                        "归档",
+                        true,
+                        Some("CmdOrCtrl+Shift+A"),
+                    )?,
+                ],
+            )?;
+            Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &view_menu])
+        })
+        .on_menu_event(|app, event| {
+            let event_name = match event.id().as_ref() {
+                "new_entry" => Some("menu:new-entry"),
+                "search" => Some("menu:search"),
+                "future_log" => Some("menu:future-log"),
+                "archive" => Some("menu:archive"),
+                "backup" => Some("menu:backup"),
+                _ => None,
+            };
+            if let Some(event_name) = event_name {
+                let _ = app.emit(event_name, ());
+            }
+        })
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -254,6 +349,7 @@ pub fn run() {
         .setup(|app| {
             let app_dir = app.path().app_data_dir()?;
             let backend = tauri::async_runtime::block_on(LocalBackend::open(app_dir))?;
+            tauri::async_runtime::block_on(backend.migrate_text_tags_to_native())?;
             app.manage(DesktopState {
                 backend: Arc::new(backend),
             });
@@ -277,6 +373,7 @@ pub fn run() {
             get_migration_chain,
             search_entries,
             rebuild_search_index,
+            migrate_text_tags_to_native,
             store_upload,
             get_all_entries_for_backup,
             import_entries,

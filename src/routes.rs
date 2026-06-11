@@ -381,7 +381,15 @@ async fn create_entry(
     .execute(state.db())
     .await?;
 
-    Ok(Json(fetch_entry_owned(&state, &id, user.id).await?.into()))
+    set_entry_tags(&state, &id, user.id, dto.tags).await?;
+    Ok(Json(
+        response_from_entry(
+            &state,
+            fetch_entry_owned(&state, &id, user.id).await?,
+            user.id,
+        )
+        .await?,
+    ))
 }
 
 async fn migrate_entry(
@@ -397,8 +405,13 @@ async fn migrate_entry(
 
     Ok(Json(MigrateResponse {
         success: true,
-        new_entry: new_entry.into(),
-        updated_source: fetch_entry_owned(&state, &entry_id, user.id).await?.into(),
+        new_entry: response_from_entry(&state, new_entry, user.id).await?,
+        updated_source: response_from_entry(
+            &state,
+            fetch_entry_owned(&state, &entry_id, user.id).await?,
+            user.id,
+        )
+        .await?,
     }))
 }
 
@@ -418,7 +431,12 @@ async fn reopen_entry(
 
     Ok(Json(ReopenResponse {
         success: true,
-        updated_entry: fetch_entry_owned(&state, &entry_id, user.id).await?.into(),
+        updated_entry: response_from_entry(
+            &state,
+            fetch_entry_owned(&state, &entry_id, user.id).await?,
+            user.id,
+        )
+        .await?,
         deleted_entries,
     }))
 }
@@ -491,13 +509,21 @@ async fn update_entry(
 
     normalize_entry_state(&mut entry);
     save_entry(&state, &entry).await?;
+    if let Some(tags) = dto.tags {
+        set_entry_tags(&state, &entry_id, user.id, tags).await?;
+    }
 
     if entry.source_entry_id.is_some() && (dto.target_month.is_some() || dto.is_future.is_some()) {
         sync_child_to_parent(&state, &entry, user.id).await?;
     }
 
     Ok(Json(
-        fetch_entry_owned(&state, &entry_id, user.id).await?.into(),
+        response_from_entry(
+            &state,
+            fetch_entry_owned(&state, &entry_id, user.id).await?,
+            user.id,
+        )
+        .await?,
     ))
 }
 
@@ -545,7 +571,9 @@ async fn get_daily_log(
     .bind(date)
     .fetch_all(state.db())
     .await?;
-    Ok(Json(entries.into_iter().map(EntryResponse::from).collect()))
+    Ok(Json(
+        responses_from_entries(&state, entries, user.id).await?,
+    ))
 }
 
 #[derive(Serialize)]
@@ -585,15 +613,15 @@ async fn get_future_log(
     let mut monthly_log: BTreeMap<String, Vec<EntryResponse>> = BTreeMap::new();
     for entry in monthly_entries {
         if let Some(month) = entry.target_month.clone() {
-            monthly_log.entry(month).or_default().push(entry.into());
+            monthly_log
+                .entry(month)
+                .or_default()
+                .push(response_from_entry(&state, entry, user.id).await?);
         }
     }
 
     Ok(Json(FutureLogResponse {
-        future_log: future_entries
-            .into_iter()
-            .map(EntryResponse::from)
-            .collect(),
+        future_log: responses_from_entries(&state, future_entries, user.id).await?,
         monthly_log,
     }))
 }
@@ -708,6 +736,8 @@ struct SearchQuery {
     mode: Option<String>,
     #[serde(default)]
     entry_type: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
     start_date: Option<String>,
     end_date: Option<String>,
 }
@@ -750,12 +780,18 @@ async fn search_entries(
     for binding in bindings.into_iter().skip(1) {
         db_query = db_query.bind(binding);
     }
-    let candidates = db_query.fetch_all(state.db()).await?;
+    let candidates = filter_entries_by_tags(
+        &state,
+        db_query.fetch_all(state.db()).await?,
+        user.id,
+        query.tags,
+    )
+    .await?;
 
     let q = query.q.unwrap_or_default();
     if q.is_empty() {
         return Ok(Json(
-            candidates.into_iter().map(EntryResponse::from).collect(),
+            responses_from_entries(&state, candidates, user.id).await?,
         ));
     }
 
@@ -778,7 +814,7 @@ async fn search_entries(
             plain.to_lowercase().contains(&q_lower)
         };
         if matched {
-            results.push(entry.into());
+            results.push(response_from_entry(&state, entry, user.id).await?);
         }
     }
     Ok(Json(results))
@@ -868,9 +904,12 @@ async fn export_all_entries(
     .bind(user.id)
     .fetch_all(state.db())
     .await?;
-    Ok(Json(
-        entries.into_iter().map(export_schema_from_entry).collect(),
-    ))
+    let mut export = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let tags = get_entry_tags(&state, &entry.id, user.id).await?;
+        export.push(export_schema_from_entry(entry, tags));
+    }
+    Ok(Json(export))
 }
 
 async fn import_entries(
@@ -883,6 +922,7 @@ async fn import_entries(
     let mut skipped_count = 0usize;
 
     for item in payload.entries {
+        let tags = item.tags.clone();
         let mut imported = normalize_import_entry(item, user.id)?;
         let existing_owner: Option<i64> =
             sqlx::query_scalar("SELECT owner_id FROM entries WHERE id = ?")
@@ -893,10 +933,12 @@ async fn import_entries(
         if let Some(owner_id) = existing_owner {
             if owner_id == user.id {
                 save_entry(&state, &imported).await?;
+                set_entry_tags(&state, &imported.id, user.id, tags).await?;
                 updated_count += 1;
             } else {
                 imported.id = Uuid::new_v4().to_string();
                 insert_full_entry(&state, &imported).await?;
+                set_entry_tags(&state, &imported.id, user.id, tags).await?;
                 inserted_ids.push(imported.id);
             }
         } else {
@@ -914,6 +956,7 @@ async fn import_entries(
             }
             let id = imported.id.clone();
             insert_full_entry(&state, &imported).await?;
+            set_entry_tags(&state, &imported.id, user.id, tags).await?;
             inserted_ids.push(id);
         }
     }
@@ -981,6 +1024,17 @@ async fn export_entries_markdown(
             title_case(&entry.entry_type),
             entry.status.to_uppercase()
         ));
+        let tags = get_entry_tags(&state, &entry.id, user.id).await?;
+        if !tags.is_empty() {
+            lines.push(format!(
+                "Tags: {}",
+                tags.iter()
+                    .map(|tag| format!("#{tag}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ));
+            lines.push(String::new());
+        }
         if entry.content.is_empty() {
             lines.push("> *(No content)*".to_string());
         } else {
@@ -1020,7 +1074,8 @@ async fn export_entries_zip(
         let lines = files
             .entry(path)
             .or_insert_with(|| vec![header, String::new()]);
-        lines.push(format_entry_to_markdown(&entry));
+        let tags = get_entry_tags(&state, &entry.id, user.id).await?;
+        lines.push(format_entry_to_markdown(&entry, &tags));
     }
 
     let cursor = Cursor::new(Vec::new());
@@ -1230,6 +1285,131 @@ async fn insert_full_entry(state: &AppState, entry: &Entry) -> AppResult<()> {
     Ok(())
 }
 
+async fn response_from_entry(
+    state: &AppState,
+    entry: Entry,
+    owner_id: i64,
+) -> AppResult<EntryResponse> {
+    let tags = get_entry_tags(state, &entry.id, owner_id).await?;
+    let mut response = EntryResponse::from(entry);
+    response.tags = tags;
+    Ok(response)
+}
+
+async fn responses_from_entries(
+    state: &AppState,
+    entries: Vec<Entry>,
+    owner_id: i64,
+) -> AppResult<Vec<EntryResponse>> {
+    let mut responses = Vec::with_capacity(entries.len());
+    for entry in entries {
+        responses.push(response_from_entry(state, entry, owner_id).await?);
+    }
+    Ok(responses)
+}
+
+async fn filter_entries_by_tags(
+    state: &AppState,
+    entries: Vec<Entry>,
+    owner_id: i64,
+    tags: Vec<String>,
+) -> AppResult<Vec<Entry>> {
+    let tag_filters = normalize_tags(tags);
+    if tag_filters.is_empty() {
+        return Ok(entries);
+    }
+    let wanted: HashSet<String> = tag_filters
+        .into_iter()
+        .map(|tag| tag.to_lowercase())
+        .collect();
+    let mut filtered = Vec::new();
+    for entry in entries {
+        let entry_tags: HashSet<String> = get_entry_tags(state, &entry.id, owner_id)
+            .await?
+            .into_iter()
+            .map(|tag| tag.to_lowercase())
+            .collect();
+        if wanted.iter().all(|tag| entry_tags.contains(tag)) {
+            filtered.push(entry);
+        }
+    }
+    Ok(filtered)
+}
+
+async fn get_entry_tags(state: &AppState, entry_id: &str, owner_id: i64) -> AppResult<Vec<String>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT tags.name AS name
+        FROM entry_tags
+        JOIN tags ON tags.id = entry_tags.tag_id
+        WHERE entry_tags.owner_id = ? AND entry_tags.entry_id = ?
+        ORDER BY entry_tags.position ASC, tags.name ASC
+        "#,
+    )
+    .bind(owner_id)
+    .bind(entry_id)
+    .fetch_all(state.db())
+    .await?;
+    rows.into_iter()
+        .map(|row| row.try_get::<String, _>("name").map_err(AppError::from))
+        .collect()
+}
+
+async fn set_entry_tags(
+    state: &AppState,
+    entry_id: &str,
+    owner_id: i64,
+    tags: Vec<String>,
+) -> AppResult<()> {
+    let tags = normalize_tags(tags);
+    sqlx::query("DELETE FROM entry_tags WHERE owner_id = ? AND entry_id = ?")
+        .bind(owner_id)
+        .bind(entry_id)
+        .execute(state.db())
+        .await?;
+    for (position, tag) in tags.into_iter().enumerate() {
+        let tag_id = ensure_tag(state, owner_id, &tag).await?;
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO entry_tags(entry_id, tag_id, owner_id, position)
+            VALUES (?, ?, ?, ?)
+            "#,
+        )
+        .bind(entry_id)
+        .bind(tag_id)
+        .bind(owner_id)
+        .bind(position as i64)
+        .execute(state.db())
+        .await?;
+    }
+    Ok(())
+}
+
+async fn ensure_tag(state: &AppState, owner_id: i64, tag: &str) -> AppResult<i64> {
+    if let Some(existing) = sqlx::query_scalar(
+        "SELECT id FROM tags WHERE owner_id = ? AND lower(name) = lower(?) ORDER BY id LIMIT 1",
+    )
+    .bind(owner_id)
+    .bind(tag)
+    .fetch_optional(state.db())
+    .await?
+    {
+        return Ok(existing);
+    }
+    sqlx::query("INSERT OR IGNORE INTO tags(owner_id, name, created_at) VALUES (?, ?, ?)")
+        .bind(owner_id)
+        .bind(tag)
+        .bind(now_string())
+        .execute(state.db())
+        .await?;
+    sqlx::query_scalar("SELECT id FROM tags WHERE owner_id = ? AND name = ?")
+        .bind(owner_id)
+        .bind(tag)
+        .fetch_one(state.db())
+        .await
+        .map_err(AppError::from)
+}
+
 async fn create_forward_child(
     state: &AppState,
     entry: &mut Entry,
@@ -1269,6 +1449,13 @@ async fn create_forward_child(
     };
     entry.migrated_to_entry_id = Some(child.id.clone());
     insert_full_entry(state, &child).await?;
+    set_entry_tags(
+        state,
+        &child.id,
+        owner_id,
+        get_entry_tags(state, &entry.id, owner_id).await?,
+    )
+    .await?;
     Ok(child)
 }
 
@@ -1309,6 +1496,13 @@ async fn create_future_child(
     };
     entry.migrated_to_entry_id = Some(child.id.clone());
     insert_full_entry(state, &child).await?;
+    set_entry_tags(
+        state,
+        &child.id,
+        owner_id,
+        get_entry_tags(state, &entry.id, owner_id).await?,
+    )
+    .await?;
     Ok(child)
 }
 
@@ -1465,12 +1659,13 @@ fn normalize_import_entry(item: EntryExportSchema, owner_id: i64) -> AppResult<E
     Ok(entry)
 }
 
-fn export_schema_from_entry(entry: Entry) -> EntryExportSchema {
+fn export_schema_from_entry(entry: Entry, tags: Vec<String>) -> EntryExportSchema {
     EntryExportSchema {
         id: entry.id,
         content: Some(entry.content),
         entry_type: entry.entry_type,
         status: entry.status,
+        tags,
         created_at: entry.created_at,
         target_date: entry.target_date,
         target_month: entry.target_month,
@@ -1483,6 +1678,52 @@ fn export_schema_from_entry(entry: Entry) -> EntryExportSchema {
         archived_at: entry.archived_at,
         chain_root_id: entry.chain_root_id,
         migrated_to_entry_id: entry.migrated_to_entry_id,
+    }
+}
+
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for tag in tags {
+        let Some(value) = normalize_tag(&tag) else {
+            continue;
+        };
+        let key = value.to_lowercase();
+        if seen.insert(key) {
+            normalized.push(value);
+        }
+    }
+    normalized
+}
+
+fn normalize_tag(tag: &str) -> Option<String> {
+    let value = tag
+        .trim()
+        .trim_start_matches('#')
+        .trim_matches(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    ',' | '.'
+                        | ';'
+                        | ':'
+                        | '!'
+                        | '?'
+                        | '，'
+                        | '。'
+                        | '；'
+                        | '：'
+                        | '！'
+                        | '？'
+                        | '、'
+                )
+        })
+        .trim()
+        .to_string();
+    if value.is_empty() || value.chars().any(char::is_whitespace) {
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -1605,7 +1846,7 @@ fn entry_archive_path(entry: &Entry) -> (String, String) {
     }
 }
 
-fn format_entry_to_markdown(entry: &Entry) -> String {
+fn format_entry_to_markdown(entry: &Entry, tags: &[String]) -> String {
     let mut prefix = "- ".to_string();
     if entry.entry_type == TYPE_TASK {
         prefix = match entry.status.as_str() {
@@ -1627,6 +1868,15 @@ fn format_entry_to_markdown(entry: &Entry) -> String {
         _ => "",
     };
     let mut markdown = format!("{prefix}{first}{suffix}");
+    if !tags.is_empty() {
+        markdown.push_str(&format!(
+            "\n    Tags: {}",
+            tags.iter()
+                .map(|tag| format!("#{tag}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+    }
     for line in lines {
         markdown.push_str(&format!("\n    {line}"));
     }

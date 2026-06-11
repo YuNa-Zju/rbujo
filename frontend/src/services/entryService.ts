@@ -8,6 +8,7 @@ export interface CreateEntryPayload {
   target_date?: string | null;
   is_future?: boolean;
   target_month?: string | null;
+  tags?: string[];
 }
 
 export interface UpdateEntryPayload {
@@ -19,6 +20,7 @@ export interface UpdateEntryPayload {
   migration_month?: string | null;
   is_future?: boolean;
   target_month?: string | null;
+  tags?: string[];
 }
 
 export interface ShareEntryResponse {
@@ -58,6 +60,7 @@ const normalizeEntry = (entry: any) => {
   return {
     ...entry,
     date: entry.date ?? entry.target_date ?? null,
+    tags: Array.isArray(entry.tags) ? entry.tags : [],
   };
 };
 
@@ -101,7 +104,10 @@ const entriesToMarkdown = (entries: any[]) => {
           const marker =
             entry.entry_type === "task" ? "- [ ]" : entry.entry_type === "event" ? "- o" : "-";
           const status = entry.status && entry.status !== "open" ? ` (${entry.status})` : "";
-          return `${marker} ${entry.content}${status}`;
+          const tags = Array.isArray(entry.tags) && entry.tags.length > 0
+            ? `\n  Tags: ${entry.tags.map((tag: string) => `#${tag}`).join(" ")}`
+            : "";
+          return `${marker} ${entry.content}${status}${tags}`;
         })
         .join("\n");
       return `## ${key}\n\n${body}`;
@@ -118,6 +124,7 @@ export const entryService = {
         target_date: payload.target_date ?? null,
         target_month: payload.target_month ?? null,
         is_future: Boolean(payload.is_future),
+        tags: payload.tags ?? [],
       },
     });
     return normalizeEntry(entry);
@@ -133,6 +140,7 @@ export const entryService = {
         target_date: payload.target_date ?? undefined,
         target_month: payload.target_month ?? undefined,
         is_future: payload.is_future,
+        tags: payload.tags,
       },
     });
     return normalizeEntry(entry);
@@ -214,6 +222,7 @@ export const entryService = {
     status?: string;
     include_archived?: boolean;
     limit?: number;
+    tags?: string[];
   }) => {
     const results = await invoke<SearchResult[]>("search_entries", {
       options: {
@@ -221,6 +230,7 @@ export const entryService = {
         mode: params.mode ?? "text",
         include_archived: Boolean(params.include_archived),
         entry_type: params.entry_type ?? [],
+        tags: params.tags ?? [],
         start_date: params.start_date ?? null,
         end_date: params.end_date ?? null,
         limit: params.limit ?? 80,
@@ -327,5 +337,9 @@ export const entryService = {
       `bujo_archive_${dateStr}.md`,
     );
     return true;
+  },
+
+  migrateTextTagsToNative: async () => {
+    return invoke<number>("migrate_text_tags_to_native");
   },
 };

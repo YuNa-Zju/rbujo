@@ -69,6 +69,30 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS ix_entries_archived
             ON entries(owner_id, archived_at);
 
+        CREATE TABLE IF NOT EXISTS tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(owner_id, name)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_tags_owner_name
+            ON tags(owner_id, name);
+
+        CREATE TABLE IF NOT EXISTS entry_tags (
+            entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+            tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(entry_id, tag_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_entry_tags_owner
+            ON entry_tags(owner_id, tag_id);
+        CREATE INDEX IF NOT EXISTS ix_entry_tags_entry
+            ON entry_tags(entry_id, position);
+
         CREATE TABLE IF NOT EXISTS shared_links (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             target_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,

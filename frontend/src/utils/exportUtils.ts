@@ -21,7 +21,11 @@ export const exportToMarkdown = async () => {
       .map((entry: any) => {
         const title = entry.target_date || entry.target_month || "Future";
         const archived = entry.archived_at ? " archived" : "";
-        return `## ${title}${archived}\n\n${entry.content || ""}`;
+        const tags =
+          Array.isArray(entry.tags) && entry.tags.length > 0
+            ? `Tags: ${entry.tags.map((tag: string) => `#${tag}`).join(" ")}\n\n`
+            : "";
+        return `## ${title}${archived}\n\n${tags}${entry.content || ""}`;
       })
       .join("\n\n");
     const dateStr = new Date().toISOString().slice(0, 10);

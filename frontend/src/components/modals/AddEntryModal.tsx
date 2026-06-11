@@ -21,6 +21,7 @@ import {
   UploadCloud,
   Loader2,
   PenLine,
+  Hash,
 } from "lucide-react";
 import { entryEventBus } from "../../lib/entryEventBus";
 
@@ -55,6 +56,8 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
 
     const [content, setContent] = useState("");
     const [type, setType] = useState<EntryType>("task");
+    const [tags, setTags] = useState<string[]>([]);
+    const [tagDraft, setTagDraft] = useState("");
     const [loading, setLoading] = useState(false);
 
     const [isUploading, setIsUploading] = useState(false);
@@ -80,6 +83,8 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           setEditingEntry(entry);
           setContent(entry.content || "");
           setType(entry.entry_type || "task");
+          setTags(Array.isArray(entry.tags) ? entry.tags : []);
+          setTagDraft("");
 
           // Determine mode based on entry data
           if (entry.is_future) {
@@ -104,6 +109,8 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           // 🆕 CREATE MODE: Reset to defaults
           setEditingEntry(null);
           setContent("");
+          setTags([]);
+          setTagDraft("");
           // setType("task"); // Optional: keep last used type or reset
 
           setMode(openMode || "daily");
@@ -275,9 +282,52 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
       }
     };
 
+    const normalizeTag = (value: string) =>
+      value
+        .trim()
+        .replace(/^#+/, "")
+        .replace(/^[,，;；:：\s]+|[,，;；:：\s]+$/g, "");
+
+    const addTag = (value: string) => {
+      const tag = normalizeTag(value);
+      if (!tag || /\s/.test(tag)) return;
+      setTags((current) => {
+        if (current.some((item) => item.toLowerCase() === tag.toLowerCase())) {
+          return current;
+        }
+        return [...current, tag];
+      });
+      setTagDraft("");
+    };
+
+    const removeTag = (tag: string) => {
+      setTags((current) => current.filter((item) => item !== tag));
+    };
+
+    const finalizedTags = () => {
+      const pending = normalizeTag(tagDraft);
+      if (!pending || /\s/.test(pending)) return tags;
+      if (tags.some((item) => item.toLowerCase() === pending.toLowerCase())) {
+        return tags;
+      }
+      return [...tags, pending];
+    };
+
+    const handleTagKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter" || e.key === "," || e.key === "，") {
+        e.preventDefault();
+        addTag(tagDraft);
+      } else if (e.key === "Backspace" && !tagDraft && tags.length > 0) {
+        removeTag(tags[tags.length - 1]);
+      }
+    };
+
     // --- Submit Logic (Create or Update) ---
     const handleSubmit = async () => {
       if (!content.trim()) return;
+      const nextTags = finalizedTags();
+      setTags(nextTags);
+      setTagDraft("");
       setLoading(true);
       try {
         if (editingEntry) {
@@ -285,6 +335,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           const payload: any = {
             content,
             entry_type: type,
+            tags: nextTags,
             // Usually we don't update date/status here unless specific UI allows it
           };
 
@@ -299,6 +350,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           const payload: any = {
             content,
             entry_type: type,
+            tags: nextTags,
             status: "open",
             created_at: new Date().toISOString(),
           };
@@ -383,6 +435,31 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           <div className="overflow-y-auto flex-1 overscroll-contain">
             <div className="px-6 py-4 bg-base-100">
               <TypeSelector currentType={type} onChange={setType} />
+
+              <div className="mt-4 rounded-2xl border border-base-200/70 bg-base-200/25 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Hash size={15} className="text-base-content/35 shrink-0" />
+                  {tags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => removeTag(tag)}
+                      className="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-primary/10 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/15"
+                    >
+                      {tag}
+                      <X size={11} strokeWidth={2.5} />
+                    </button>
+                  ))}
+                  <input
+                    className="min-w-28 flex-1 bg-transparent text-sm outline-none placeholder:text-base-content/30"
+                    value={tagDraft}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onKeyDown={handleTagKeyDown}
+                    onBlur={() => addTag(tagDraft)}
+                    placeholder="添加标签"
+                  />
+                </div>
+              </div>
 
               {/* Only show Future Date Picker when Creating Future Log (too complex for edit) */}
               {!editingEntry && mode === "future" && (

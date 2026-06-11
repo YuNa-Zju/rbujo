@@ -42,18 +42,10 @@ export function TagCacheProvider({ children }: { children: React.ReactNode }) {
     fetchingRef.current[tag] = true;
 
     try {
-      const query = `#${tag}`;
-      const rawResults = await entryService.search({ q: query, mode: "text" });
-
-      const safeTag = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(`(^|\\s)#${safeTag}(\\s|$)`);
-
-      const validResults = rawResults.filter((entry: any) => {
-        const content = entry.content || "";
-        const firstLineEnd = content.indexOf("\n");
-        const firstLine =
-          firstLineEnd === -1 ? content : content.slice(0, firstLineEnd);
-        return regex.test(firstLine);
+      const validResults = await entryService.search({
+        q: "",
+        mode: "text",
+        tags: [tag],
       });
 
       setCache((prev) => ({

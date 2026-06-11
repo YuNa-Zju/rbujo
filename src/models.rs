@@ -45,6 +45,7 @@ pub struct EntryResponse {
     pub content: String,
     pub entry_type: String,
     pub status: String,
+    pub tags: Vec<String>,
     pub target_date: Option<String>,
     pub target_month: Option<String>,
     pub is_future: bool,
@@ -66,6 +67,7 @@ impl From<Entry> for EntryResponse {
             content: entry.content,
             entry_type: entry.entry_type,
             status: entry.status,
+            tags: Vec::new(),
             target_date: entry.target_date,
             target_month: entry.target_month,
             is_future: entry.is_future != 0,
@@ -135,6 +137,8 @@ pub struct CreateEntryDto {
     pub target_date: Option<String>,
     pub target_month: Option<String>,
     pub is_future: Option<bool>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,6 +151,7 @@ pub struct UniversalUpdateEntryDto {
     pub is_future: Option<bool>,
     pub migration_date: Option<String>,
     pub migration_month: Option<String>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,6 +220,8 @@ pub struct EntryExportSchema {
     pub content: Option<String>,
     pub entry_type: String,
     pub status: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub created_at: String,
     pub target_date: Option<String>,
     pub target_month: Option<String>,

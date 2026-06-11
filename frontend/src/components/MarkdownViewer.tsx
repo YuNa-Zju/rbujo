@@ -21,6 +21,7 @@ import { TagPill } from "./markdown/TagPill";
 
 interface Props {
   content: string;
+  tags?: string[];
   className?: string;
   onDoubleClick?: () => void;
   onTaskToggle?: (newContent: string) => void;
@@ -82,6 +83,7 @@ const smoothScrollTo = (
 
 export default function MarkdownViewer({
   content,
+  tags = [],
   className = "",
   onDoubleClick,
   onTaskToggle,
@@ -254,6 +256,19 @@ export default function MarkdownViewer({
             ref={containerRef}
             className={`prose-custom-scale w-full [&>*:last-child]:mb-0 ${className}`}
           >
+            {tags.length > 0 && (
+              <div className="not-prose mb-3 flex flex-wrap gap-1.5">
+                {tags.map((tag) => (
+                  <TagPill
+                    key={tag}
+                    tag={tag}
+                    onClick={handleTagClick}
+                    clickable={isTagClickable}
+                    entryType={entryType}
+                  />
+                ))}
+              </div>
+            )}
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
               rehypePlugins={[rehypeKatex]}
@@ -346,50 +361,9 @@ export default function MarkdownViewer({
                   }
                   return <input {...props} />;
                 },
-                p: ({ node, children }) => {
-                  const isFirstParagraph = node?.position?.start.line === 1;
-                  const childrenArray = Array.isArray(children)
-                    ? children
-                    : [children];
-                  const processedChildren = childrenArray.map(
-                    (child, index) => {
-                      if (
-                        isFirstParagraph &&
-                        index === 0 &&
-                        typeof child === "string"
-                      ) {
-                        if (child.startsWith("# ")) return child;
-                        const parts = child.split(
-                          /(\s|^)(#[^\s#.,;!?:：，。]+)/g,
-                        );
-                        return parts.map((part, i) => {
-                          if (
-                            part.startsWith("#") &&
-                            part.length > 1 &&
-                            part[1] !== " "
-                          ) {
-                            return (
-                              <TagPill
-                                key={i}
-                                tag={part.slice(1)}
-                                onClick={handleTagClick}
-                                clickable={isTagClickable}
-                                entryType={entryType}
-                              />
-                            );
-                          }
-                          return part;
-                        });
-                      }
-                      return child;
-                    },
-                  );
-                  return (
-                    <p className="mb-6 last:mb-0 relative">
-                      {processedChildren}
-                    </p>
-                  );
-                },
+                p: ({ children }) => (
+                  <p className="mb-6 last:mb-0 relative">{children}</p>
+                ),
               }}
             >
               {content}

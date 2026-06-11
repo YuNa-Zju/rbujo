@@ -18,7 +18,6 @@ import {
   FileArchive,
 } from "lucide-react";
 
-import { uiEvents } from "../../lib/uiEvents";
 import { dataBackupService } from "../../services/dataBackupService";
 import { cacheStorage } from "../../utils/cacheStorage";
 import { exportToMarkdown } from "../../utils/exportUtils";
@@ -27,6 +26,11 @@ import { entryService } from "../../services/entryService";
 import { useAppTheme } from "../../hooks/useAppTheme"; // ✅ 1. 引入封装好的 Hook
 
 const UNDO_STORAGE_KEY = "bujo_last_import_ids";
+
+interface BackupModalProps {
+  open: boolean;
+  onClose: () => void;
+}
 
 // --- 内部子组件：确认弹窗 ---
 const ConfirmDialog = ({
@@ -104,7 +108,7 @@ const ConfirmDialog = ({
 };
 
 // --- 主组件 ---
-export default function BackupModal() {
+export default function BackupModal({ open, onClose }: BackupModalProps) {
   const { t } = useTranslation();
 
   // ✅ 2. 使用封装的 Hook 获取样式和深色模式状态
@@ -117,6 +121,11 @@ export default function BackupModal() {
   const [message, setMessage] = useState("");
   const [lastImportedIds, setLastImportedIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const closeModal = () => {
+    setIsOpen(false);
+    onClose();
+  };
 
   // --- 初始化 ---
   useEffect(() => {
@@ -131,17 +140,18 @@ export default function BackupModal() {
         localStorage.removeItem(UNDO_STORAGE_KEY);
       }
     }
+  }, []);
 
-    const open = () => {
+  useEffect(() => {
+    if (open) {
       setIsOpen(true);
       setStatus("idle");
       setMessage("");
       setShowConfirm(false);
-    };
-
-    uiEvents.on("OPEN_BACKUP", open);
-    return () => uiEvents.off("OPEN_BACKUP", open);
-  }, []);
+    } else if (!showConfirm) {
+      setIsOpen(false);
+    }
+  }, [open, showConfirm]);
 
   // --- ESC 关闭 ---
   useEffect(() => {
@@ -152,7 +162,7 @@ export default function BackupModal() {
           return;
         }
         if (isOpen && !loading) {
-          setIsOpen(false);
+          closeModal();
         }
       }
     };
@@ -345,7 +355,7 @@ export default function BackupModal() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className={`absolute inset-0 ${styles.backdrop}`}
-              onClick={() => !loading && setIsOpen(false)}
+              onClick={() => !loading && closeModal()}
             />
 
             <motion.div
@@ -386,7 +396,7 @@ export default function BackupModal() {
                 </div>
 
                 <button
-                  onClick={() => setIsOpen(false)}
+                  onClick={closeModal}
                   disabled={loading}
                   className={styles.modal.closeBtn}
                 >

@@ -5,7 +5,9 @@ export function useTagPreloader(entries: any[]) {
   const { prefetch } = useTagCache();
 
   // 生成一个基于 ID 的指纹，避免 entries 引用变化导致重复触发
-  const entriesFingerprint = entries.map((e) => e.id).join(",");
+  const entriesFingerprint = entries
+    .map((e) => `${e.id}:${Array.isArray(e.tags) ? e.tags.join("|") : ""}`)
+    .join(",");
 
   useEffect(() => {
     if (!entries || entries.length === 0) return;
@@ -13,16 +15,10 @@ export function useTagPreloader(entries: any[]) {
     const allTags = new Set<string>();
 
     entries.forEach((entry) => {
-      if (!entry.content) return;
-      // 匹配空格或行首开头的 #tag
-      const matches = entry.content.match(/(\s|^)(#[^\s#.,;!?:：，。]+)/g);
-
-      if (matches) {
-        matches.forEach((m: string) => {
-          const cleanTag = m.trim().replace(/^#/, "");
-          if (cleanTag) allTags.add(cleanTag);
-        });
-      }
+      if (!Array.isArray(entry.tags)) return;
+      entry.tags.forEach((tag: string) => {
+        if (tag) allTags.add(tag);
+      });
     });
 
     // ✅ 移除 setTimeout，立即执行预加载

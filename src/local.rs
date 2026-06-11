@@ -46,6 +46,8 @@ pub struct CreateEntryInput {
     pub target_month: Option<String>,
     #[serde(default)]
     pub is_future: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -56,6 +58,7 @@ pub struct EntryPatch {
     pub target_date: Option<String>,
     pub target_month: Option<String>,
     pub is_future: Option<bool>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +78,8 @@ pub struct SearchOptions {
     pub include_archived: bool,
     #[serde(default)]
     pub entry_type: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     #[serde(default = "default_search_limit")]
@@ -88,6 +93,7 @@ impl Default for SearchOptions {
             mode: SearchMode::Text,
             include_archived: false,
             entry_type: Vec::new(),
+            tags: Vec::new(),
             start_date: None,
             end_date: None,
             limit: default_search_limit(),
@@ -153,11 +159,14 @@ impl LocalBackend {
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
         let owner_id = ensure_local_user(&pool).await?;
-        Ok(Self {
+        adopt_legacy_entries_to_local_owner(&pool, owner_id).await?;
+        repair_migration_chains(&pool, owner_id).await?;
+        let backend = Self {
             pool,
             app_dir,
             owner_id,
-        })
+        };
+        Ok(backend)
     }
 
     pub fn app_dir(&self) -> &Path {
@@ -170,6 +179,7 @@ impl LocalBackend {
 
     pub async fn create_entry(&self, input: CreateEntryInput) -> AppResult<EntryResponse> {
         let entry_type = validate_entry_type(&input.entry_type)?;
+        let tags = input.tags;
         let (target_date, target_month, is_future) = normalize_new_entry_target(
             input.target_date.as_deref(),
             input.target_month.as_deref(),
@@ -196,8 +206,9 @@ impl LocalBackend {
         .await?;
 
         let entry = self.fetch_entry(&id).await?;
+        self.set_entry_tags(&id, tags).await?;
         self.index_entry(&entry).await?;
-        Ok(entry.into())
+        self.response_from_entry(entry).await
     }
 
     pub async fn update_entry(&self, id: String, patch: EntryPatch) -> AppResult<EntryResponse> {
@@ -234,25 +245,40 @@ impl LocalBackend {
         }
         normalize_entry_state(&mut entry);
         self.save_entry(&entry).await?;
+        if let Some(tags) = patch.tags {
+            self.set_entry_tags(&id, tags).await?;
+        }
         self.index_entry(&entry).await?;
-        Ok(self.fetch_entry(&id).await?.into())
+        self.response_from_entry(self.fetch_entry(&id).await?).await
     }
 
     pub async fn archive_entry(&self, id: String) -> AppResult<EntryResponse> {
         let mut entry = self.fetch_entry(&id).await?;
         entry.archived_at = Some(now_string());
         self.save_entry(&entry).await?;
-        Ok(entry.into())
+        self.response_from_entry(entry).await
     }
 
     pub async fn unarchive_entry(&self, id: String) -> AppResult<EntryResponse> {
         let mut entry = self.fetch_entry(&id).await?;
         entry.archived_at = None;
         self.save_entry(&entry).await?;
-        Ok(entry.into())
+        self.response_from_entry(entry).await
     }
 
     pub async fn delete_entry(&self, id: String) -> AppResult<()> {
+        let entry = self.fetch_entry(&id).await?;
+        self.collect_and_delete_children(&id).await?;
+        if let Some(parent_id) = entry.source_entry_id {
+            sqlx::query(
+                "UPDATE entries SET migrated_to_entry_id = NULL WHERE id = ? AND owner_id = ? AND migrated_to_entry_id = ?",
+            )
+            .bind(parent_id)
+            .bind(self.owner_id)
+            .bind(&id)
+            .execute(&self.pool)
+            .await?;
+        }
         sqlx::query("DELETE FROM entries WHERE id = ? AND owner_id = ?")
             .bind(id)
             .bind(self.owner_id)
@@ -272,9 +298,12 @@ impl LocalBackend {
         entry.is_future = 0;
         self.save_entry(&entry).await?;
         self.index_entry(&entry).await?;
+        let updated_entry = self
+            .response_from_entry(self.fetch_entry(&id).await?)
+            .await?;
         Ok(ReopenResponse {
             success: true,
-            updated_entry: self.fetch_entry(&id).await?.into(),
+            updated_entry,
             deleted_entries,
         })
     }
@@ -292,7 +321,7 @@ impl LocalBackend {
         normalize_entry_state(&mut entry);
         self.save_entry(&entry).await?;
         self.index_entry(&entry).await?;
-        Ok(self.fetch_entry(&id).await?.into())
+        self.response_from_entry(self.fetch_entry(&id).await?).await
     }
 
     pub async fn get_daily_log(
@@ -314,7 +343,7 @@ impl LocalBackend {
             .bind(date)
             .fetch_all(&self.pool)
             .await?;
-        Ok(entries.into_iter().map(EntryResponse::from).collect())
+        self.responses_from_entries(entries).await
     }
 
     pub async fn get_future_log(&self, include_archived: bool) -> AppResult<FutureLogResponse> {
@@ -352,14 +381,14 @@ impl LocalBackend {
         let mut monthly_log: BTreeMap<String, Vec<EntryResponse>> = BTreeMap::new();
         for entry in monthly_entries {
             if let Some(month) = entry.target_month.clone() {
-                monthly_log.entry(month).or_default().push(entry.into());
+                monthly_log
+                    .entry(month)
+                    .or_default()
+                    .push(self.response_from_entry(entry).await?);
             }
         }
         Ok(FutureLogResponse {
-            future_log: future_entries
-                .into_iter()
-                .map(EntryResponse::from)
-                .collect(),
+            future_log: self.responses_from_entries(future_entries).await?,
             monthly_log,
         })
     }
@@ -435,8 +464,8 @@ impl LocalBackend {
         self.index_entry(&source).await?;
         self.index_entry(&created).await?;
         Ok(MigrationResult {
-            updated_source: source.into(),
-            created_entry: created.into(),
+            updated_source: self.response_from_entry(source).await?,
+            created_entry: self.response_from_entry(created).await?,
         })
     }
 
@@ -461,8 +490,8 @@ impl LocalBackend {
         self.index_entry(&source).await?;
         self.index_entry(&created).await?;
         Ok(MigrationResult {
-            updated_source: source.into(),
-            created_entry: created.into(),
+            updated_source: self.response_from_entry(source).await?,
+            created_entry: self.response_from_entry(created).await?,
         })
     }
 
@@ -479,7 +508,7 @@ impl LocalBackend {
                 ));
             }
             let next_id = current.migrated_to_entry_id.clone();
-            chain.push(current.clone().into());
+            chain.push(current.clone());
             let Some(next_id) = next_id else {
                 break;
             };
@@ -490,54 +519,88 @@ impl LocalBackend {
                 ));
             }
         }
-        Ok(chain)
+        self.responses_from_entries(chain).await
     }
 
     pub async fn search_entries(&self, options: SearchOptions) -> AppResult<Vec<SearchResult>> {
         let candidates = self.search_candidates(&options).await?;
         let query = options.query.trim();
         if query.is_empty() {
-            return Ok(candidates
-                .into_iter()
-                .take(options.limit)
-                .map(|entry| SearchResult {
+            let mut results = Vec::new();
+            for entry in candidates.into_iter().take(options.limit) {
+                results.push(SearchResult {
                     snippet: snippet(&entry.content, ""),
-                    entry: entry.into(),
+                    entry: self.response_from_entry(entry).await?,
                     score: 0.0,
                     match_type: "list".to_string(),
-                })
-                .collect());
+                });
+            }
+            return Ok(results);
         }
 
         match options.mode {
-            SearchMode::Text => Ok(candidates
-                .into_iter()
-                .filter(|entry| clean_markdown(&entry.content).contains(query))
-                .take(options.limit)
-                .map(|entry| SearchResult {
-                    snippet: snippet(&entry.content, query),
-                    entry: entry.into(),
-                    score: 1.0,
-                    match_type: "text".to_string(),
-                })
-                .collect()),
+            SearchMode::Text => {
+                let mut results = Vec::new();
+                for entry in candidates {
+                    if !clean_markdown(&entry.content).contains(query) {
+                        continue;
+                    }
+                    results.push(SearchResult {
+                        snippet: snippet(&entry.content, query),
+                        entry: self.response_from_entry(entry).await?,
+                        score: 1.0,
+                        match_type: "text".to_string(),
+                    });
+                    if results.len() >= options.limit {
+                        break;
+                    }
+                }
+                Ok(results)
+            }
             SearchMode::Regex => {
                 let pattern = Regex::new(query)
                     .map_err(|_| AppError::BadRequest("Invalid regex pattern".to_string()))?;
-                Ok(candidates
-                    .into_iter()
-                    .filter(|entry| pattern.is_match(&clean_markdown(&entry.content)))
-                    .take(options.limit)
-                    .map(|entry| SearchResult {
+                let mut results = Vec::new();
+                for entry in candidates {
+                    if !pattern.is_match(&clean_markdown(&entry.content)) {
+                        continue;
+                    }
+                    results.push(SearchResult {
                         snippet: snippet(&entry.content, query),
-                        entry: entry.into(),
+                        entry: self.response_from_entry(entry).await?,
                         score: 1.0,
                         match_type: "regex".to_string(),
-                    })
-                    .collect())
+                    });
+                    if results.len() >= options.limit {
+                        break;
+                    }
+                }
+                Ok(results)
             }
             SearchMode::Semantic => self.semantic_search(candidates, query, options.limit).await,
         }
+    }
+
+    pub async fn migrate_text_tags_to_native(&self) -> AppResult<usize> {
+        let entries = sqlx::query_as::<_, Entry>(&format!(
+            "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
+        ))
+        .bind(self.owner_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut migrated = 0usize;
+        for entry in entries {
+            if !self.get_entry_tags(&entry.id).await?.is_empty() {
+                continue;
+            }
+            let tags = extract_text_tags(&entry.content);
+            if tags.is_empty() {
+                continue;
+            }
+            self.set_entry_tags(&entry.id, tags).await?;
+            migrated += 1;
+        }
+        Ok(migrated)
     }
 
     pub async fn rebuild_search_index(&self) -> AppResult<usize> {
@@ -561,7 +624,14 @@ impl LocalBackend {
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(entries.into_iter().map(export_schema_from_entry).collect())
+        let mut export = Vec::with_capacity(entries.len());
+        for entry in entries {
+            export.push(export_schema_from_entry(
+                entry.clone(),
+                self.get_entry_tags(&entry.id).await?,
+            ));
+        }
+        Ok(export)
     }
 
     pub async fn import_entries(
@@ -573,6 +643,7 @@ impl LocalBackend {
         let mut skipped_count = 0usize;
 
         for item in entries {
+            let tags = item.tags.clone();
             let mut imported = normalize_import_entry(item, self.owner_id)?;
             let existing_owner: Option<i64> =
                 sqlx::query_scalar("SELECT owner_id FROM entries WHERE id = ?")
@@ -583,11 +654,13 @@ impl LocalBackend {
             if let Some(owner_id) = existing_owner {
                 if owner_id == self.owner_id {
                     self.save_entry(&imported).await?;
+                    self.set_entry_tags(&imported.id, tags).await?;
                     self.index_entry(&imported).await?;
                     updated_count += 1;
                 } else {
                     imported.id = Uuid::new_v4().to_string();
                     self.insert_entry(&imported).await?;
+                    self.set_entry_tags(&imported.id, tags).await?;
                     self.index_entry(&imported).await?;
                     inserted_ids.push(imported.id);
                 }
@@ -606,6 +679,7 @@ impl LocalBackend {
                 }
                 let id = imported.id.clone();
                 self.insert_entry(&imported).await?;
+                self.set_entry_tags(&imported.id, tags).await?;
                 self.index_entry(&imported).await?;
                 inserted_ids.push(id);
             }
@@ -699,10 +773,10 @@ impl LocalBackend {
     }
 
     async fn search_candidates(&self, options: &SearchOptions) -> AppResult<Vec<Entry>> {
-        let mut sql =
-            format!("{ENTRY_SELECT} WHERE owner_id = ? AND status NOT IN ('forward', 'future')");
+        let mut sql = format!("{ENTRY_SELECT} WHERE owner_id = ?");
         let mut bindings = Vec::new();
         if !options.include_archived {
+            sql.push_str(" AND status NOT IN ('forward', 'future')");
             sql.push_str(" AND archived_at IS NULL");
         }
         let entry_types: Vec<String> = options
@@ -730,7 +804,28 @@ impl LocalBackend {
         for binding in bindings {
             query = query.bind(binding);
         }
-        Ok(query.fetch_all(&self.pool).await?)
+        let entries = query.fetch_all(&self.pool).await?;
+        let tag_filters = normalize_tags(options.tags.clone());
+        if tag_filters.is_empty() {
+            return Ok(entries);
+        }
+        let wanted: HashSet<String> = tag_filters
+            .into_iter()
+            .map(|tag| tag.to_lowercase())
+            .collect();
+        let mut filtered = Vec::new();
+        for entry in entries {
+            let entry_tags: HashSet<String> = self
+                .get_entry_tags(&entry.id)
+                .await?
+                .into_iter()
+                .map(|tag| tag.to_lowercase())
+                .collect();
+            if wanted.iter().all(|tag| entry_tags.contains(tag)) {
+                filtered.push(entry);
+            }
+        }
+        Ok(filtered)
     }
 
     async fn semantic_search(
@@ -775,19 +870,27 @@ impl LocalBackend {
             }
         }
 
-        let mut results: Vec<SearchResult> = best
+        let mut ranked: Vec<(Entry, f32, String)> = best
             .into_iter()
             .filter_map(|(entry_id, (score, chunk))| {
-                entry_map.get(&entry_id).cloned().map(|entry| SearchResult {
-                    snippet: snippet(&chunk, query),
-                    entry: entry.into(),
-                    score,
-                    match_type: "semantic".to_string(),
-                })
+                entry_map
+                    .get(&entry_id)
+                    .cloned()
+                    .map(|entry| (entry, score, chunk))
             })
             .collect();
-        results.sort_by(|a, b| b.score.total_cmp(&a.score));
-        results.truncate(limit);
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ranked.truncate(limit);
+
+        let mut results = Vec::with_capacity(ranked.len());
+        for (entry, score, chunk) in ranked {
+            results.push(SearchResult {
+                snippet: snippet(&chunk, query),
+                entry: self.response_from_entry(entry).await?,
+                score,
+                match_type: "semantic".to_string(),
+            });
+        }
         Ok(results)
     }
 
@@ -825,6 +928,8 @@ impl LocalBackend {
             migrated_to_entry_id: None,
         };
         self.insert_entry(&child).await?;
+        self.set_entry_tags(&child.id, self.get_entry_tags(&source.id).await?)
+            .await?;
         Ok(child)
     }
 
@@ -851,7 +956,7 @@ impl LocalBackend {
                     .clone()
                     .or(child.migrated_to_month.clone()),
             });
-            self.delete_entry(child.id.clone()).await?;
+            self.delete_entry_row(&child.id).await?;
             current = child;
             if deleted.len() > 128 {
                 return Err(AppError::BadRequest(
@@ -861,6 +966,99 @@ impl LocalBackend {
         }
 
         Ok(deleted)
+    }
+
+    async fn response_from_entry(&self, entry: Entry) -> AppResult<EntryResponse> {
+        let tags = self.get_entry_tags(&entry.id).await?;
+        let mut response = EntryResponse::from(entry);
+        response.tags = tags;
+        Ok(response)
+    }
+
+    async fn responses_from_entries(&self, entries: Vec<Entry>) -> AppResult<Vec<EntryResponse>> {
+        let mut responses = Vec::with_capacity(entries.len());
+        for entry in entries {
+            responses.push(self.response_from_entry(entry).await?);
+        }
+        Ok(responses)
+    }
+
+    async fn get_entry_tags(&self, entry_id: &str) -> AppResult<Vec<String>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT tags.name AS name
+            FROM entry_tags
+            JOIN tags ON tags.id = entry_tags.tag_id
+            WHERE entry_tags.owner_id = ? AND entry_tags.entry_id = ?
+            ORDER BY entry_tags.position ASC, tags.name ASC
+            "#,
+        )
+        .bind(self.owner_id)
+        .bind(entry_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| row.try_get::<String, _>("name").map_err(AppError::from))
+            .collect()
+    }
+
+    async fn set_entry_tags(&self, entry_id: &str, tags: Vec<String>) -> AppResult<()> {
+        let tags = normalize_tags(tags);
+        sqlx::query("DELETE FROM entry_tags WHERE owner_id = ? AND entry_id = ?")
+            .bind(self.owner_id)
+            .bind(entry_id)
+            .execute(&self.pool)
+            .await?;
+        for (position, tag) in tags.into_iter().enumerate() {
+            let tag_id = self.ensure_tag(&tag).await?;
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO entry_tags(entry_id, tag_id, owner_id, position)
+                VALUES (?, ?, ?, ?)
+                "#,
+            )
+            .bind(entry_id)
+            .bind(tag_id)
+            .bind(self.owner_id)
+            .bind(position as i64)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_tag(&self, tag: &str) -> AppResult<i64> {
+        if let Some(existing) = sqlx::query_scalar(
+            "SELECT id FROM tags WHERE owner_id = ? AND lower(name) = lower(?) ORDER BY id LIMIT 1",
+        )
+        .bind(self.owner_id)
+        .bind(tag)
+        .fetch_optional(&self.pool)
+        .await?
+        {
+            return Ok(existing);
+        }
+        sqlx::query("INSERT OR IGNORE INTO tags(owner_id, name, created_at) VALUES (?, ?, ?)")
+            .bind(self.owner_id)
+            .bind(tag)
+            .bind(now_string())
+            .execute(&self.pool)
+            .await?;
+        sqlx::query_scalar("SELECT id FROM tags WHERE owner_id = ? AND name = ?")
+            .bind(self.owner_id)
+            .bind(tag)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(AppError::from)
+    }
+
+    async fn delete_entry_row(&self, id: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM entries WHERE id = ? AND owner_id = ?")
+            .bind(id)
+            .bind(self.owner_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     async fn fetch_entry(&self, id: &str) -> AppResult<Entry> {
@@ -983,6 +1181,134 @@ async fn ensure_local_user(pool: &SqlitePool) -> AppResult<i64> {
     Ok(result.last_insert_rowid())
 }
 
+async fn adopt_legacy_entries_to_local_owner(pool: &SqlitePool, owner_id: i64) -> AppResult<()> {
+    sqlx::query("UPDATE entries SET owner_id = ? WHERE owner_id != ?")
+        .bind(owner_id)
+        .bind(owner_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("UPDATE search_chunks SET owner_id = ? WHERE owner_id != ?")
+        .bind(owner_id)
+        .bind(owner_id)
+        .execute(pool)
+        .await?;
+
+    let legacy_tags = sqlx::query("SELECT id, name FROM tags WHERE owner_id != ?")
+        .bind(owner_id)
+        .fetch_all(pool)
+        .await?;
+    for row in legacy_tags {
+        let legacy_id: i64 = row.try_get("id")?;
+        let name: String = row.try_get("name")?;
+        sqlx::query("INSERT OR IGNORE INTO tags(owner_id, name, created_at) VALUES (?, ?, ?)")
+            .bind(owner_id)
+            .bind(&name)
+            .bind(now_string())
+            .execute(pool)
+            .await?;
+        let local_id: i64 =
+            sqlx::query_scalar("SELECT id FROM tags WHERE owner_id = ? AND name = ?")
+                .bind(owner_id)
+                .bind(&name)
+                .fetch_one(pool)
+                .await?;
+        sqlx::query("UPDATE OR IGNORE entry_tags SET tag_id = ?, owner_id = ? WHERE tag_id = ?")
+            .bind(local_id)
+            .bind(owner_id)
+            .bind(legacy_id)
+            .execute(pool)
+            .await?;
+    }
+    sqlx::query("UPDATE entry_tags SET owner_id = ? WHERE owner_id != ?")
+        .bind(owner_id)
+        .bind(owner_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM tags WHERE owner_id != ?")
+        .bind(owner_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn repair_migration_chains(pool: &SqlitePool, owner_id: i64) -> AppResult<()> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, source_entry_id
+        FROM entries
+        WHERE owner_id = ?
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(owner_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut sources: HashMap<String, Option<String>> = HashMap::new();
+    let mut children_by_parent: HashMap<String, Vec<String>> = HashMap::new();
+    for row in rows {
+        let id: String = row.try_get("id")?;
+        let source_entry_id: Option<String> = row.try_get("source_entry_id")?;
+        if let Some(parent_id) = source_entry_id.clone() {
+            children_by_parent
+                .entry(parent_id)
+                .or_default()
+                .push(id.clone());
+        }
+        sources.insert(id, source_entry_id);
+    }
+
+    for (parent_id, children) in &children_by_parent {
+        let current_child: Option<String> = sqlx::query_scalar(
+            "SELECT migrated_to_entry_id FROM entries WHERE id = ? AND owner_id = ?",
+        )
+        .bind(parent_id)
+        .bind(owner_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+        let current_valid = current_child
+            .as_ref()
+            .is_some_and(|child_id| children.iter().any(|child| child == child_id));
+        if !current_valid {
+            sqlx::query(
+                "UPDATE entries SET migrated_to_entry_id = ? WHERE id = ? AND owner_id = ?",
+            )
+            .bind(children.first())
+            .bind(parent_id)
+            .bind(owner_id)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    for id in sources.keys() {
+        let root_id = migration_root_for(id, &sources);
+        sqlx::query("UPDATE entries SET chain_root_id = ? WHERE id = ? AND owner_id = ?")
+            .bind(root_id)
+            .bind(id)
+            .bind(owner_id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+fn migration_root_for(id: &str, sources: &HashMap<String, Option<String>>) -> String {
+    let mut current = id.to_string();
+    let mut seen = HashSet::new();
+    while seen.insert(current.clone()) {
+        let Some(Some(parent_id)) = sources.get(&current) else {
+            break;
+        };
+        if !sources.contains_key(parent_id) {
+            break;
+        }
+        current = parent_id.clone();
+    }
+    current
+}
+
 fn normalize_new_entry_target(
     target_date: Option<&str>,
     target_month: Option<&str>,
@@ -1065,12 +1391,13 @@ fn normalize_import_entry(item: EntryExportSchema, owner_id: i64) -> AppResult<E
     Ok(entry)
 }
 
-fn export_schema_from_entry(entry: Entry) -> EntryExportSchema {
+fn export_schema_from_entry(entry: Entry, tags: Vec<String>) -> EntryExportSchema {
     EntryExportSchema {
         id: entry.id,
         content: Some(entry.content),
         entry_type: entry.entry_type,
         status: entry.status,
+        tags,
         created_at: entry.created_at,
         target_date: entry.target_date,
         target_month: entry.target_month,
@@ -1164,6 +1491,62 @@ fn sanitized_extension(file_name: &str) -> String {
                 .to_ascii_lowercase()
         })
         .unwrap_or_default()
+}
+
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for tag in tags {
+        let Some(value) = normalize_tag(&tag) else {
+            continue;
+        };
+        let key = value.to_lowercase();
+        if seen.insert(key) {
+            normalized.push(value);
+        }
+    }
+    normalized
+}
+
+fn normalize_tag(tag: &str) -> Option<String> {
+    let value = tag
+        .trim()
+        .trim_start_matches('#')
+        .trim_matches(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    ',' | '.'
+                        | ';'
+                        | ':'
+                        | '!'
+                        | '?'
+                        | '，'
+                        | '。'
+                        | '；'
+                        | '：'
+                        | '！'
+                        | '？'
+                        | '、'
+                )
+        })
+        .trim()
+        .to_string();
+    if value.is_empty() || value.chars().any(char::is_whitespace) {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn extract_text_tags(content: &str) -> Vec<String> {
+    let pattern = Regex::new(r"(^|\s)#([^\s#,.!?;:，。！？；：、]+)").expect("valid tag regex");
+    normalize_tags(
+        pattern
+            .captures_iter(content)
+            .filter_map(|captures| captures.get(2).map(|value| value.as_str().to_string()))
+            .collect(),
+    )
 }
 
 fn clean_markdown(markdown: &str) -> String {

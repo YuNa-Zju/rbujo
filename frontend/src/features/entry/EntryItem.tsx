@@ -116,6 +116,7 @@ export default function EntryItem({
           <div className="flex flex-col gap-1.5">
             <EntryDisplay
               content={entry.content}
+              tags={entry.tags || []}
               status={entry.status}
               isTask={isTask}
               forceCollapse={forceCollapse}

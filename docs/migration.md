@@ -24,6 +24,14 @@ cargo run -- migrate-db --source bullet_journal.db --target bullet_journal_v2.db
 
 迁移器不会覆盖 source 数据库。默认服务数据库为 `sqlite://bullet_journal_v2.db`。
 
+原生 tag 回填会把旧正文里的 `#标签` 写入新的 `tags` / `entry_tags` 表。Tauri 启动时会自动执行一次；需要手动重跑时使用:
+
+```bash
+cargo run -- migrate-text-tags --app-dir ".rbujo-local"
+```
+
+`--app-dir` 指向包含 `rbujo.sqlite3` 的本地应用数据目录。命令是幂等的，已有原生 tag 的条目不会重复解析。
+
 ## 新 schema 核心字段
 
 `entries` 关键字段:
@@ -41,6 +49,12 @@ cargo run -- migrate-db --source bullet_journal.db --target bullet_journal_v2.db
 - `migrated_to_month`: 源条目迁移到的 Future Log 月份。
 - `position`: 同一列表容器内排序。
 - `owner_id`: 必填用户 ID。
+
+`tags` 相关字段:
+
+- `tags.name`: owner 下的原生 tag 名称。
+- `entry_tags.entry_id`: 条目和 tag 的关联。
+- `entry_tags.position`: 同一条目内 tag 的展示顺序。
 
 ## Future Log 语义
 

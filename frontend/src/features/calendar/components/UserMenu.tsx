@@ -1,5 +1,5 @@
 import {
-  User,
+  Menu,
   Moon,
   Sun,
   Monitor,
@@ -28,11 +28,6 @@ export default function UserMenu() {
   const navigate = useNavigate();
   const { themeMode, cycleTheme } = useTheme();
   const { lang, toggleLang, t } = useTranslation();
-
-  // 1. 业务逻辑保留
-  const user = { username: "Local" };
-  const username = user.username;
-  const avatarLetter = username.slice(0, 2).toUpperCase();
 
   const handleUpdate = async () => {
     try {
@@ -140,17 +135,9 @@ export default function UserMenu() {
       <div
         tabIndex={0}
         role="button"
-        className="btn btn-ghost btn-circle avatar placeholder hover:bg-base-200 transition-all duration-300"
+        className="btn btn-ghost btn-circle hover:bg-base-200 transition-all duration-300"
       >
-        <div className="bg-linear-to-br from-primary/10 to-primary/5 text-primary rounded-full w-9 h-9 flex items-center justify-center ring-1 ring-base-200 hover:ring-primary/30 hover:shadow-lg hover:shadow-primary/5 transition-all">
-          {user.username ? (
-            <span className="text-xs font-bold leading-none tracking-tighter">
-              {avatarLetter}
-            </span>
-          ) : (
-            <User size={16} />
-          )}
-        </div>
+        <Menu size={20} className="text-base-content/70" />
       </div>
 
       <div
@@ -159,12 +146,12 @@ export default function UserMenu() {
       >
         <div className="bg-base-100/80 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/5 border border-white/10 dark:border-white/5 flex flex-col gap-1.5 p-1.5">
           <div className="px-3 py-3 bg-linear-to-br from-base-100 to-base-200/50 rounded-xl border border-base-200/50 flex items-center gap-3 select-none">
-            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shadow-inner shrink-0">
-              {avatarLetter}
+            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center shadow-inner shrink-0">
+              <Menu size={18} />
             </div>
             <div className="flex flex-col min-w-0 justify-center">
               <span className="text-sm font-bold text-base-content truncate">
-                {username}
+                菜单
               </span>
             </div>
           </div>

@@ -27,6 +27,12 @@ async fn main() -> anyhow::Result<()> {
             legacy_migration::run(args).await?;
             Ok(())
         }
+        Command::MigrateTextTags(args) => {
+            let backend = rbullet_journal::local::LocalBackend::open(args.app_dir).await?;
+            let count = backend.migrate_text_tags_to_native().await?;
+            println!("migrated entries: {count}");
+            Ok(())
+        }
         Command::Users(args) => run_user_command(args).await,
     }
 }

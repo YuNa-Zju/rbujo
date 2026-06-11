@@ -18,26 +18,15 @@ import { useEntryNavigation } from "../../hooks/useEntryNavigation";
 import { EntryCard } from "../DraggableEntryCard";
 import { useAppTheme } from "../../hooks/useAppTheme"; // ✅ 1. 引入 AppTheme
 import { entryEventBus } from "../../lib/entryEventBus";
-import { uiEvents } from "../../lib/uiEvents";
 import { EscModalWrapper } from "../common/EscModalWrapper"; // ✅ 2. 引入 EscWrapper
-
-/**
- * 🚀 Payload 缓冲区
- */
-let searchPayloadBuffer: string | null = null;
-
-uiEvents.on("OPEN_SEARCH", (payload) => {
-  if (typeof payload === "string") {
-    searchPayloadBuffer = payload;
-  }
-});
 
 interface Props {
   isOpen: boolean;
+  initialQuery?: string | null;
   onClose: () => void;
 }
 
-const SearchModal = ({ isOpen, onClose }: Props) => {
+const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
   const { t } = useTranslation();
   const { handleJump } = useEntryNavigation();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -65,16 +54,10 @@ const SearchModal = ({ isOpen, onClose }: Props) => {
 
   // --- 初始化与事件监听 ---
   useEffect(() => {
-    if (searchPayloadBuffer !== null) {
-      setQuery(searchPayloadBuffer);
-      searchPayloadBuffer = null;
+    if (isOpen && typeof initialQuery === "string") {
+      setQuery(initialQuery);
     }
-    const handleLiveEvent = (payload: string | null) => {
-      if (typeof payload === "string") setQuery(payload);
-    };
-    uiEvents.on("OPEN_SEARCH", handleLiveEvent);
-    return () => uiEvents.off("OPEN_SEARCH", handleLiveEvent);
-  }, [isOpen]);
+  }, [isOpen, initialQuery]);
 
   useEffect(() => {
     if (isOpen) {

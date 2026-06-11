@@ -14,7 +14,6 @@ import {
   CheckSquare,
   Minus,
   Code,
-  Hash,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { entryService } from "../../services/entryService";
@@ -93,43 +92,7 @@ export default function MarkdownToolbar({ textareaRef }: Props) {
     }
   };
 
-  // --- 3. 智能 Hashtag 逻辑 ---
-  const handleSmartTag = () => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    const text = textarea.value;
-    const firstLineEndIndex = text.indexOf("\n");
-    const firstLine =
-      firstLineEndIndex === -1 ? text : text.slice(0, firstLineEndIndex);
-
-    // 关键判断：
-    // 1. Tag 行：以 # 开头，且后面紧跟的不是空格 (排除 "# Title")
-    // 2. 标题行：以 # 开头，且后面紧跟空格
-    const isTagLine = firstLine.startsWith("#") && firstLine[1] !== " ";
-
-    if (isTagLine) {
-      // 逻辑 A: 第一行已经是 Tag 行，追加到行末
-      // 这里的 # 前面要加空格，把新标签和旧标签分开
-      const targetPos =
-        firstLineEndIndex === -1 ? text.length : firstLineEndIndex;
-      textarea.setSelectionRange(targetPos, targetPos);
-      executeReplace(" #");
-    } else {
-      // 逻辑 B: 第一行是标题(# Title) 或 普通文本
-      // 在最顶部插入一行 Tag
-      textarea.setSelectionRange(0, 0);
-      // 注意：第一个标签后面不加空格，用户可以直接输入标签名
-      executeReplace("#\n");
-
-      // 光标定位到第一个 # 后面 (位置 1)
-      setTimeout(() => {
-        textarea.setSelectionRange(1, 1);
-      }, 0);
-    }
-  };
-
-  // --- 4. 块级插入 (Code, Math, Divider) ---
+  // --- 3. 块级插入 (Code, Math, Divider) ---
   const insertBlock = (blockType: "code" | "math" | "divider") => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -170,7 +133,7 @@ export default function MarkdownToolbar({ textareaRef }: Props) {
     }, 0);
   };
 
-  // --- 5. 行首修饰 (List, Checkbox, Quote) ---
+  // --- 4. 行首修饰 (List, Checkbox, Quote) ---
   const handleLinePrefix = (prefix: string) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -199,7 +162,7 @@ export default function MarkdownToolbar({ textareaRef }: Props) {
     executeReplace(newContent);
   };
 
-  // --- 6. 有序列表 (1. 2. 3.) ---
+  // --- 5. 有序列表 (1. 2. 3.) ---
   const handleOrderedList = () => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -228,7 +191,7 @@ export default function MarkdownToolbar({ textareaRef }: Props) {
     executeReplace(newContent);
   };
 
-  // --- 7. 批量上传 ---
+  // --- 6. 批量上传 ---
   const handleBatchUpload = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
     setIsUploading(true);
@@ -347,13 +310,6 @@ export default function MarkdownToolbar({ textareaRef }: Props) {
 
       {/* Inserts */}
       <ToolBtn icon={Link} onClick={handleLink} title="Link" />
-
-      {/* ✅ 智能 Hashtag 按钮 */}
-      <ToolBtn
-        icon={Hash}
-        onClick={handleSmartTag}
-        title="Tag (Auto-position)"
-      />
 
       <ToolBtn
         icon={Code}

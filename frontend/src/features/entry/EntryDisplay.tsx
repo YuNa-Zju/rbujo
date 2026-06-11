@@ -16,6 +16,7 @@ import { getSmartSummary } from "../../utils/markdownUtils";
 
 interface Props {
   content: string;
+  tags?: string[];
   status: string;
   isTask?: boolean;
   // ✅ 新增：接收 entryType 以支持动态主题色 (task/idea/event)
@@ -29,6 +30,7 @@ interface Props {
 
 export default function EntryDisplay({
   content,
+  tags = [],
   status,
   isTask = false,
   entryType = "task", // ✅ 默认值为 task
@@ -77,7 +79,7 @@ export default function EntryDisplay({
         }`}
       >
         {/* 各种小图标 */}
-        {summary.meta.hasTag && <Hash size={iconSize} className={iconClass} />}
+        {tags.length > 0 && <Hash size={iconSize} className={iconClass} />}
         {summary.meta.hasImage && (
           <ImageIcon size={iconSize} className={iconClass} />
         )}
@@ -111,6 +113,7 @@ export default function EntryDisplay({
     <div className="select-text" onClick={(e) => e.stopPropagation()}>
       <MarkdownViewer
         content={content}
+        tags={tags}
         // ✅ 关键修复：传递 entryType 给 MarkdownViewer
         entryType={entryType}
         // ✅ 关键修复：绝对不包含 "prose"，避免样式覆盖

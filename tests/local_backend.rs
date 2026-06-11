@@ -1,5 +1,6 @@
 use std::fs;
 
+use rbullet_journal::db;
 use rbullet_journal::local::{
     CreateEntryInput, EntryPatch, LocalBackend, SearchMode, SearchOptions, UploadInput,
 };
@@ -9,6 +10,10 @@ fn temp_app_dir(label: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("rbujo-{label}-{}", Uuid::new_v4()));
     fs::create_dir_all(&path).expect("create temp app dir");
     path
+}
+
+fn sqlite_url(dir: &std::path::Path) -> String {
+    format!("sqlite://{}", dir.join("rbujo.sqlite3").display())
 }
 
 #[tokio::test]
@@ -22,6 +27,7 @@ async fn archived_entries_are_hidden_from_daily_but_search_can_include_them() {
             target_date: Some("2026-06-11".to_string()),
             target_month: None,
             is_future: false,
+            tags: vec!["毕业设计".to_string()],
         })
         .await
         .unwrap();
@@ -60,6 +66,134 @@ async fn archived_entries_are_hidden_from_daily_but_search_can_include_them() {
 }
 
 #[tokio::test]
+async fn native_tags_are_stored_separately_and_filter_search() {
+    let dir = temp_app_dir("native-tags");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "复习概率论，不在正文写 hashtag".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-11".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["课程".to_string(), "#AI".to_string(), "课程".to_string()],
+        })
+        .await
+        .unwrap();
+
+    assert!(entry.tags.contains(&"课程".to_string()));
+    assert!(entry.tags.contains(&"AI".to_string()));
+    assert_eq!(entry.tags.len(), 2);
+
+    let by_tag = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            mode: SearchMode::Text,
+            tags: vec!["AI".to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(by_tag.len(), 1);
+    assert_eq!(by_tag[0].entry.id, entry.id);
+
+    let updated = backend
+        .update_entry(
+            entry.id.clone(),
+            EntryPatch {
+                tags: Some(vec!["数学".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.tags, vec!["数学".to_string()]);
+
+    let old_tag = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            mode: SearchMode::Text,
+            tags: vec!["AI".to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(old_tag.is_empty());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn native_tag_search_is_case_insensitive() {
+    let dir = temp_app_dir("native-tag-case");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "大小写 tag 搜索".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-11".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["AI".to_string()],
+        })
+        .await
+        .unwrap();
+
+    let lower = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            tags: vec!["ai".to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(lower.len(), 1);
+    assert_eq!(lower[0].entry.id, entry.id);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn tag_migration_script_parses_existing_text_tags_once() {
+    let dir = temp_app_dir("text-tag-migration");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "#课程 #AI\n迁移旧标签到原生字段".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-11".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    assert!(entry.tags.is_empty());
+
+    let migrated = backend.migrate_text_tags_to_native().await.unwrap();
+    assert_eq!(migrated, 1);
+
+    let by_tag = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            mode: SearchMode::Text,
+            tags: vec!["课程".to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(by_tag.len(), 1);
+    assert_eq!(by_tag[0].entry.id, entry.id);
+    assert!(by_tag[0].entry.tags.contains(&"课程".to_string()));
+    assert!(by_tag[0].entry.tags.contains(&"AI".to_string()));
+
+    let second_run = backend.migrate_text_tags_to_native().await.unwrap();
+    assert_eq!(second_run, 0);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn migration_chain_tracks_daily_future_daily_links() {
     let dir = temp_app_dir("chain");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -70,6 +204,7 @@ async fn migration_chain_tracks_daily_future_daily_links() {
             target_date: Some("2026-06-11".to_string()),
             target_month: None,
             is_future: false,
+            tags: vec!["毕业设计".to_string()],
         })
         .await
         .unwrap();
@@ -107,6 +242,113 @@ async fn migration_chain_tracks_daily_future_daily_links() {
 }
 
 #[tokio::test]
+async fn opening_local_backend_adopts_legacy_owner_and_backfills_chain() {
+    let dir = temp_app_dir("legacy-adopt");
+    let pool = db::connect(&sqlite_url(&dir)).await.unwrap();
+    db::ensure_schema(&pool).await.unwrap();
+    let owner_id = sqlx::query("INSERT INTO users(username, hashed_password) VALUES ('old', 'x')")
+        .execute(&pool)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+    sqlx::query(
+        r#"
+        INSERT INTO entries(
+            id, content, entry_type, status, created_at, target_date, is_future, owner_id,
+            position, migrated_to_month
+        ) VALUES ('legacy-root', '旧任务 #旧标签', 'task', 'future', '2026-06-10 08:00:00',
+                  '2026-06-10', 0, ?, 0, '2026-07')
+        "#,
+    )
+    .bind(owner_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"
+        INSERT INTO entries(
+            id, content, entry_type, status, created_at, target_month, is_future, source_entry_id,
+            owner_id, position, from_date
+        ) VALUES ('legacy-child', '旧任务 #旧标签', 'task', 'open', '2026-06-10 08:01:00',
+                  '2026-07', 1, 'legacy-root', ?, 0, '2026-06-10')
+        "#,
+    )
+    .bind(owner_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    drop(pool);
+
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let daily = backend.get_daily_log("2026-06-10", true).await.unwrap();
+    assert!(daily.iter().any(|entry| entry.id == "legacy-root"));
+
+    let chain = backend
+        .get_migration_chain("legacy-root".to_string())
+        .await
+        .unwrap();
+    let ids: Vec<_> = chain.into_iter().map(|entry| entry.id).collect();
+    assert_eq!(
+        ids,
+        vec!["legacy-root".to_string(), "legacy-child".to_string()]
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn opening_local_backend_repairs_stale_migrated_to_pointer() {
+    let dir = temp_app_dir("legacy-stale-chain");
+    let pool = db::connect(&sqlite_url(&dir)).await.unwrap();
+    db::ensure_schema(&pool).await.unwrap();
+    let owner_id = sqlx::query("INSERT INTO users(username, hashed_password) VALUES ('old', 'x')")
+        .execute(&pool)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+    sqlx::query(
+        r#"
+        INSERT INTO entries(
+            id, content, entry_type, status, created_at, target_date, owner_id,
+            migrated_to_entry_id
+        ) VALUES ('stale-root', '旧链路 stale 指针', 'task', 'forward',
+                  '2026-06-10 08:00:00', '2026-06-10', ?, 'missing-child')
+        "#,
+    )
+    .bind(owner_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"
+        INSERT INTO entries(
+            id, content, entry_type, status, created_at, target_date, source_entry_id,
+            owner_id
+        ) VALUES ('real-child', '旧链路 stale 指针', 'task', 'open',
+                  '2026-06-11 08:00:00', '2026-06-11', 'stale-root', ?)
+        "#,
+    )
+    .bind(owner_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    drop(pool);
+
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let chain = backend
+        .get_migration_chain("stale-root".to_string())
+        .await
+        .unwrap();
+    let ids: Vec<_> = chain.into_iter().map(|entry| entry.id).collect();
+    assert_eq!(
+        ids,
+        vec!["stale-root".to_string(), "real-child".to_string()]
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn reopen_deletes_downstream_migration_chain() {
     let dir = temp_app_dir("reopen");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -117,6 +359,7 @@ async fn reopen_deletes_downstream_migration_chain() {
             target_date: Some("2026-06-11".to_string()),
             target_month: None,
             is_future: false,
+            tags: vec!["毕业设计".to_string()],
         })
         .await
         .unwrap();
@@ -161,6 +404,85 @@ async fn reopen_deletes_downstream_migration_chain() {
 }
 
 #[tokio::test]
+async fn archived_migrated_stubs_remain_searchable_for_archive_restore() {
+    let dir = temp_app_dir("archive-stub");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let root = backend
+        .create_entry(CreateEntryInput {
+            content: "归档一个已迁移任务".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-11".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .migrate_entry_to_future(root.id.clone(), Some("2026-07".to_string()))
+        .await
+        .unwrap();
+    backend.archive_entry(root.id.clone()).await.unwrap();
+
+    let archived = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            include_archived: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(archived.iter().any(|result| result.entry.id == root.id));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn hard_delete_middle_entry_removes_downstream_and_repairs_parent_link() {
+    let dir = temp_app_dir("hard-delete-chain");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let root = backend
+        .create_entry(CreateEntryInput {
+            content: "删除中间迁移节点".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-11".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let future = backend
+        .migrate_entry_to_future(root.id.clone(), Some("2026-07".to_string()))
+        .await
+        .unwrap()
+        .created_entry;
+    let daily = backend
+        .migrate_entry_to_date(future.id.clone(), "2026-07-05".to_string())
+        .await
+        .unwrap()
+        .created_entry;
+
+    backend.delete_entry(future.id.clone()).await.unwrap();
+    let chain = backend.get_migration_chain(root.id.clone()).await.unwrap();
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].migrated_to_entry_id, None);
+
+    let results = backend
+        .search_entries(SearchOptions {
+            query: "删除中间迁移节点".to_string(),
+            include_archived: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(results.iter().all(|result| result.entry.id != future.id));
+    assert!(results.iter().all(|result| result.entry.id != daily.id));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn future_entry_can_move_between_month_and_someday() {
     let dir = temp_app_dir("future-move");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -171,6 +493,7 @@ async fn future_entry_can_move_between_month_and_someday() {
             target_date: None,
             target_month: Some("2026-09".to_string()),
             is_future: true,
+            tags: Vec::new(),
         })
         .await
         .unwrap();
@@ -230,6 +553,7 @@ async fn semantic_search_supports_chinese_ranked_retrieval() {
             target_date: Some("2026-06-11".to_string()),
             target_month: None,
             is_future: false,
+            tags: Vec::new(),
         })
         .await
         .unwrap();
@@ -240,6 +564,7 @@ async fn semantic_search_supports_chinese_ranked_retrieval() {
             target_date: Some("2026-06-11".to_string()),
             target_month: None,
             is_future: false,
+            tags: Vec::new(),
         })
         .await
         .unwrap();
@@ -297,6 +622,7 @@ async fn backup_roundtrip_preserves_archive_and_migration_chain() {
             target_date: Some("2026-06-11".to_string()),
             target_month: None,
             is_future: false,
+            tags: vec!["毕业设计".to_string()],
         })
         .await
         .unwrap();
@@ -328,6 +654,7 @@ async fn backup_roundtrip_preserves_archive_and_migration_chain() {
         .find(|entry| entry.id == root.id)
         .expect("archived root should roundtrip");
     assert!(imported_root.archived_at.is_some());
+    assert_eq!(imported_root.tags, vec!["毕业设计".to_string()]);
 
     let chain = target.get_migration_chain(root.id.clone()).await.unwrap();
     let chain_ids: Vec<_> = chain.into_iter().map(|entry| entry.id).collect();

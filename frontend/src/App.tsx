@@ -6,22 +6,25 @@ import { EntryModalProvider } from "./context/EntryModalContext";
 import GlobalEntryModals from "./components/modals/GlobalEntryModals";
 import GlobalUIModals from "./components/modals/GlobalUIModals";
 import GlobalCommandPalette from "./components/modals/cmdk/GlobalCommandPalette";
+import { ModalControllerProvider } from "./context/ModalControllerContext";
 
 export default function App() {
   return (
     <EntryModalProvider>
       <BrowserRouter>
-        <GlobalCommandPalette />
+        <ModalControllerProvider>
+          <GlobalCommandPalette />
 
-        <Routes>
-          <Route path="/" element={<CalendarPage />} />
-          <Route path="/daily/:dateStr" element={<DailyPage />} />
-          <Route path="/archive" element={<ArchivePage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+          <Routes>
+            <Route path="/" element={<CalendarPage />} />
+            <Route path="/daily/:dateStr" element={<DailyPage />} />
+            <Route path="/archive" element={<ArchivePage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
 
-        <GlobalEntryModals />
-        <GlobalUIModals />
+          <GlobalEntryModals />
+          <GlobalUIModals />
+        </ModalControllerProvider>
       </BrowserRouter>
     </EntryModalProvider>
   );

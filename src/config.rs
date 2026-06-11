@@ -15,6 +15,7 @@ pub struct Cli {
 pub enum Command {
     Serve(ServeArgs),
     MigrateDb(MigrateDbArgs),
+    MigrateTextTags(MigrateTextTagsArgs),
     Users(UserArgs),
 }
 
@@ -60,6 +61,12 @@ pub struct MigrateDbArgs {
 
     #[arg(long)]
     pub dry_run: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct MigrateTextTagsArgs {
+    #[arg(long, env = "RBUJO_APP_DIR", default_value = ".rbujo-local")]
+    pub app_dir: PathBuf,
 }
 
 #[derive(Debug, Args, Clone)]

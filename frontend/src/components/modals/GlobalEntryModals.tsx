@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { entryService } from "../../services/entryService";
 import { entryEventBus, type MigratePayload } from "../../lib/entryEventBus";
-import { uiEvents, type EntryActionPayload } from "../../lib/uiEvents";
+import { useModalController } from "../../context/ModalControllerContext";
 
 import MigrateModal from "./MigrateModal";
 import FutureModal from "./FutureModal";
@@ -11,6 +11,7 @@ import ShareEntryModal, {
 } from "../../components/modals/ShareEntryModal";
 
 export default function GlobalEntryModals() {
+  const { entryActionRequest, clearEntryAction } = useModalController();
   const [selectedEntry, setSelectedEntry] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [dateInput, setDateInput] = useState("");
@@ -22,66 +23,45 @@ export default function GlobalEntryModals() {
   const shareRef = useRef<ShareEntryModalRef>(null);
 
   useEffect(() => {
-    // ✅ 修改点 1：解构出 defaultDate
-    const openMigrate = ({ entry, defaultDate }: EntryActionPayload) => {
-      setSelectedEntry(entry);
+    if (!entryActionRequest || entryActionRequest.kind === "edit") return;
 
+    const { entry, defaultDate, defaultMonth } = entryActionRequest.payload;
+    setSelectedEntry(entry);
+
+    if (entryActionRequest.kind === "migrate") {
       if (defaultDate) {
-        // 如果 Hook 传了计算好的“下一天”，直接用
         setDateInput(defaultDate);
       } else {
-        // 兜底逻辑（保持你原来的）：
         const now = new Date();
         now.setDate(now.getDate() + 1);
         setDateInput(entry.target_date || now.toISOString().split("T")[0]);
       }
-
       migrateRef.current?.showModal();
-    };
+      return;
+    }
 
-    // ✅ 修改点 2：解构出 defaultMonth
-    const openFuture = ({ entry, defaultMonth }: EntryActionPayload) => {
-      setSelectedEntry(entry);
-
-      if (defaultMonth) {
-        // 如果 Hook 传了“本月”，直接用
-        setFutureMonth(defaultMonth);
-      } else {
-        // 兜底逻辑（保持你原来的）：
-        setFutureMonth(entry.target_month || "");
-      }
-
+    if (entryActionRequest.kind === "future") {
+      setFutureMonth(defaultMonth || entry.target_month || "");
       futureRef.current?.showModal();
-    };
+      return;
+    }
 
-    const openDelete = ({ entry }: EntryActionPayload) => {
-      setSelectedEntry(entry);
+    if (entryActionRequest.kind === "delete") {
       deleteRef.current?.showModal();
-    };
+      return;
+    }
 
-    const openShare = ({ entry }: EntryActionPayload) => {
-      setSelectedEntry(entry);
+    if (entryActionRequest.kind === "share") {
       shareRef.current?.open(String(entry.id));
-    };
-
-    uiEvents.on("OPEN_MIGRATE_ENTRY", openMigrate);
-    uiEvents.on("OPEN_FUTURE_ENTRY", openFuture);
-    uiEvents.on("OPEN_DELETE_ENTRY", openDelete);
-    uiEvents.on("OPEN_SHARE_ENTRY", openShare);
-
-    return () => {
-      uiEvents.off("OPEN_MIGRATE_ENTRY", openMigrate);
-      uiEvents.off("OPEN_FUTURE_ENTRY", openFuture);
-      uiEvents.off("OPEN_DELETE_ENTRY", openDelete);
-      uiEvents.off("OPEN_SHARE_ENTRY", openShare);
-    };
-  }, []);
+    }
+  }, [entryActionRequest]);
 
   const handleClose = () => {
     migrateRef.current?.close();
     futureRef.current?.close();
     deleteRef.current?.close();
     setTimeout(() => setSelectedEntry(null), 300);
+    clearEntryAction();
   };
 
   /**
