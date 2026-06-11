@@ -25,6 +25,7 @@ interface EntryItemProps {
   onEditingChange?: (isEditing: boolean) => void;
   useInlineEditor?: boolean;
   isTagClickable?: boolean;
+  hideActions?: boolean;
 }
 
 export default function EntryItem({
@@ -35,6 +36,7 @@ export default function EntryItem({
   onEditingChange,
   useInlineEditor = false,
   isTagClickable = true,
+  hideActions = false,
 }: EntryItemProps) {
   const { t } = useTranslation();
   const { handleJump } = useEntryNavigation();
@@ -176,7 +178,7 @@ export default function EntryItem({
       </div>
 
       {/* Action Buttons */}
-      {!isEditing && !forceCollapse && (
+      {!isEditing && !forceCollapse && !hideActions && (
         <div className="flex-none">
           <EntryActions
             entryId={entry.id} // 传入 ID 以支持菜单互斥
@@ -187,7 +189,7 @@ export default function EntryItem({
             onToggleStatus={handleStatusToggle}
             onMigrate={actions.openMigrate}
             onFuture={actions.openFuture}
-            onDelete={actions.openDelete}
+            onCancel={actions.performCancel}
             onArchive={actions.performArchive}
             isArchived={Boolean(entry.archived_at)}
           />

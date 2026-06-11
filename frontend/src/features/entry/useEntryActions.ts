@@ -304,6 +304,10 @@ export function useEntryActions(
     });
   };
 
+  const performCancel = () => {
+    performDelete(false);
+  };
+
   // --- 🔴 快捷操作 (Shortcuts) ---
   // 这里必须复刻 confirmMigrate 的逻辑，否则快捷操作会导致数据不一致
 
@@ -415,6 +419,7 @@ export function useEntryActions(
       confirmMigrate,
       confirmFuture,
       performDelete,
+      performCancel,
       performArchive,
     },
   };

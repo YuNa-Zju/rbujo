@@ -2,12 +2,12 @@ import {
   Edit3,
   ArrowRight,
   CalendarClock,
-  Trash2,
   MoreHorizontal,
   Copy,
   Check,
   RotateCcw,
   Archive,
+  XCircle,
 } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
 import { useRef, useEffect } from "react";
@@ -21,7 +21,7 @@ interface Props {
   onEdit: () => void;
   onMigrate: () => void;
   onFuture: () => void;
-  onDelete: () => void;
+  onCancel: () => void;
   onToggleStatus: () => void;
   onArchive: () => void;
   isArchived?: boolean;
@@ -35,7 +35,7 @@ export default function EntryActions({
   onEdit,
   onMigrate,
   onFuture,
-  onDelete,
+  onCancel,
   onToggleStatus,
   onArchive,
   isArchived = false,
@@ -189,16 +189,17 @@ export default function EntryActions({
           </li>
         )}
 
-        {/* 删除 */}
-        <li>
-          <button
-            onClick={handleAction(onDelete)}
-            className="tooltip tooltip-bottom tooltip-error p-2 rounded-lg hover:bg-error/10"
-            data-tip={t.common.delete}
-          >
-            <Trash2 size={18} className="text-error" />
-          </button>
-        </li>
+        {status !== "cancelled" && (
+          <li>
+            <button
+              onClick={handleAction(onCancel)}
+              className="tooltip tooltip-bottom tooltip-error p-2 rounded-lg hover:bg-error/10"
+              data-tip={t.entry?.softDelete || "Mark as Cancelled"}
+            >
+              <XCircle size={18} className="text-error" />
+            </button>
+          </li>
+        )}
       </ul>
     </details>
   );

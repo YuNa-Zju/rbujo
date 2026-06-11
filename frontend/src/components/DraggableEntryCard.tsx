@@ -19,6 +19,7 @@ interface DraggableEntryCardProps {
   className?: string;
   disableOverflowCheck?: boolean;
   isTagClickable?: boolean;
+  hideActions?: boolean;
 }
 
 export const EntryCard = memo(
@@ -35,6 +36,7 @@ export const EntryCard = memo(
       isDragEnabled = true,
       disableOverflowCheck = false,
       isTagClickable = true,
+      hideActions = false,
     } = props;
 
     const theme =
@@ -99,6 +101,7 @@ export const EntryCard = memo(
                   disableOverflowCheck || isOverlay || isDragging
                 }
                 isTagClickable={isTagClickable}
+                hideActions={hideActions}
               />
             </div>
           </div>

@@ -22,6 +22,7 @@ export const translations = {
       today: "今天",
       results: "篇条目",
       close: "关闭",
+      back: "返回",
       archive: "归档",
       // ✅ 新增
       next: "下一步",
@@ -34,6 +35,14 @@ export const translations = {
         light: "亮色模式",
         dark: "暗色模式",
       },
+    },
+    archivePage: {
+      title: "归档",
+      searchPlaceholder: "搜索归档条目",
+      empty: "暂无归档条目",
+      restore: "恢复",
+      deletePermanently: "彻底删除",
+      future: "未来",
     },
     auth: {
       // --- 登录 / 注册页面 ---
@@ -413,6 +422,7 @@ export const translations = {
       today: "Today",
       results: "Entries found",
       close: "Close",
+      back: "Back",
       archive: "Archive",
       // ✅ Added
       next: "Next",
@@ -425,6 +435,14 @@ export const translations = {
         light: "LIGHT",
         dark: "DARK",
       },
+    },
+    archivePage: {
+      title: "Archive",
+      searchPlaceholder: "Search archived entries",
+      empty: "No archived entries",
+      restore: "Restore",
+      deletePermanently: "Delete permanently",
+      future: "Future",
     },
     auth: {
       // --- Login / Register Page ---

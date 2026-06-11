@@ -13,9 +13,11 @@ import { entryService } from "../../services/entryService";
 import { EntryCard } from "../../components/DraggableEntryCard";
 import { entryEventBus } from "../../lib/entryEventBus";
 import HeaderActionTrigger from "../calendar/components/HeaderActionTrigger";
+import { useTranslation } from "../../hooks/useTranslation";
 
 export default function ArchivePage() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [entries, setEntries] = useState<any[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -76,14 +78,16 @@ export default function ArchivePage() {
           <button
             className="btn btn-ghost btn-circle btn-sm text-base-content/60"
             onClick={() => navigate("/")}
-            title="Back"
+            title={t.common?.back || "Back"}
           >
             <ArrowLeft size={20} />
           </button>
         </div>
         <div className="flex items-center gap-2">
           <Archive size={18} className="text-primary" />
-          <span className="text-lg font-serif font-bold">Archive</span>
+          <span className="text-lg font-serif font-bold">
+            {t.archivePage?.title || t.common?.archive || "Archive"}
+          </span>
         </div>
         <div className="flex items-center justify-end">
           <HeaderActionTrigger />
@@ -98,7 +102,9 @@ export default function ArchivePage() {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search archived entries"
+                placeholder={
+                  t.archivePage?.searchPlaceholder || "Search archived entries"
+                }
                 className="bg-transparent outline-none w-full text-sm font-medium"
               />
             </div>
@@ -113,7 +119,9 @@ export default function ArchivePage() {
               <div className="w-16 h-16 rounded-full bg-base-200/70 flex items-center justify-center mb-4">
                 <Archive size={26} />
               </div>
-              <p className="font-serif italic text-xl">No archived entries</p>
+              <p className="font-serif italic text-xl">
+                {t.archivePage?.empty || "No archived entries"}
+              </p>
             </div>
           ) : (
             <div className="flex flex-col gap-4 pb-24">
@@ -125,20 +133,27 @@ export default function ArchivePage() {
                       className="flex items-center gap-2 text-xs font-mono font-bold text-base-content/45 hover:text-primary transition-colors"
                     >
                       <CalendarDays size={13} />
-                      {entry.target_date || entry.target_month || "Future"}
+                      {entry.target_date ||
+                        entry.target_month ||
+                        t.archivePage?.future ||
+                        "Future"}
                     </button>
                     <div className="flex items-center gap-1">
                       <button
                         className="btn btn-xs btn-ghost rounded-full gap-1"
                         onClick={() => handleUnarchive(entry)}
+                        title={t.archivePage?.restore || "Restore"}
                       >
                         <RotateCcw size={13} />
-                        Restore
+                        {t.archivePage?.restore || "Restore"}
                       </button>
                       <button
                         className="btn btn-xs btn-ghost text-error rounded-full"
                         onClick={() => handleDelete(entry)}
-                        title="Delete permanently"
+                        title={
+                          t.archivePage?.deletePermanently ||
+                          "Delete permanently"
+                        }
                       >
                         <Trash2 size={13} />
                       </button>
@@ -149,6 +164,7 @@ export default function ArchivePage() {
                     refresh={loadArchived}
                     isDragEnabled={false}
                     forceCollapse={false}
+                    hideActions
                     isTagClickable={false}
                   />
                 </div>
