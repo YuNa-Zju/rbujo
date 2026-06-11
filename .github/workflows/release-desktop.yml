@@ -49,7 +49,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tauriScript: npm --prefix frontend run tauri --
+          tauriScript: npm run --prefix frontend tauri
           tagName: v__VERSION__
           releaseName: rbujo v__VERSION__
           releaseBody: Desktop installers and updater metadata. Download the installer for your platform.
