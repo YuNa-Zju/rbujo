@@ -6,6 +6,7 @@ import {
   Languages,
   Archive,
   FileArchive,
+  Info,
   Rss,
   RefreshCw,
 } from "lucide-react";
@@ -37,6 +38,10 @@ export default function UserMenu() {
 
   const handleCheckUpdate = () => {
     uiEvents.emit("OPEN_CHECK_UPDATE");
+  };
+
+  const handleOpenVersionInfo = () => {
+    uiEvents.emit("OPEN_VERSION_INFO");
   };
 
   const handleOpenArchive = () => {
@@ -140,6 +145,11 @@ export default function UserMenu() {
             label={t?.common?.language || "Language"}
             value={LANG_MAP[lang] || lang.toUpperCase()}
             onClick={toggleLang}
+          />
+          <MenuItem
+            icon={Info}
+            label={t.common?.versionInfo || "Version Info"}
+            onClick={handleOpenVersionInfo}
           />
         </div>
       </div>

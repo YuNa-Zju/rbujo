@@ -61,7 +61,8 @@ jobs:
             - 修复 Tauri 2 capability 缺失导致的原生菜单失效问题。
             - 修复检查更新缺少 updater 权限和 release 元数据导致的失败提示。
             - 修复 release workflow 的 updater JSON 上传参数，确保 `latest.json` 会发布到 GitHub Release。
-            - 显式生成 updater artifacts，保证 0.1.x 客户端可以检测到 0.2.0 更新。
+            - 在右上角主菜单末尾新增“版本信息”弹窗，用于确认当前安装版本。
+            - 显式生成 updater artifacts，保证旧客户端可以检测到当前更新。
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

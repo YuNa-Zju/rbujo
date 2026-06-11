@@ -9,6 +9,7 @@ import GlobalCommandPalette from "./components/modals/cmdk/GlobalCommandPalette"
 import { ModalControllerProvider } from "./context/ModalControllerContext";
 import { Toaster } from "sonner";
 import UpdateCheckController from "./components/modals/UpdateCheckController";
+import VersionInfoController from "./components/modals/VersionInfoController";
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <GlobalEntryModals />
           <GlobalUIModals />
           <UpdateCheckController />
+          <VersionInfoController />
           <Toaster
             position="bottom-center"
             expand={false}

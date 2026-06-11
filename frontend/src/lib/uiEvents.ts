@@ -33,6 +33,7 @@ type UIEventType =
   | "OPEN_CMD_PALETTE"
   | "OPEN_BACKUP"
   | "OPEN_CHECK_UPDATE"
+  | "OPEN_VERSION_INFO"
   // ✅ 新增：统一关闭信号
   | "CLOSE_MODALS";
 
@@ -51,6 +52,7 @@ interface UIEventPayloads {
   OPEN_CMD_PALETTE: void;
   OPEN_BACKUP: void;
   OPEN_CHECK_UPDATE: void;
+  OPEN_VERSION_INFO: void;
   // ✅ 新增
   CLOSE_MODALS: CloseModalsPayload | undefined;
 }
@@ -76,6 +78,7 @@ class UIEventEmitter {
     "OPEN_EDIT_ENTRY",
     "OPEN_BACKUP",
     "OPEN_CHECK_UPDATE",
+    "OPEN_VERSION_INFO",
   ]);
 
   on<T extends UIEventType>(event: T, listener: UIEventListener<T>) {

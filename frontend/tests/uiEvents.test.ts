@@ -16,3 +16,17 @@ test("replays check update menu requests to late listeners", () => {
 
   uiEvents.off("OPEN_CHECK_UPDATE" as any, listener);
 });
+
+test("replays version info menu requests to late listeners", () => {
+  let calls = 0;
+  const listener = () => {
+    calls += 1;
+  };
+
+  uiEvents.emit("OPEN_VERSION_INFO" as any);
+  uiEvents.on("OPEN_VERSION_INFO" as any, listener);
+
+  assert.equal(calls, 1);
+
+  uiEvents.off("OPEN_VERSION_INFO" as any, listener);
+});
