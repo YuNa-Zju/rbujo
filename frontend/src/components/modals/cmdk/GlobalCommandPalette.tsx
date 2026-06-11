@@ -38,6 +38,7 @@ import { getSmartSummary } from "../../../utils/markdownUtils";
 import { useTranslation } from "../../../hooks/useTranslation";
 import { useTheme } from "../../../hooks/useTheme";
 import { cacheStorage } from "../../../utils/cacheStorage";
+import { useTagCache } from "../../../context/TagCacheContext";
 
 import { Kbd, Item } from "./CmdkComponents";
 import EntryActionView from "./EntryActionView";
@@ -62,9 +63,16 @@ const STATUS_COLORS: Record<string, string> = {
   future: "text-warning",
 };
 
+const normalizeCommandTag = (value: string) =>
+  value
+    .trim()
+    .replace(/^#+/, "")
+    .replace(/^[,，;；:：\s]+|[,，;；:：\s]+$/g, "");
+
 export default function GlobalCommandPalette() {
   const { t, lang, toggleLang } = useTranslation();
   const { themeMode, cycleTheme } = useTheme();
+  const { allTags, refreshTags } = useTagCache();
 
   const [open, setOpen] = useState(false);
   const [inputValue, setInputValue] = useState("");
@@ -183,13 +191,18 @@ export default function GlobalCommandPalette() {
   useEffect(() => {
     const handleOpenSignal = () => {
       setOpen(true);
+      void refreshTags();
       resetContext();
     };
     uiEvents.on("OPEN_CMD_PALETTE", handleOpenSignal);
     return () => {
       uiEvents.off("OPEN_CMD_PALETTE", handleOpenSignal);
     };
-  }, [resetContext]);
+  }, [refreshTags, resetContext]);
+
+  useEffect(() => {
+    if (open) void refreshTags();
+  }, [open, refreshTags]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -225,6 +238,23 @@ export default function GlobalCommandPalette() {
     };
     return map[themeMode] || themeMode.toUpperCase();
   };
+
+  const normalizedTagInput = normalizeCommandTag(inputValue);
+
+  const filteredTagSuggestions = useMemo(() => {
+    if (!inputValue.trim()) return [];
+    const needle = normalizedTagInput.toLowerCase();
+    if (!needle) return [];
+    return allTags
+      .filter((tag) => tag.toLowerCase().includes(needle))
+      .sort((a, b) => {
+        const aStarts = a.toLowerCase().startsWith(needle);
+        const bStarts = b.toLowerCase().startsWith(needle);
+        if (aStarts === bStarts) return a.localeCompare(b);
+        return aStarts ? -1 : 1;
+      })
+      .slice(0, 8);
+  }, [allTags, inputValue, normalizedTagInput]);
 
   if (!open) return null;
 
@@ -316,13 +346,30 @@ export default function GlobalCommandPalette() {
                   />
                   <Item
                     icon={<Hash />}
-                    label={`"${inputValue}"`}
-                    value={`tag filter ${inputValue}`}
+                    label={`#${normalizedTagInput || inputValue}`}
+                    value={`tag filter hashtag ${inputValue} ${normalizedTagInput}`}
                     subLabel={t.command?.filterTag}
                     onSelect={() =>
-                      run(() => uiEvents.emit("OPEN_TAG_SEARCH", inputValue))
+                      run(() =>
+                        uiEvents.emit(
+                          "OPEN_TAG_SEARCH",
+                          normalizedTagInput || inputValue,
+                        ),
+                      )
                     }
                   />
+                  {filteredTagSuggestions.map((tag) => (
+                    <Item
+                      key={tag}
+                      icon={<Hash />}
+                      label={`#${tag}`}
+                      value={`tag filter hashtag ${tag}`}
+                      subLabel={t.command?.filterTag}
+                      onSelect={() =>
+                        run(() => uiEvents.emit("OPEN_TAG_SEARCH", tag))
+                      }
+                    />
+                  ))}
                 </Command.Group>
               )}
 
@@ -352,6 +399,9 @@ export default function GlobalCommandPalette() {
                         ENTRY_THEME[entry.entry_type as EntryType] ||
                         ENTRY_THEME.task;
                       const { text, meta } = getSmartSummary(entry.content);
+                      const entryTags = Array.isArray(entry.tags)
+                        ? entry.tags.join(" ")
+                        : "";
                       const Icon = theme.icon;
                       const StatusIcon = STATUS_ICONS[entry.status] || Circle;
                       const statusColor =
@@ -369,7 +419,7 @@ export default function GlobalCommandPalette() {
                         <Command.Item
                           key={entry.id}
                           onSelect={() => openEntryActions(entry)}
-                          value={`${text} ${entry.entry_type} ${entry.status} ${entry.id}`}
+                          value={`${text} ${entryTags} ${entry.entry_type} ${entry.status} ${entry.id}`}
                           className="relative flex items-center gap-4 px-5 py-4 rounded-2xl text-base font-medium transition-all duration-200 cursor-pointer group font-lxgw
                                      border border-transparent bg-base-100 shadow-sm
                                      data-[selected=true]:bg-primary/5 data-[selected=true]:border-primary/20 data-[selected=true]:shadow-md data-[selected=true]:scale-[1.01]"
