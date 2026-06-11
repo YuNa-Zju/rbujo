@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rbullet_journal::local::{
     CreateEntryInput, EntryPatch, FutureLogResponse, LocalBackend, MigrationResult, SearchOptions,
@@ -7,14 +7,68 @@ use rbullet_journal::local::{
 use rbullet_journal::models::{
     EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
 };
+use serde::Serialize;
 use tauri::{
+    AppHandle, Emitter, Manager, State,
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    Emitter, Manager, State,
 };
+use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[derive(Clone)]
 struct DesktopState {
     backend: Arc<LocalBackend>,
+}
+
+struct PendingUpdate(Mutex<Option<Update>>);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateMetadata {
+    version: String,
+    current_version: String,
+}
+
+#[tauri::command]
+async fn check_for_update(
+    app: AppHandle,
+    pending_update: State<'_, PendingUpdate>,
+) -> Result<Option<UpdateMetadata>, String> {
+    let update = app
+        .updater()
+        .map_err(to_error)?
+        .check()
+        .await
+        .map_err(to_error)?;
+    let metadata = update.as_ref().map(|update| UpdateMetadata {
+        version: update.version.clone(),
+        current_version: update.current_version.clone(),
+    });
+
+    *pending_update
+        .0
+        .lock()
+        .map_err(|_| "update state lock poisoned".to_string())? = update;
+
+    Ok(metadata)
+}
+
+#[tauri::command]
+async fn install_update(
+    app: AppHandle,
+    pending_update: State<'_, PendingUpdate>,
+) -> Result<(), String> {
+    let update = pending_update
+        .0
+        .lock()
+        .map_err(|_| "update state lock poisoned".to_string())?
+        .take()
+        .ok_or_else(|| "there is no pending update".to_string())?;
+
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(to_error)?;
+    app.restart();
 }
 
 #[tauri::command]
@@ -31,7 +85,11 @@ async fn update_entry(
     id: String,
     patch: EntryPatch,
 ) -> Result<EntryResponse, String> {
-    state.backend.update_entry(id, patch).await.map_err(to_error)
+    state
+        .backend
+        .update_entry(id, patch)
+        .await
+        .map_err(to_error)
 }
 
 #[tauri::command]
@@ -304,13 +362,7 @@ pub fn run() {
                 true,
                 &[
                     &MenuItem::with_id(app, "search", "搜索", true, Some("CmdOrCtrl+F"))?,
-                    &MenuItem::with_id(
-                        app,
-                        "future_log",
-                        "未来日志",
-                        true,
-                        Some("CmdOrCtrl+L"),
-                    )?,
+                    &MenuItem::with_id(app, "future_log", "未来日志", true, Some("CmdOrCtrl+L"))?,
                 ],
             )?;
             Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &view_menu])
@@ -327,6 +379,7 @@ pub fn run() {
                 let _ = app.emit(event_name, ());
             }
         })
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -340,9 +393,12 @@ pub fn run() {
             app.manage(DesktopState {
                 backend: Arc::new(backend),
             });
+            app.manage(PendingUpdate(Mutex::new(None)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            check_for_update,
+            install_update,
             create_entry,
             update_entry,
             archive_entry,

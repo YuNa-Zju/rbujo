@@ -8,8 +8,14 @@ import GlobalUIModals from "./components/modals/GlobalUIModals";
 import GlobalCommandPalette from "./components/modals/cmdk/GlobalCommandPalette";
 import { ModalControllerProvider } from "./context/ModalControllerContext";
 import { Toaster } from "sonner";
+import { useEffect } from "react";
+import { checkForUpdatesOnStartup } from "./services/updateService";
 
 export default function App() {
+  useEffect(() => {
+    void checkForUpdatesOnStartup();
+  }, []);
+
   return (
     <EntryModalProvider>
       <BrowserRouter>
