@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
+  AlertTriangle,
   ArrowLeft,
   CalendarClock,
   CalendarDays,
@@ -11,7 +12,9 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { entryService } from "../../services/entryService";
 import { EntryCard } from "../../components/DraggableEntryCard";
 import { entryEventBus } from "../../lib/entryEventBus";
@@ -28,6 +31,7 @@ export default function ArchivePage() {
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [deleteRequest, setDeleteRequest] = useState<any[] | null>(null);
 
   const loadArchived = useCallback(async () => {
     setLoading(true);
@@ -158,13 +162,17 @@ export default function ArchivePage() {
     }
   };
 
+  const requestDelete = (entry: any) => {
+    setDeleteRequest([entry]);
+  };
+
   const handleDelete = async (
     entry: any,
     options: { confirm?: boolean; refresh?: boolean } = {},
   ) => {
     if (options.confirm !== false) {
-      const confirmed = window.confirm("永久删除这条记录？");
-      if (!confirmed) return;
+      requestDelete(entry);
+      return;
     }
 
     try {
@@ -195,9 +203,13 @@ export default function ArchivePage() {
 
   const handleBulkRestore = async () => {
     if (restorableSelectedEntries.length === 0) return;
+    const entriesToRestore = [...restorableSelectedEntries];
     setBulkLoading(true);
     try {
-      await Promise.all(restorableSelectedEntries.map(handleUnarchive));
+      for (const entry of entriesToRestore) {
+        await handleUnarchive(entry);
+      }
+      await loadArchived();
     } finally {
       setBulkLoading(false);
     }
@@ -205,16 +217,19 @@ export default function ArchivePage() {
 
   const handleBulkDelete = async () => {
     if (selectedEntries.length === 0) return;
-    const confirmed = window.confirm(
-      `永久删除选中的 ${selectedEntries.length} 条记录？`,
-    );
-    if (!confirmed) return;
+    setDeleteRequest([...selectedEntries]);
+  };
+
+  const confirmDeleteRequest = async () => {
+    if (!deleteRequest || deleteRequest.length === 0) return;
+    const entriesToDelete = [...deleteRequest];
     setBulkLoading(true);
     try {
-      for (const entry of selectedEntries) {
+      for (const entry of entriesToDelete) {
         await handleDelete(entry, { confirm: false, refresh: false });
       }
       await loadArchived();
+      setDeleteRequest(null);
     } finally {
       setBulkLoading(false);
     }
@@ -384,6 +399,15 @@ export default function ArchivePage() {
           )}
         </div>
       </main>
+      <ArchiveDeleteConfirm
+        open={Boolean(deleteRequest)}
+        count={deleteRequest?.length ?? 0}
+        loading={bulkLoading}
+        onCancel={() => {
+          if (!bulkLoading) setDeleteRequest(null);
+        }}
+        onConfirm={confirmDeleteRequest}
+      />
     </div>
   );
 }
@@ -432,6 +456,7 @@ function ArchiveSection({
             className="checkbox checkbox-sm"
             checked={entries.every((entry) => selectedIds.has(entry.id))}
             onChange={(event) => onSelectAll(entries, event.target.checked)}
+            onClick={(event) => event.stopPropagation()}
           />
           <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-base-100/80 text-base-content/55">
             {icon}
@@ -503,8 +528,10 @@ function ArchiveEntryList({
                 className="checkbox checkbox-xs"
                 checked={selectedIds.has(entry.id)}
                 onChange={() => onSelect(entry.id)}
+                onClick={(event) => event.stopPropagation()}
               />
               <button
+                type="button"
                 onClick={() => onJump(entry)}
                 className="flex items-center gap-1.5 transition-colors hover:text-primary"
               >
@@ -525,8 +552,12 @@ function ArchiveEntryList({
             <div className="flex shrink-0 items-center gap-1">
               {entry.canRestore !== false && (
                 <button
+                  type="button"
                   className="btn btn-xs btn-ghost rounded-full gap-1"
-                  onClick={() => onRestore(entry)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRestore(entry);
+                  }}
                   title="Restore"
                 >
                   <RotateCcw size={13} />
@@ -534,8 +565,12 @@ function ArchiveEntryList({
                 </button>
               )}
               <button
+                type="button"
                 className="btn btn-xs btn-ghost rounded-full text-error"
-                onClick={() => onDelete(entry)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete(entry);
+                }}
                 title="Delete permanently"
               >
                 <Trash2 size={13} />
@@ -559,5 +594,70 @@ function ArchiveEntryList({
         </div>
       ))}
     </div>
+  );
+}
+
+function ArchiveDeleteConfirm({
+  open,
+  count,
+  loading,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  count: number;
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+      <button
+        type="button"
+        className="absolute inset-0 bg-base-300/35 backdrop-blur-sm"
+        aria-label="Close delete confirmation"
+        onClick={onCancel}
+        disabled={loading}
+      />
+      <div className="relative w-full max-w-sm rounded-[2rem] border border-error/15 bg-base-100 p-6 text-center shadow-2xl">
+        <button
+          type="button"
+          className="btn btn-ghost btn-circle btn-sm absolute right-3 top-3 text-base-content/45"
+          onClick={onCancel}
+          disabled={loading}
+        >
+          <X size={16} />
+        </button>
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-error/10 text-error">
+          <AlertTriangle size={26} />
+        </div>
+        <h3 className="text-lg font-bold">永久删除归档条目？</h3>
+        <p className="mt-2 text-sm font-medium leading-relaxed text-base-content/55">
+          将彻底删除 {count} 条记录，此操作不能撤回。
+        </p>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            className="btn rounded-full"
+            onClick={onCancel}
+            disabled={loading}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            className="btn btn-error rounded-full text-error-content"
+            onClick={onConfirm}
+            disabled={loading}
+          >
+            {loading && <Loader2 size={16} className="animate-spin" />}
+            删除
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

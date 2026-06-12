@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Download,
@@ -345,7 +346,7 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     </motion.button>
   );
 
-  return (
+  return createPortal(
     <>
       <AnimatePresence>
         {isOpen && (
@@ -603,6 +604,7 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
           />
         )}
       </AnimatePresence>
-    </>
+    </>,
+    document.body,
   );
 }
