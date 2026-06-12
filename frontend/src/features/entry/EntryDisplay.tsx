@@ -26,6 +26,7 @@ interface Props {
   onDoubleClick?: () => void;
   onTaskToggle?: (newContent: string) => void;
   isTagClickable?: boolean;
+  readOnly?: boolean;
 }
 
 export default function EntryDisplay({
@@ -39,6 +40,7 @@ export default function EntryDisplay({
   onDoubleClick,
   onTaskToggle,
   isTagClickable = true,
+  readOnly = false,
 }: Props) {
   const { t } = useTranslation();
 
@@ -126,7 +128,7 @@ export default function EntryDisplay({
         disableOverflowCheck={disableOverflowCheck}
         onTaskToggle={onTaskToggle}
         isTagClickable={isTagClickable}
-        readOnly={showDoneStyle}
+        readOnly={readOnly || showDoneStyle}
       />
     </div>
   );

@@ -270,7 +270,8 @@ impl LocalBackend {
         let entry = self.fetch_entry(&id).await?;
         self.collect_and_delete_children(&id).await?;
         if let Some(parent_id) = entry.source_entry_id {
-            self.restore_parent_after_child_removal(&parent_id, &id).await?;
+            self.restore_parent_after_child_removal(&parent_id, &id)
+                .await?;
         }
         sqlx::query("DELETE FROM entries WHERE id = ? AND owner_id = ?")
             .bind(id)
@@ -310,7 +311,9 @@ impl LocalBackend {
         entry.target_month = target_month.as_deref().map(validate_month).transpose()?;
         entry.target_date = None;
         entry.is_future = 1;
-        entry.status = STATUS_OPEN.to_string();
+        if !matches!(entry.status.as_str(), STATUS_COMPLETED | STATUS_CANCELLED) {
+            entry.status = STATUS_OPEN.to_string();
+        }
         normalize_entry_state(&mut entry);
         self.save_entry(&entry).await?;
         self.index_entry(&entry).await?;

@@ -220,31 +220,32 @@ function UpdatePromptModal({
                 ${styles.modal.base}
               `}
             >
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={installing}
-                className="btn btn-ghost btn-sm btn-circle absolute right-4 top-4"
-                aria-label="暂不更新"
-              >
-                <X size={16} />
-              </button>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <RefreshCw size={22} />
+                  </div>
 
-              <div className="flex items-start gap-4 pr-8">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <RefreshCw size={22} />
+                  <div className="min-w-0">
+                    <h2 className={`text-lg font-bold ${styles.modal.title}`}>
+                      发现新版本
+                    </h2>
+                    <p
+                      className={`mt-2 text-sm leading-relaxed ${styles.card.textSecondary}`}
+                    >
+                      可以安装新的版本。更新会自动下载并安装，完成后应用会重启。
+                    </p>
+                  </div>
                 </div>
-
-                <div className="min-w-0">
-                  <h2 className={`text-lg font-bold ${styles.modal.title}`}>
-                    发现新版本
-                  </h2>
-                  <p
-                    className={`mt-2 text-sm leading-relaxed ${styles.card.textSecondary}`}
-                  >
-                    可以安装新的版本。更新会自动下载并安装，完成后应用会重启。
-                  </p>
-                </div>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={installing}
+                  className="btn btn-ghost btn-sm btn-circle shrink-0"
+                  aria-label="暂不更新"
+                >
+                  <X size={16} />
+                </button>
               </div>
 
               <div className="mt-5 grid grid-cols-2 gap-3">
