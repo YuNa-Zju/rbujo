@@ -326,10 +326,10 @@ pub fn run() {
         .menu(|app| {
             let app_menu = Submenu::with_items(
                 app,
-                "子弹笔记",
+                "BuJo",
                 true,
                 &[
-                    &PredefinedMenuItem::about(app, Some("关于 子弹笔记"), None)?,
+                    &PredefinedMenuItem::about(app, Some("关于 BuJo"), None)?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(
                         app,
@@ -339,11 +339,11 @@ pub fn run() {
                         Some("CmdOrCtrl+Shift+U"),
                     )?,
                     &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::hide(app, Some("隐藏 子弹笔记"))?,
+                    &PredefinedMenuItem::hide(app, Some("隐藏 BuJo"))?,
                     &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
                     &PredefinedMenuItem::show_all(app, Some("全部显示"))?,
                     &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::quit(app, Some("退出 子弹笔记"))?,
+                    &PredefinedMenuItem::quit(app, Some("退出 BuJo"))?,
                 ],
             )?;
             let file_menu = Submenu::with_items(

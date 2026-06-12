@@ -14,7 +14,7 @@ test("release utils bump patch versions", () => {
 });
 
 test("release utils update json manifests without changing unrelated fields", () => {
-  const tauri = { productName: "子弹笔记", version: "0.2.1" };
+  const tauri = { productName: "BuJo", version: "0.2.1" };
   const packageJson = { name: "bullet-frontend", version: "0.0.0" };
   const lockJson = {
     name: "bullet-frontend",
@@ -31,7 +31,7 @@ test("release utils update json manifests without changing unrelated fields", ()
   };
 
   assert.deepEqual(updateTauriVersion(tauri, "0.2.2"), {
-    productName: "子弹笔记",
+    productName: "BuJo",
     version: "0.2.2",
   });
   assert.deepEqual(updatePackageVersion(packageJson, "0.2.2"), {

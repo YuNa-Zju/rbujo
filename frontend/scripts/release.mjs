@@ -60,7 +60,7 @@ git(["commit", "-m", `Release v${nextVersion}`]);
 const pushMasterCommand = "git push origin master";
 console.log(pushMasterCommand);
 git(["push", "origin", "master"]);
-git(["tag", "-a", `v${nextVersion}`, "-m", `子弹笔记 v${nextVersion}`]);
+git(["tag", "-a", `v${nextVersion}`, "-m", `BuJo v${nextVersion}`]);
 const pushTagCommand = `git push origin v${nextVersion}`;
 console.log(pushTagCommand);
 git(["push", "origin", `v${nextVersion}`]);

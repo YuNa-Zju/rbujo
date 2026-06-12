@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-test("desktop app is branded as 子弹笔记 without changing updater identity", async () => {
+test("desktop app uses BuJo as its ASCII bundle brand without changing updater identity", async () => {
   const configPath = path.resolve(
     import.meta.dirname,
     "../../src-tauri/tauri.conf.json",
@@ -14,13 +14,14 @@ test("desktop app is branded as 子弹笔记 without changing updater identity",
   const indexHtml = await readFile(indexPath, "utf8");
   const menuSource = await readFile(menuPath, "utf8");
 
-  assert.equal(config.productName, "子弹笔记");
+  assert.equal(config.productName, "BuJo");
+  assert.match(config.productName, /^[\x20-\x7E]+$/);
   assert.equal(config.identifier, "fun.yunazju.rbujo");
-  assert.equal(config.app.windows[0].title, "子弹笔记");
-  assert.match(indexHtml, /<title>子弹笔记<\/title>/);
-  assert.match(menuSource, /关于 子弹笔记/);
-  assert.match(menuSource, /隐藏 子弹笔记/);
-  assert.match(menuSource, /退出 子弹笔记/);
+  assert.equal(config.app.windows[0].title, "BuJo");
+  assert.match(indexHtml, /<title>BuJo<\/title>/);
+  assert.match(menuSource, /关于 BuJo/);
+  assert.match(menuSource, /隐藏 BuJo/);
+  assert.match(menuSource, /退出 BuJo/);
 });
 
 test("windows release binary uses gui subsystem instead of console subsystem", async () => {

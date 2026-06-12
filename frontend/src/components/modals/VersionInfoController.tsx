@@ -11,7 +11,7 @@ import { uiEvents } from "../../lib/uiEvents";
 
 const RECENT_RELEASE_NOTES = `## 最近一次更新
 
-- 软件名称统一为子弹笔记。
+- 软件名称统一为 BuJo。
 - Future Log 改为 Planning / Completed 双 tab。
 - 归档按时间分组，支持多选恢复或永久删除。
 - 修复 Windows 正式版启动时附带命令行窗口的问题。
@@ -135,7 +135,7 @@ function VersionInfoModal({
                     <p
                       className={`text-xs font-bold uppercase tracking-[0.18em] ${styles.card.textSecondary}`}
                     >
-                      子弹笔记
+                      BuJo
                     </p>
                     <h2 className={`mt-1 text-lg font-bold ${styles.modal.title}`}>
                       版本信息
