@@ -19,12 +19,17 @@ import {
   type MigratePayload,
 } from "../../lib/entryEventBus";
 import { uiEvents } from "../../lib/uiEvents";
+import {
+  isCompletedFutureStatus,
+  isExpiredFutureEntry,
+} from "../../features/futureLog/futureLogClassification";
 
 type YearGroup = Record<string, any[]>;
 type FutureLayout = {
   undetermined: any[];
   months: Record<number, YearGroup>;
 };
+type FutureLogTab = "planning" | "completed";
 
 interface Props {
   onClose: () => void;
@@ -40,7 +45,6 @@ const useHeadTheme = () => {
 
     const updateTheme = () => {
       const val = target.getAttribute("data-theme");
-      console.log(val);
       // 如果没有值，尝试检测系统偏好，或者默认为 light
       if (val) {
         setTheme(val);
@@ -232,7 +236,9 @@ const FutureLogModal = ({ onClose }: Props) => {
     undetermined: [],
     months: {},
   });
+  const [futureLogMode, setFutureLogMode] = useState<FutureLogTab>("planning");
   const monthIndexes = Array.from({ length: 12 }, (_, i) => i);
+  const currentYear = new Date().getFullYear();
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -373,7 +379,9 @@ const FutureLogModal = ({ onClose }: Props) => {
 
   const filterEntries = (entries: any[]) => {
     return entries.filter((entry) => {
-      return entry.status === "open" || entry.status === "future";
+      if (isExpiredFutureEntry(entry, currentYear)) return false;
+      const completed = isCompletedFutureStatus(entry.status);
+      return futureLogMode === "completed" ? completed : !completed;
     });
   };
   const filterYearGroup = (group: YearGroup) => {
@@ -477,6 +485,55 @@ const FutureLogModal = ({ onClose }: Props) => {
             >
               <X size={20} />
             </button>
+          </div>
+        </div>
+
+        <div
+          className={`
+            px-6 sm:px-8 pt-5 shrink-0
+            ${isDark ? "bg-[#101010]/30" : "bg-white/30"}
+          `}
+        >
+          <div
+            className={`grid grid-cols-2 gap-1 rounded-2xl border p-1 ${
+              isDark
+                ? "border-white/5 bg-white/5"
+                : "border-orange-100/50 bg-orange-50/45"
+            }`}
+          >
+            {[
+              {
+                key: "planning" as const,
+                label: "Planning",
+                icon: ListTodo,
+              },
+              {
+                key: "completed" as const,
+                label: "Completed",
+                icon: CalendarCheck,
+              },
+            ].map(({ key, label, icon: Icon }) => {
+              const active = futureLogMode === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setFutureLogMode(key)}
+                  className={`flex h-10 items-center justify-center gap-2 rounded-xl text-sm font-bold transition-all ${
+                    active
+                      ? isDark
+                        ? "bg-orange-500 text-white shadow-lg shadow-orange-500/10"
+                        : "bg-white text-orange-700 shadow-sm"
+                      : isDark
+                        ? "text-stone-400 hover:bg-white/5 hover:text-stone-200"
+                        : "text-stone-500 hover:bg-white/60 hover:text-stone-700"
+                  }`}
+                >
+                  <Icon size={16} strokeWidth={2.5} />
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 

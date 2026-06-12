@@ -575,6 +575,23 @@ async fn future_entry_can_move_between_month_and_someday() {
     assert!(future_log.future_log.is_empty());
     assert_eq!(future_log.monthly_log["2026-10"][0].id, entry.id);
 
+    backend
+        .update_entry(
+            entry.id.clone(),
+            EntryPatch {
+                status: Some("completed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let completed_move = backend
+        .move_future_entry(entry.id.clone(), Some("2026-11".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(completed_move.status, "completed");
+    assert_eq!(completed_move.target_month, Some("2026-11".to_string()));
+
     fs::remove_dir_all(dir).ok();
 }
 

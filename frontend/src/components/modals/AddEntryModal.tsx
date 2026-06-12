@@ -408,8 +408,18 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
             tags: nextTags,
             // Usually we don't update date/status here unless specific UI allows it
           };
+          if (mode === "future") {
+            payload.is_future = true;
+            payload.target_month = isUndetermined ? null : targetMonth;
+          }
 
-          const updated = await entryService.update(editingEntry.id, payload);
+          let updated = await entryService.update(editingEntry.id, payload);
+          if (mode === "future") {
+            updated = await entryService.moveFutureEntry(
+              editingEntry.id,
+              isUndetermined ? null : targetMonth,
+            );
+          }
 
           // Broadcast update event
           entryEventBus.emit("entry:update", updated);
@@ -584,8 +594,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
                 )}
               </div>
 
-              {/* Only show Future Date Picker when Creating Future Log (too complex for edit) */}
-              {!editingEntry && mode === "future" && (
+              {mode === "future" && (
                 <div className="mt-4 pt-4 border-t border-base-200/50 animate-in fade-in slide-in-from-top-2 duration-300">
                   <FutureLogOptions
                     targetMonth={targetMonth}

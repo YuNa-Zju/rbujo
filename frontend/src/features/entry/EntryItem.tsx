@@ -15,19 +15,18 @@ import { useNavigate } from "react-router-dom";
 import { useEntryActions } from "./useEntryActions";
 
 import EntryDisplay from "./EntryDisplay";
-import EntryEditor from "./EntryEditor";
 import EntryActions from "./EntryActions";
 import { canToggleEntryStatus } from "./entryStatusPolicy";
+import { uiEvents } from "../../lib/uiEvents";
 
 interface EntryItemProps {
   entry: any;
   refresh: () => void;
   forceCollapse?: boolean;
   disableOverflowCheck?: boolean;
-  onEditingChange?: (isEditing: boolean) => void;
-  useInlineEditor?: boolean;
   isTagClickable?: boolean;
   hideActions?: boolean;
+  readOnly?: boolean;
 }
 
 export default function EntryItem({
@@ -35,38 +34,26 @@ export default function EntryItem({
   refresh,
   forceCollapse,
   disableOverflowCheck,
-  onEditingChange,
-  useInlineEditor = false,
   isTagClickable = true,
   hideActions = false,
+  readOnly = false,
 }: EntryItemProps) {
   const { t } = useTranslation();
   const { handleJump } = useEntryNavigation();
   const navigate = useNavigate();
 
-  // 🔴 修复 1：参数对齐
-  // useEntryActions 的签名是 (entry, refresh, refs, onEditingChange)
-  // 之前少传了 refs，导致 onEditingChange 变成了 refs，逻辑错乱
   const {
-    isEditing,
     loading,
     isTask,
-    setEditingState,
     handleStatusToggle,
-    handleSaveEdit,
     handleTaskToggle,
     handleOpenFutureLog,
     actions,
-  } = useEntryActions(
-    entry,
-    refresh,
-    {}, // ✅ 必须传一个空对象占位，否则 Hook 内部逻辑会崩
-    onEditingChange,
-  );
+  } = useEntryActions(entry, refresh, {});
 
   const theme = ENTRY_THEME[entry.entry_type as EntryType] || ENTRY_THEME.task;
   const isCompletedTask = isTask && entry.status === "completed";
-  const canToggleStatus = canToggleEntryStatus(entry);
+  const canToggleStatus = !readOnly && canToggleEntryStatus(entry);
   const isMigratedTargetArchived =
     Boolean(entry.migrated_to_archived_at) && Boolean(entry.migrated_to_entry_id);
   const openMigratedTarget = (fallbackTarget: string | null | undefined) => {
@@ -75,6 +62,11 @@ export default function EntryItem({
       return;
     }
     if (fallbackTarget) handleJump(fallbackTarget);
+  };
+
+  const openEditEntry = () => {
+    if (readOnly || forceCollapse) return;
+    uiEvents.emit("OPEN_EDIT_ENTRY", { entry });
   };
 
   const renderIcon = () => {
@@ -105,38 +97,30 @@ export default function EntryItem({
           e.stopPropagation();
           handleStatusToggle();
         }}
-        disabled={loading || isEditing || !canToggleStatus}
+        disabled={loading || !canToggleStatus}
       >
         {renderIcon()}
       </button>
 
       {/* Content Area */}
       <div className="flex-1 min-w-0 pt-[2px]">
-        {isEditing ? (
-          <EntryEditor
-            initialContent={entry.content}
-            initialType={entry.entry_type}
-            onSave={handleSaveEdit}
-            onCancel={() => setEditingState(false)}
-            isInline={useInlineEditor}
+        <div className="flex flex-col gap-1.5">
+          <EntryDisplay
+            content={entry.content}
+            tags={entry.tags || []}
+            status={entry.status}
+            isTask={isTask}
+            forceCollapse={forceCollapse}
+            disableOverflowCheck={disableOverflowCheck}
+            onDoubleClick={openEditEntry}
+            onTaskToggle={readOnly ? undefined : handleTaskToggle}
+            isTagClickable={isTagClickable}
+            entryType={entry.entry_type}
+            readOnly={readOnly}
           />
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            <EntryDisplay
-              content={entry.content}
-              tags={entry.tags || []}
-              status={entry.status}
-              isTask={isTask}
-              forceCollapse={forceCollapse}
-              disableOverflowCheck={disableOverflowCheck}
-              onDoubleClick={() => !forceCollapse && setEditingState(true)}
-              onTaskToggle={handleTaskToggle}
-              isTagClickable={isTagClickable}
-              entryType={entry.entry_type}
-            />
 
-            {!forceCollapse && (
-              <div className="flex flex-wrap gap-2 text-xs select-none">
+          {!forceCollapse && (
+            <div className="flex flex-wrap gap-2 text-xs select-none">
                 {/* Migrated TO Date */}
                 {entry.migrated_to_date && (
                   <span
@@ -194,21 +178,20 @@ export default function EntryItem({
                     <span className="font-mono ml-0.5">{entry.from_date}</span>
                   </span>
                 )}
-              </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Action Buttons */}
-      {!isEditing && !forceCollapse && !hideActions && (
+      {!forceCollapse && !hideActions && !readOnly && (
         <div className="flex-none">
           <EntryActions
             entryId={entry.id} // 传入 ID 以支持菜单互斥
             isTask={isTask}
             status={entry.status}
             content={entry.content}
-            onEdit={() => setEditingState(true)}
+            onEdit={openEditEntry}
             onToggleStatus={handleStatusToggle}
             onMigrate={actions.openMigrate}
             onFuture={actions.openFuture}

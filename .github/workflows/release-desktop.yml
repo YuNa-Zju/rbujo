@@ -54,15 +54,16 @@ jobs:
         with:
           tauriScript: npm run --prefix frontend tauri
           tagName: v__VERSION__
-          releaseName: rbujo v__VERSION__
+          releaseName: 子弹笔记 v__VERSION__
           releaseBody: |
             ## 更新日志
 
-            - 修复 Tauri 2 capability 缺失导致的原生菜单失效问题。
-            - 修复检查更新缺少 updater 权限和 release 元数据导致的失败提示。
-            - 修复 release workflow 的 updater JSON 上传参数，确保 `latest.json` 会发布到 GitHub Release。
-            - 在右上角主菜单末尾新增“版本信息”弹窗，用于确认当前安装版本。
-            - 显式生成 updater artifacts，保证旧客户端可以检测到当前更新。
+            - 软件名称统一为“子弹笔记”。
+            - Future Log 改为 Planning / Completed 双 tab，过期年份条目进入归档。
+            - 归档按时间分组并支持多选恢复或永久删除。
+            - 编辑条目复用新建条目的统一弹窗。
+            - 修复 Windows 正式版启动时附带命令行窗口的问题。
+            - 版本信息和更新弹窗样式重新整理。
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
@@ -74,7 +75,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rbujo-${{ matrix.artifact_name }}
+          name: zidanbiji-${{ matrix.artifact_name }}
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/macos/*.tar.gz

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "rbujo",
+  "productName": "子弹笔记",
   "version": "0.2.1",
   "identifier": "fun.yunazju.rbujo",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "rbujo",
+        "title": "子弹笔记",
         "width": 1180,
         "height": 820,
         "minWidth": 900,
