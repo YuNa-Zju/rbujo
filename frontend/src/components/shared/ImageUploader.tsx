@@ -1,6 +1,9 @@
 import { useRef, useState } from "react";
 import { ImagePlus, Loader2 } from "lucide-react";
-import { entryService } from "../../services/entryService";
+import {
+  chooseAttachmentUploadMode,
+  uploadFilesAsMarkdown,
+} from "../../services/attachmentService";
 
 interface Props {
   onUploadSuccess: (markdown: string) => void;
@@ -17,8 +20,9 @@ export default function ImageUploader({ onUploadSuccess }: Props) {
     setUploading(true);
 
     try {
-      const stored = await entryService.uploadFile(file);
-      onUploadSuccess(`\n![image](${stored.url})\n`);
+      const mode = await chooseAttachmentUploadMode([file]);
+      const markdown = await uploadFilesAsMarkdown([file], mode);
+      onUploadSuccess(`\n${markdown}`);
     } catch (error) {
       console.error("Upload failed:", error);
       alert("图片上传失败");

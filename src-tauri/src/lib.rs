@@ -1,8 +1,10 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rbullet_journal::local::{
-    CreateEntryInput, EntryPatch, FutureLogResponse, LocalBackend, MigrationResult, SearchOptions,
-    SearchResult, StoredUpload, UploadInput,
+    AttachmentCleanupResult, AttachmentMaintenanceSummary, CreateEntryInput, EntryPatch,
+    FutureLogResponse, LocalBackend, MigrationResult, SearchOptions, SearchResult, StoredUpload,
+    UploadBackup, UploadInput,
 };
 use rbullet_journal::models::{
     EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
@@ -275,6 +277,91 @@ async fn store_upload(
 }
 
 #[tauri::command]
+async fn store_upload_path(
+    state: State<'_, DesktopState>,
+    path: String,
+) -> Result<StoredUpload, String> {
+    state
+        .backend
+        .store_upload_path(PathBuf::from(path))
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn list_uploads(state: State<'_, DesktopState>) -> Result<Vec<UploadBackup>, String> {
+    state
+        .backend
+        .list_uploads_for_backup()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn restore_upload(
+    state: State<'_, DesktopState>,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<StoredUpload, String> {
+    state
+        .backend
+        .store_upload(UploadInput { filename, bytes })
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn open_upload(state: State<'_, DesktopState>, relative_path: String) -> Result<(), String> {
+    state
+        .backend
+        .open_upload(relative_path)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn attachment_maintenance_summary(
+    state: State<'_, DesktopState>,
+) -> Result<AttachmentMaintenanceSummary, String> {
+    state
+        .backend
+        .attachment_maintenance_summary()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn cleanup_unused_uploads(
+    state: State<'_, DesktopState>,
+) -> Result<AttachmentCleanupResult, String> {
+    state
+        .backend
+        .cleanup_unused_uploads()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn cleanup_all_unused_uploads(
+    state: State<'_, DesktopState>,
+) -> Result<AttachmentCleanupResult, String> {
+    state
+        .backend
+        .cleanup_all_unused_uploads()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn export_markdown_archive(state: State<'_, DesktopState>) -> Result<Vec<u8>, String> {
+    state
+        .backend
+        .export_markdown_archive()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn get_all_entries_for_backup(
     state: State<'_, DesktopState>,
 ) -> Result<Vec<EntryExportSchema>, String> {
@@ -436,6 +523,14 @@ pub fn run() {
             rebuild_search_index,
             list_tags,
             store_upload,
+            store_upload_path,
+            list_uploads,
+            restore_upload,
+            open_upload,
+            attachment_maintenance_summary,
+            cleanup_unused_uploads,
+            cleanup_all_unused_uploads,
+            export_markdown_archive,
             get_all_entries_for_backup,
             import_entries,
             batch_delete_entries

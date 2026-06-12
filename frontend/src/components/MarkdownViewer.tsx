@@ -1,6 +1,6 @@
 import { useState, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkBreaks from "remark-breaks";
@@ -14,6 +14,8 @@ import CodeBlock from "./markdown/CodeBlock";
 import { uiEvents } from "../lib/uiEvents";
 import { useReadOnly } from "../context/ReadOnlyContext";
 import { useAppTheme } from "../hooks/useAppTheme";
+import { extractUploadRelativePath } from "../services/attachmentService";
+import { entryService } from "../services/entryService";
 
 // ✅ 引入拆分后的文件 (假设你已经拆分了，如果没有请把上面的 CUSTOM_MARKDOWN_STYLES 复制回来)
 import { CUSTOM_MARKDOWN_STYLES } from "./markdown/markdownStyles";
@@ -79,6 +81,23 @@ const smoothScrollTo = (
     }
   };
   requestAnimationFrame(step);
+};
+
+const transformMarkdownUrl = (value: string) => {
+  const trimmed = value.trim();
+  try {
+    const parsed = new URL(trimmed);
+    const isTauriAsset =
+      parsed.protocol === "asset:" ||
+      (["http:", "https:"].includes(parsed.protocol) &&
+        parsed.hostname === "asset.localhost");
+    if (isTauriAsset) {
+      return value;
+    }
+  } catch {
+    // Relative URLs and malformed protocols go through react-markdown's default filter.
+  }
+  return defaultUrlTransform(value);
 };
 
 export default function MarkdownViewer({
@@ -179,6 +198,21 @@ export default function MarkdownViewer({
     uiEvents.emit("OPEN_TAG_SEARCH", tag);
   };
 
+  const handleAttachmentOpen = async (
+    e: React.MouseEvent<HTMLAnchorElement>,
+    href?: string,
+  ) => {
+    const relativePath = extractUploadRelativePath(href);
+    if (!relativePath) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await entryService.openUpload(relativePath);
+    } catch (error) {
+      console.error("Failed to open attachment", error);
+    }
+  };
+
   const handleCollapse = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (wrapperRef.current) {
@@ -272,6 +306,7 @@ export default function MarkdownViewer({
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
               rehypePlugins={[rehypeKatex]}
+              urlTransform={transformMarkdownUrl}
               components={{
                 pre: ({ children }) => <>{children}</>,
                 code: ({
@@ -312,6 +347,11 @@ export default function MarkdownViewer({
                 ),
                 blockquote: ({ children }) => (
                   <blockquote>{children}</blockquote>
+                ),
+                a: ({ href, children }) => (
+                  <a href={href} onClick={(e) => handleAttachmentOpen(e, href)}>
+                    {children}
+                  </a>
                 ),
                 ul: ({ children, className }) => {
                   const isTaskList = className?.includes("contains-task-list");

@@ -34,6 +34,7 @@ type UIEventType =
   | "OPEN_BACKUP"
   | "OPEN_CHECK_UPDATE"
   | "OPEN_VERSION_INFO"
+  | "OPEN_ATTACHMENT_MAINTENANCE"
   // ✅ 新增：统一关闭信号
   | "CLOSE_MODALS";
 
@@ -53,6 +54,7 @@ interface UIEventPayloads {
   OPEN_BACKUP: void;
   OPEN_CHECK_UPDATE: void;
   OPEN_VERSION_INFO: void;
+  OPEN_ATTACHMENT_MAINTENANCE: void;
   // ✅ 新增
   CLOSE_MODALS: CloseModalsPayload | undefined;
 }
@@ -79,6 +81,7 @@ class UIEventEmitter {
     "OPEN_BACKUP",
     "OPEN_CHECK_UPDATE",
     "OPEN_VERSION_INFO",
+    "OPEN_ATTACHMENT_MAINTENANCE",
   ]);
 
   on<T extends UIEventType>(event: T, listener: UIEventListener<T>) {

@@ -5,10 +5,12 @@ import {
   useState,
   useMemo,
   useEffect,
+  useCallback,
   type DragEvent,
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { useTranslation } from "../../hooks/useTranslation";
 import { ENTRY_THEME, type EntryType } from "../../config/entryTheme";
 import { format, addMonths, isValid, parseISO } from "date-fns";
@@ -16,6 +18,14 @@ import MarkdownToolbar from "../shared/MarkdownToolbar";
 import TypeSelector from "../shared/TypeSelector";
 import FutureLogOptions from "../shared/FutureLogOptions";
 import { entryService } from "../../services/entryService";
+import {
+  chooseAttachmentUploadMode,
+  insertMarkdownAtSelection,
+  shouldHandleDomAttachmentDrop,
+  uploadFilesAsMarkdown,
+  uploadPathsAsMarkdown,
+} from "../../services/attachmentService";
+import { useTauriAttachmentDrop } from "../../hooks/useTauriAttachmentDrop";
 import { useTagCache } from "../../context/TagCacheContext";
 import {
   X,
@@ -49,6 +59,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
   ({ onSuccess }, ref) => {
     const dialogRef = useRef<HTMLDialogElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const editorDropRef = useRef<HTMLDivElement>(null);
     const tagInputRef = useRef<HTMLInputElement>(null);
     const dragCounter = useRef(0);
 
@@ -69,6 +80,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
       useState(-1);
     const [loading, setLoading] = useState(false);
 
+    const [isModalOpen, setIsModalOpen] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
 
@@ -151,6 +163,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         }
 
         dialogRef.current?.showModal();
+        setIsModalOpen(true);
 
         // ⚡ Focus logic (delayed to wait for animation)
         requestAnimationFrame(() => {
@@ -168,7 +181,10 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           }, 50);
         });
       },
-      close: () => dialogRef.current?.close(),
+      close: () => {
+        setIsModalOpen(false);
+        dialogRef.current?.close();
+      },
     }));
 
     // --- Tab Indentation Logic ---
@@ -219,40 +235,34 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
     };
 
     // --- File Upload Logic ---
-    const uploadFile = async (file: File): Promise<string> => {
-      const stored = await entryService.uploadFile(file);
-      return stored.url;
-    };
-
-    const insertMarkdownAsset = (url: string, file: File) => {
+    const insertMarkdownAsset = useCallback((markdown: string) => {
       if (!textareaRef.current) return;
       const textarea = textareaRef.current;
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
-
-      const isImage = file.type.startsWith("image/");
-      const prefix = isImage ? "!" : "";
-      const textToInsert = `\n${prefix}[${file.name}](${url})\n`;
-
-      const newContent =
-        content.substring(0, start) + textToInsert + content.substring(end);
-      setContent(newContent);
+      const result = insertMarkdownAtSelection(
+        textarea.value,
+        start,
+        end,
+        markdown,
+      );
+      setContent(result.text);
 
       setTimeout(() => {
         textarea.focus();
-        textarea.selectionStart = textarea.selectionEnd =
-          start + textToInsert.length;
+        textarea.selectionStart = textarea.selectionEnd = result.cursor;
       }, 0);
-    };
+    }, []);
 
     const handleFileProcess = async (files: FileList | null) => {
       if (!files || files.length === 0) return;
-      const file = files[0];
+      const fileList = Array.from(files);
 
       setIsUploading(true);
       try {
-        const url = await uploadFile(file);
-        insertMarkdownAsset(url, file);
+        const mode = await chooseAttachmentUploadMode(fileList);
+        const markdown = await uploadFilesAsMarkdown(fileList, mode);
+        insertMarkdownAsset(markdown);
       } catch (error) {
         console.error("Upload failed", error);
         alert(t.addEntry?.uploadFailed || "Upload failed");
@@ -260,6 +270,33 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         setIsUploading(false);
       }
     };
+
+    const handlePathProcess = useCallback(
+      async (paths: string[]) => {
+        if (paths.length === 0) return;
+
+        setIsUploading(true);
+        try {
+          const markdown = await uploadPathsAsMarkdown(paths);
+          insertMarkdownAsset(markdown);
+        } catch (error) {
+          console.error("Upload failed", error);
+          alert(t.addEntry?.uploadFailed || "Upload failed");
+        } finally {
+          dragCounter.current = 0;
+          setIsDragging(false);
+          setIsUploading(false);
+        }
+      },
+      [insertMarkdownAsset, t.addEntry?.uploadFailed],
+    );
+
+    useTauriAttachmentDrop({
+      targetRef: editorDropRef,
+      enabled: isModalOpen && !isUploading,
+      onDraggingChange: setIsDragging,
+      onDropPaths: handlePathProcess,
+    });
 
     // --- Drag & Drop Logic ---
     const handleDragEnter = (e: DragEvent<HTMLDivElement>) => {
@@ -286,6 +323,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
       e.stopPropagation();
       setIsDragging(false);
       dragCounter.current = 0;
+      if (!shouldHandleDomAttachmentDrop(isTauri(), e.dataTransfer.files)) return;
       handleFileProcess(e.dataTransfer.files);
     };
 
@@ -480,7 +518,15 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         : t.addEntry?.newEntryTitle || "New Entry";
 
     return (
-      <dialog ref={dialogRef} className="modal modal-bottom sm:modal-middle">
+      <dialog
+        ref={dialogRef}
+        className="modal modal-bottom sm:modal-middle"
+        onClose={() => {
+          setIsModalOpen(false);
+          setIsDragging(false);
+          dragCounter.current = 0;
+        }}
+      >
         <div className="modal-box w-full sm:w-11/12 sm:max-w-2xl p-0 bg-base-100 shadow-2xl rounded-t-3xl sm:rounded-3xl flex flex-col max-h-[90vh] overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-base-200/50 bg-base-100/95 backdrop-blur-md sticky top-0 z-20">
@@ -608,6 +654,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
 
             {/* Edit Area */}
             <div
+              ref={editorDropRef}
               className="relative flex-1 px-6 pb-4 bg-base-100 min-h-[200px] flex flex-col gap-2"
               onDragEnter={handleDragEnter}
               onDragLeave={handleDragLeave}

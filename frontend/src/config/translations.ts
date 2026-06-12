@@ -408,6 +408,31 @@ export const translations = {
       deleteConfirm: "这将永久删除刚才导入的 {{count}} 条记录。",
       confirmUndo: "确认删除",
     },
+    attachmentMaintenance: {
+      title: "维护附件",
+      subtitle: "存储空间",
+      menuLabel: "维护附件",
+      totalUsage: "附件总占用",
+      referencedUsage: "笔记引用中",
+      orphanedUsage: "可清理空间",
+      fileCount: "{{count}} 个文件",
+      attachmentList: "附件列表",
+      empty: "暂无附件",
+      referenced: "{{count}} 引用",
+      orphaned: "未引用",
+      refresh: "刷新",
+      cleanup: "清理未引用附件",
+      close: "关闭",
+      cleanupHint:
+        "此按钮会清理当前未引用附件；自动维护会暂时保留最近上传的未引用附件。",
+      cleanupConfirm:
+        "将删除当前未被笔记引用的附件。未保存草稿中的附件链接也会失效，确定继续吗？",
+      loadFailed: "读取附件统计失败",
+      cleanupFailed: "清理附件失败",
+      cleanupSuccess: "已清理 {{count}} 个附件，释放 {{size}}",
+      cleanupSuccessWithKept:
+        "已清理 {{count}} 个附件，释放 {{size}}。保留 {{kept}} 个最近上传的未引用附件。",
+    },
   },
   en: {
     common: {
@@ -820,6 +845,31 @@ export const translations = {
       deleteConfirm:
         "This will permanently delete the {{count}} entries you just imported.",
       confirmUndo: "Yes, Delete",
+    },
+    attachmentMaintenance: {
+      title: "Attachment Maintenance",
+      subtitle: "Storage",
+      menuLabel: "Attachment Maintenance",
+      totalUsage: "Total attachments",
+      referencedUsage: "Referenced by notes",
+      orphanedUsage: "Cleanup available",
+      fileCount: "{{count}} files",
+      attachmentList: "Attachment List",
+      empty: "No attachments",
+      referenced: "{{count}} refs",
+      orphaned: "Unreferenced",
+      refresh: "Refresh",
+      cleanup: "Clean Unreferenced",
+      close: "Close",
+      cleanupHint:
+        "This button cleans current unreferenced attachments; automatic maintenance keeps recent unreferenced uploads temporarily.",
+      cleanupConfirm:
+        "This will delete attachments not referenced by saved notes. Attachment links in unsaved drafts may break. Continue?",
+      loadFailed: "Failed to read attachment statistics",
+      cleanupFailed: "Failed to clean attachments",
+      cleanupSuccess: "Cleaned {{count}} attachments and freed {{size}}",
+      cleanupSuccessWithKept:
+        "Cleaned {{count}} attachments and freed {{size}}. Kept {{kept}} recent unreferenced attachments.",
     },
   },
 };

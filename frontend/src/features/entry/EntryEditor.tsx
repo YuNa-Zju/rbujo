@@ -2,10 +2,12 @@ import {
   useState,
   useRef,
   useLayoutEffect,
+  useCallback,
   type DragEvent,
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { useTranslation } from "../../hooks/useTranslation";
 import { ENTRY_THEME, type EntryType } from "../../config/entryTheme";
 import MarkdownToolbar from "../../components/shared/MarkdownToolbar";
@@ -17,7 +19,14 @@ import {
   UploadCloud,
   Loader2,
 } from "lucide-react";
-import { entryService } from "../../services/entryService";
+import {
+  chooseAttachmentUploadMode,
+  insertMarkdownAtSelection,
+  shouldHandleDomAttachmentDrop,
+  uploadFilesAsMarkdown,
+  uploadPathsAsMarkdown,
+} from "../../services/attachmentService";
+import { useTauriAttachmentDrop } from "../../hooks/useTauriAttachmentDrop";
 
 interface Props {
   initialContent: string;
@@ -39,6 +48,7 @@ export default function EntryEditor({
   const [type, setType] = useState<EntryType>(initialType);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorDropRef = useRef<HTMLDivElement>(null);
   const dragCounter = useRef(0);
 
   const [isUploading, setIsUploading] = useState(false);
@@ -107,46 +117,34 @@ export default function EntryEditor({
   };
 
   // --- 3. 图片/文件插入逻辑 ---
-  const uploadFile = async (file: File): Promise<string> => {
-    const stored = await entryService.uploadFile(file);
-    return stored.url;
-  };
-
-  const insertMarkdownAsset = (url: string, file: File) => {
+  const insertMarkdownAsset = useCallback((markdown: string) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    const currentText = textarea.value;
-
-    const isImage = file.type.startsWith("image/");
-    const prefix = isImage ? "!" : "";
-    const textToInsert = `\n${prefix}[${file.name}](${url})\n`;
-
-    const newText =
-      currentText.substring(0, start) +
-      textToInsert +
-      currentText.substring(end);
-
-    setContent(newText);
+    const result = insertMarkdownAtSelection(
+      textarea.value,
+      start,
+      end,
+      markdown,
+    );
+    setContent(result.text);
 
     setTimeout(() => {
       textarea.focus();
-      const newCursorPos = start + textToInsert.length;
-      textarea.setSelectionRange(newCursorPos, newCursorPos);
+      textarea.setSelectionRange(result.cursor, result.cursor);
     }, 0);
-  };
+  }, []);
 
   const handleFileProcess = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    const fileList = Array.from(files);
     setIsUploading(true);
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const url = await uploadFile(file);
-        insertMarkdownAsset(url, file);
-      }
+      const mode = await chooseAttachmentUploadMode(fileList);
+      const markdown = await uploadFilesAsMarkdown(fileList, mode);
+      insertMarkdownAsset(markdown);
     } catch (error) {
       console.error(error);
       alert(t.addEntry?.uploadFailed || "Upload failed");
@@ -154,6 +152,33 @@ export default function EntryEditor({
       setIsUploading(false);
     }
   };
+
+  const handlePathProcess = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+
+      setIsUploading(true);
+      try {
+        const markdown = await uploadPathsAsMarkdown(paths);
+        insertMarkdownAsset(markdown);
+      } catch (error) {
+        console.error(error);
+        alert(t.addEntry?.uploadFailed || "Upload failed");
+      } finally {
+        dragCounter.current = 0;
+        setIsDragging(false);
+        setIsUploading(false);
+      }
+    },
+    [insertMarkdownAsset, t.addEntry?.uploadFailed],
+  );
+
+  useTauriAttachmentDrop({
+    targetRef: editorDropRef,
+    enabled: !isUploading,
+    onDraggingChange: setIsDragging,
+    onDropPaths: handlePathProcess,
+  });
 
   const handleDragEnter = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -174,6 +199,7 @@ export default function EntryEditor({
     e.stopPropagation();
     setIsDragging(false);
     dragCounter.current = 0;
+    if (!shouldHandleDomAttachmentDrop(isTauri(), e.dataTransfer.files)) return;
     handleFileProcess(e.dataTransfer.files);
   };
 
@@ -230,6 +256,7 @@ export default function EntryEditor({
       {/* 2. Main Editor Card */}
       {/* 移除 flex-1，改用 h-auto，让内容自然撑开，直到达到 max-h */}
       <div
+        ref={editorDropRef}
         className="h-auto w-full flex flex-col border border-base-300 rounded-xl bg-base-100 shadow-sm relative group transition-all"
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}

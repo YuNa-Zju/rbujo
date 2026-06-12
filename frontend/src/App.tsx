@@ -10,6 +10,7 @@ import { ModalControllerProvider } from "./context/ModalControllerContext";
 import { Toaster } from "sonner";
 import UpdateCheckController from "./components/modals/UpdateCheckController";
 import VersionInfoController from "./components/modals/VersionInfoController";
+import AttachmentMaintenanceController from "./components/modals/AttachmentMaintenanceController";
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
           <GlobalUIModals />
           <UpdateCheckController />
           <VersionInfoController />
+          <AttachmentMaintenanceController />
           <Toaster
             position="bottom-center"
             expand={false}

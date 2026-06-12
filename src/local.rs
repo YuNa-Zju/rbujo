@@ -1,10 +1,15 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
+use zip::write::SimpleFileOptions;
 
 use crate::db;
 use crate::error::{AppError, AppResult};
@@ -17,6 +22,7 @@ use crate::models::{
 const LOCAL_USERNAME: &str = "local";
 const LOCAL_PASSWORD_PLACEHOLDER: &str = "local_desktop_profile";
 const EMBEDDING_DIMS: usize = 256;
+const UPLOAD_ORPHAN_GRACE_SECONDS: u64 = 24 * 60 * 60;
 
 const ENTRY_SELECT: &str = r#"
     SELECT entries.id AS id, entries.content AS content, entries.entry_type AS entry_type,
@@ -121,10 +127,51 @@ pub struct UploadInput {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredUpload {
     pub relative_path: String,
     pub absolute_path: String,
+    pub sha256: String,
+    pub size: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadBackup {
+    pub relative_path: String,
+    pub absolute_path: String,
+    pub filename: String,
+    pub sha256: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentMaintenanceItem {
+    pub relative_path: String,
+    pub filename: String,
+    pub original_filename: Option<String>,
+    pub sha256: String,
+    pub size: i64,
+    pub referenced: bool,
+    pub reference_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentMaintenanceSummary {
+    pub total_count: usize,
+    pub referenced_count: usize,
+    pub orphaned_count: usize,
+    pub total_bytes: i64,
+    pub referenced_bytes: i64,
+    pub orphaned_bytes: i64,
+    pub uploads: Vec<AttachmentMaintenanceItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentCleanupResult {
+    pub removed_count: usize,
+    pub removed_bytes: i64,
+    pub kept_count: usize,
+    pub summary: AttachmentMaintenanceSummary,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,6 +220,58 @@ impl LocalBackend {
         &self.app_dir
     }
 
+    fn upload_file_path(&self, relative_path: &str) -> AppResult<PathBuf> {
+        let relative = Path::new(relative_path);
+        let mut components = relative.components();
+        let Some(std::path::Component::Normal(first)) = components.next() else {
+            return Err(AppError::BadRequest("Invalid upload path".to_string()));
+        };
+        if first != "uploads" {
+            return Err(AppError::BadRequest("Invalid upload path".to_string()));
+        }
+        for component in components {
+            if !matches!(component, std::path::Component::Normal(_)) {
+                return Err(AppError::BadRequest("Invalid upload path".to_string()));
+            }
+        }
+        Ok(self.app_dir.join(relative))
+    }
+
+    async fn existing_upload_filename_for_sha(&self, sha256: &str) -> AppResult<Option<String>> {
+        let upload_dir = self.app_dir.join("uploads");
+        if tokio::fs::metadata(&upload_dir).await.is_err() {
+            return Ok(None);
+        }
+
+        let mut matches = Vec::new();
+        let mut read_dir = tokio::fs::read_dir(&upload_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?
+        {
+            let metadata = entry
+                .metadata()
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            if !metadata.is_file() {
+                continue;
+            }
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if filename == sha256
+                || filename
+                    .strip_prefix(sha256)
+                    .is_some_and(|suffix| suffix.starts_with('.'))
+            {
+                matches.push(filename);
+            }
+        }
+        matches.sort();
+        Ok(matches.into_iter().next())
+    }
+
     pub fn db(&self) -> &SqlitePool {
         &self.pool
     }
@@ -213,6 +312,11 @@ impl LocalBackend {
 
     pub async fn update_entry(&self, id: String, patch: EntryPatch) -> AppResult<EntryResponse> {
         let mut entry = self.fetch_entry(&id).await?;
+        let previous_upload_refs = patch
+            .content
+            .as_ref()
+            .map(|_| upload_references_from_content(&entry.content))
+            .unwrap_or_default();
         if let Some(content) = patch.content {
             entry.content = content;
         }
@@ -249,7 +353,12 @@ impl LocalBackend {
             self.set_entry_tags(&id, tags).await?;
         }
         self.index_entry(&entry).await?;
-        self.response_from_entry(self.fetch_entry(&id).await?).await
+        let response = self
+            .response_from_entry(self.fetch_entry(&id).await?)
+            .await?;
+        self.cleanup_upload_references_if_unused(previous_upload_refs)
+            .await?;
+        Ok(response)
     }
 
     pub async fn archive_entry(&self, id: String) -> AppResult<EntryResponse> {
@@ -268,6 +377,7 @@ impl LocalBackend {
 
     pub async fn delete_entry(&self, id: String) -> AppResult<()> {
         let entry = self.fetch_entry(&id).await?;
+        let removed_upload_refs = self.upload_references_for_entry_chain(&entry).await?;
         self.collect_and_delete_children(&id).await?;
         if let Some(parent_id) = entry.source_entry_id {
             self.restore_parent_after_child_removal(&parent_id, &id)
@@ -277,6 +387,8 @@ impl LocalBackend {
             .bind(id)
             .bind(self.owner_id)
             .execute(&self.pool)
+            .await?;
+        self.cleanup_upload_references_if_unused(removed_upload_refs)
             .await?;
         Ok(())
     }
@@ -728,11 +840,33 @@ impl LocalBackend {
     }
 
     pub async fn store_upload(&self, input: UploadInput) -> AppResult<StoredUpload> {
+        let size = input.bytes.len();
+        let sha256 = sha256_hex(&input.bytes);
+        if let Some(filename) = self.existing_upload_filename_for_sha(&sha256).await? {
+            let relative_path = format!("uploads/{filename}");
+            let absolute_path = self.app_dir.join(&relative_path);
+            self.register_upload_record(
+                &relative_path,
+                &filename,
+                Some(&input.filename),
+                &sha256,
+                size as i64,
+            )
+            .await?;
+            let _ = self.cleanup_stale_unused_uploads().await;
+            return Ok(StoredUpload {
+                relative_path,
+                absolute_path: absolute_path.to_string_lossy().to_string(),
+                sha256,
+                size,
+            });
+        }
+
         let extension = sanitized_extension(&input.filename);
         let filename = if extension.is_empty() {
-            Uuid::new_v4().to_string()
+            sha256.clone()
         } else {
-            format!("{}.{}", Uuid::new_v4(), extension)
+            format!("{sha256}.{extension}")
         };
         let relative_path = format!("uploads/{filename}");
         let absolute_path = self.app_dir.join(&relative_path);
@@ -741,13 +875,403 @@ impl LocalBackend {
                 .await
                 .map_err(|error| AppError::Internal(error.to_string()))?;
         }
-        tokio::fs::write(&absolute_path, input.bytes)
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?;
+        if tokio::fs::metadata(&absolute_path).await.is_err() {
+            tokio::fs::write(&absolute_path, input.bytes)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        }
+        self.register_upload_record(
+            &relative_path,
+            &filename,
+            Some(&input.filename),
+            &sha256,
+            size as i64,
+        )
+        .await?;
+        let _ = self.cleanup_stale_unused_uploads().await;
         Ok(StoredUpload {
             relative_path,
             absolute_path: absolute_path.to_string_lossy().to_string(),
+            sha256,
+            size,
         })
+    }
+
+    pub async fn store_upload_path(&self, path: impl AsRef<Path>) -> AppResult<StoredUpload> {
+        let path = path.as_ref();
+        let metadata = tokio::fs::metadata(path)
+            .await
+            .map_err(|_| AppError::NotFound("Upload source not found".to_string()))?;
+        if !metadata.is_file() {
+            return Err(AppError::BadRequest(
+                "Upload source is not a file".to_string(),
+            ));
+        }
+
+        let filename = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| AppError::BadRequest("Invalid upload filename".to_string()))?
+            .to_string();
+        let bytes = tokio::fs::read(path)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+
+        self.store_upload(UploadInput { filename, bytes }).await
+    }
+
+    async fn register_upload_record(
+        &self,
+        relative_path: &str,
+        filename: &str,
+        original_filename: Option<&str>,
+        sha256: &str,
+        size: i64,
+    ) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO attachment_records(
+                relative_path, filename, original_filename, sha256, size, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(relative_path) DO UPDATE SET
+                filename = excluded.filename,
+                original_filename = COALESCE(attachment_records.original_filename, excluded.original_filename),
+                sha256 = excluded.sha256,
+                size = excluded.size,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(relative_path)
+        .bind(filename)
+        .bind(original_filename)
+        .bind(sha256)
+        .bind(size)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn scan_upload_files(&self) -> AppResult<Vec<AttachmentMaintenanceItem>> {
+        let upload_dir = self.app_dir.join("uploads");
+        if tokio::fs::metadata(&upload_dir).await.is_err() {
+            return Ok(Vec::new());
+        }
+
+        let mut uploads = Vec::new();
+        let mut read_dir = tokio::fs::read_dir(&upload_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?
+        {
+            let metadata = entry
+                .metadata()
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            if !metadata.is_file() {
+                continue;
+            }
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let relative_path = format!("uploads/{filename}");
+            let bytes = tokio::fs::read(entry.path())
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            let sha256 = sha256_hex(&bytes);
+            let size = metadata.len() as i64;
+            let original_filename = sqlx::query(
+                "SELECT original_filename FROM attachment_records WHERE relative_path = ?",
+            )
+            .bind(&relative_path)
+            .fetch_optional(&self.pool)
+            .await?
+            .and_then(|row| row.try_get::<Option<String>, _>("original_filename").ok())
+            .flatten();
+
+            self.register_upload_record(
+                &relative_path,
+                &filename,
+                original_filename.as_deref().or(Some(&filename)),
+                &sha256,
+                size,
+            )
+            .await?;
+
+            uploads.push(AttachmentMaintenanceItem {
+                relative_path,
+                filename,
+                original_filename,
+                sha256,
+                size,
+                referenced: false,
+                reference_count: 0,
+            });
+        }
+        uploads.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        Ok(uploads)
+    }
+
+    async fn upload_reference_counts(&self) -> AppResult<HashMap<String, usize>> {
+        let rows = sqlx::query("SELECT content FROM entries WHERE owner_id = ?")
+            .bind(self.owner_id)
+            .fetch_all(&self.pool)
+            .await?;
+        let mut counts = HashMap::new();
+        for row in rows {
+            let content: String = row.try_get("content")?;
+            for reference in upload_references_from_content(&content) {
+                *counts.entry(reference).or_insert(0) += 1;
+            }
+        }
+        Ok(counts)
+    }
+
+    async fn upload_references_for_entry_chain(&self, entry: &Entry) -> AppResult<HashSet<String>> {
+        let mut references = upload_references_from_content(&entry.content);
+        let mut current = entry.clone();
+        let mut seen = HashSet::new();
+
+        while let Some(next_id) = current.migrated_to_entry_id.clone() {
+            if !seen.insert(next_id.clone()) {
+                return Err(AppError::BadRequest(
+                    "Migration chain contains a cycle".to_string(),
+                ));
+            }
+            let child = self.fetch_entry(&next_id).await?;
+            references.extend(upload_references_from_content(&child.content));
+            current = child;
+            if seen.len() > 128 {
+                return Err(AppError::BadRequest(
+                    "Migration chain is too deep".to_string(),
+                ));
+            }
+        }
+
+        Ok(references)
+    }
+
+    async fn cleanup_upload_references_if_unused(
+        &self,
+        candidates: HashSet<String>,
+    ) -> AppResult<()> {
+        if candidates.is_empty() {
+            return Ok(());
+        }
+
+        let reference_counts = self.upload_reference_counts().await?;
+        for relative_path in candidates {
+            if reference_counts.get(&relative_path).copied().unwrap_or(0) > 0 {
+                continue;
+            }
+
+            let path = self.upload_file_path(&relative_path)?;
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => {
+                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
+                        .bind(relative_path)
+                        .execute(&self.pool)
+                        .await?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
+                        .bind(relative_path)
+                        .execute(&self.pool)
+                        .await?;
+                }
+                Err(error) => return Err(AppError::Internal(error.to_string())),
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn attachment_maintenance_summary(&self) -> AppResult<AttachmentMaintenanceSummary> {
+        let mut uploads = self.scan_upload_files().await?;
+        let reference_counts = self.upload_reference_counts().await?;
+
+        let mut total_bytes = 0;
+        let mut referenced_bytes = 0;
+        let mut orphaned_bytes = 0;
+        let mut referenced_count = 0;
+
+        for upload in &mut uploads {
+            let reference_count = reference_counts
+                .get(&upload.relative_path)
+                .copied()
+                .unwrap_or(0);
+            upload.reference_count = reference_count;
+            upload.referenced = reference_count > 0;
+            total_bytes += upload.size;
+            if upload.referenced {
+                referenced_count += 1;
+                referenced_bytes += upload.size;
+            } else {
+                orphaned_bytes += upload.size;
+            }
+        }
+
+        Ok(AttachmentMaintenanceSummary {
+            total_count: uploads.len(),
+            referenced_count,
+            orphaned_count: uploads.len().saturating_sub(referenced_count),
+            total_bytes,
+            referenced_bytes,
+            orphaned_bytes,
+            uploads,
+        })
+    }
+
+    pub async fn cleanup_unused_uploads(&self) -> AppResult<AttachmentCleanupResult> {
+        self.cleanup_stale_unused_uploads().await
+    }
+
+    pub async fn cleanup_all_unused_uploads(&self) -> AppResult<AttachmentCleanupResult> {
+        self.cleanup_unused_uploads_with_min_age(None).await
+    }
+
+    async fn cleanup_stale_unused_uploads(&self) -> AppResult<AttachmentCleanupResult> {
+        self.cleanup_unused_uploads_with_min_age(Some(Duration::from_secs(
+            UPLOAD_ORPHAN_GRACE_SECONDS,
+        )))
+        .await
+    }
+
+    async fn cleanup_unused_uploads_with_min_age(
+        &self,
+        min_age: Option<Duration>,
+    ) -> AppResult<AttachmentCleanupResult> {
+        let summary = self.attachment_maintenance_summary().await?;
+        let mut removed_count = 0;
+        let mut removed_bytes = 0;
+        let mut kept_count = 0;
+
+        for upload in summary.uploads.iter().filter(|upload| !upload.referenced) {
+            let path = self.upload_file_path(&upload.relative_path)?;
+            if let Some(min_age) = min_age {
+                if let Ok(metadata) = tokio::fs::metadata(&path).await {
+                    if let Ok(modified) = metadata.modified() {
+                        if modified.elapsed().is_ok_and(|age| age < min_age) {
+                            kept_count += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => {
+                    removed_count += 1;
+                    removed_bytes += upload.size;
+                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
+                        .bind(&upload.relative_path)
+                        .execute(&self.pool)
+                        .await?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
+                        .bind(&upload.relative_path)
+                        .execute(&self.pool)
+                        .await?;
+                }
+                Err(error) => return Err(AppError::Internal(error.to_string())),
+            }
+        }
+
+        Ok(AttachmentCleanupResult {
+            removed_count,
+            removed_bytes,
+            kept_count,
+            summary: self.attachment_maintenance_summary().await?,
+        })
+    }
+
+    pub async fn list_uploads_for_backup(&self) -> AppResult<Vec<UploadBackup>> {
+        let upload_dir = self.app_dir.join("uploads");
+        if tokio::fs::metadata(&upload_dir).await.is_err() {
+            return Ok(Vec::new());
+        }
+
+        let mut uploads = Vec::new();
+        let mut read_dir = tokio::fs::read_dir(&upload_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?
+        {
+            let metadata = entry
+                .metadata()
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            if !metadata.is_file() {
+                continue;
+            }
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let bytes = tokio::fs::read(entry.path())
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            let relative_path = format!("uploads/{filename}");
+            uploads.push(UploadBackup {
+                relative_path,
+                absolute_path: entry.path().to_string_lossy().to_string(),
+                filename,
+                sha256: sha256_hex(&bytes),
+                bytes,
+            });
+        }
+        uploads.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        Ok(uploads)
+    }
+
+    pub async fn open_upload(&self, relative_path: String) -> AppResult<()> {
+        let path = self.upload_file_path(&relative_path)?;
+        let canonical_upload_dir = tokio::fs::canonicalize(self.app_dir.join("uploads"))
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let canonical_path = tokio::fs::canonicalize(&path)
+            .await
+            .map_err(|_| AppError::NotFound("Upload not found".to_string()))?;
+        if !canonical_path.starts_with(&canonical_upload_dir) {
+            return Err(AppError::BadRequest("Invalid upload path".to_string()));
+        }
+
+        let metadata = tokio::fs::metadata(&canonical_path)
+            .await
+            .map_err(|_| AppError::NotFound("Upload not found".to_string()))?;
+        if !metadata.is_file() {
+            return Err(AppError::BadRequest(
+                "Upload path is not a file".to_string(),
+            ));
+        }
+        open_with_system(&canonical_path)
+    }
+
+    pub async fn export_markdown_archive(&self) -> AppResult<Vec<u8>> {
+        let entries = self.get_all_entries_for_backup().await?;
+        let uploads = self.list_uploads_for_backup().await?;
+        let markdown = entries_to_markdown_archive(&entries, &uploads);
+
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        zip.start_file("entries.md", options)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        zip.write_all(markdown.as_bytes())
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        for upload in uploads {
+            let filename = Path::new(&upload.relative_path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| AppError::Internal("Invalid upload filename".to_string()))?;
+            zip.start_file(format!("attachments/{filename}"), options)
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            zip.write_all(&upload.bytes)
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        }
+        zip.finish()
+            .map(|cursor| cursor.into_inner())
+            .map_err(|error| AppError::Internal(error.to_string()))
     }
 
     pub async fn get_range_overview(
@@ -1543,6 +2067,194 @@ fn sanitized_extension(file_name: &str) -> String {
                 .to_ascii_lowercase()
         })
         .unwrap_or_default()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn entries_to_markdown_archive(entries: &[EntryExportSchema], uploads: &[UploadBackup]) -> String {
+    let mut grouped: BTreeMap<String, Vec<&EntryExportSchema>> = BTreeMap::new();
+    for entry in entries {
+        let key = entry
+            .target_date
+            .clone()
+            .or_else(|| entry.target_month.clone())
+            .unwrap_or_else(|| {
+                if entry.is_future {
+                    "Future".to_string()
+                } else {
+                    "Undated".to_string()
+                }
+            });
+        grouped.entry(key).or_default().push(entry);
+    }
+
+    grouped
+        .into_iter()
+        .map(|(key, items)| {
+            let body = items
+                .into_iter()
+                .map(|entry| {
+                    let marker = match entry.entry_type.as_str() {
+                        TYPE_TASK => "- [ ]",
+                        TYPE_EVENT => "- o",
+                        _ => "-",
+                    };
+                    let status = if entry.status == STATUS_OPEN {
+                        String::new()
+                    } else {
+                        format!(" ({})", entry.status)
+                    };
+                    let tags = if entry.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "\n  Tags: {}",
+                            entry
+                                .tags
+                                .iter()
+                                .map(|tag| format!("#{tag}"))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        )
+                    };
+                    let content = rewrite_upload_links_for_archive(
+                        entry.content.as_deref().unwrap_or(""),
+                        uploads,
+                    );
+                    format!("{marker} {content}{status}{tags}")
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("## {key}\n\n{body}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn percent_encode_url_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+        {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn percent_decode_lossy(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let high = (bytes[index + 1] as char).to_digit(16);
+            let low = (bytes[index + 2] as char).to_digit(16);
+            if let (Some(high), Some(low)) = (high, low) {
+                decoded.push(((high << 4) + low) as u8);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).to_string()
+}
+
+fn collect_upload_references(value: &str, references: &mut HashSet<String>) {
+    if let Ok(local_asset_regex) = Regex::new(
+        r#"(?i)\b(?:asset://localhost|https?://asset\.localhost)[^)\]"'<>]*uploads/[^)\]\s"'<>]+"#,
+    ) {
+        for capture in local_asset_regex.find_iter(value) {
+            if let Some(index) = capture.as_str().find("uploads/") {
+                references.insert(capture.as_str()[index..].to_string());
+            }
+        }
+    }
+
+    if let Ok(relative_regex) = Regex::new(r#"(^|[\(\[\s"'=])(?P<path>uploads/[^)\]\s"'<>]+)"#) {
+        for capture in relative_regex.captures_iter(value) {
+            if let Some(path) = capture.name("path") {
+                references.insert(path.as_str().to_string());
+            }
+        }
+    }
+}
+
+fn upload_references_from_content(content: &str) -> HashSet<String> {
+    let mut references = HashSet::new();
+    collect_upload_references(content, &mut references);
+    let decoded = percent_decode_lossy(content);
+    if decoded != content {
+        collect_upload_references(&decoded, &mut references);
+    }
+    references
+}
+
+fn rewrite_upload_links_for_archive(content: &str, uploads: &[UploadBackup]) -> String {
+    let mut rewritten = content.to_string();
+    for upload in uploads {
+        let Some(filename) = Path::new(&upload.relative_path)
+            .file_name()
+            .and_then(|value| value.to_str())
+        else {
+            continue;
+        };
+        let target = format!("attachments/{filename}");
+        let escaped_relative_path = regex::escape(&upload.relative_path);
+        let escaped_encoded_relative_path =
+            regex::escape(&percent_encode_url_component(&upload.relative_path));
+        for pattern in [
+            format!(r#"asset://[^\s\)\]"']*/{escaped_relative_path}"#),
+            format!(r#"https?://asset\.localhost[^\s\)\]"']*/{escaped_relative_path}"#),
+            format!(r#"asset://[^\s\)\]"']*(?i:{escaped_encoded_relative_path})"#),
+            format!(r#"https?://asset\.localhost[^\s\)\]"']*(?i:{escaped_encoded_relative_path})"#),
+        ] {
+            let Ok(regex) = Regex::new(&pattern) else {
+                continue;
+            };
+            rewritten = regex.replace_all(&rewritten, target.as_str()).into_owned();
+        }
+
+        let raw_pattern = format!(r#"(^|[\(\s"'=]){escaped_relative_path}(?=$|[\)\]\s"'<>])"#);
+        if let Ok(regex) = Regex::new(&raw_pattern) {
+            rewritten = regex
+                .replace_all(&rewritten, |captures: &regex::Captures<'_>| {
+                    format!("{}{}", &captures[1], target)
+                })
+                .into_owned();
+        }
+    }
+    rewritten
+}
+
+fn open_with_system(path: &Path) -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    let status = Command::new("open").arg(path).spawn();
+
+    #[cfg(target_os = "windows")]
+    let status = Command::new("cmd")
+        .args(["/C", "start", ""])
+        .arg(path)
+        .spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = Command::new("xdg-open").arg(path).spawn();
+
+    status
+        .map(|_| ())
+        .map_err(|error| AppError::Internal(error.to_string()))
 }
 
 fn normalize_tags(tags: Vec<String>) -> Vec<String> {

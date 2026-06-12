@@ -32,6 +32,50 @@ export interface ImportResponse {
   inserted_ids: string[];
 }
 
+export interface StoredUpload {
+  relative_path: string;
+  absolute_path: string;
+  sha256: string;
+  size: number;
+  url: string;
+}
+
+export interface UploadBackup {
+  relative_path: string;
+  absolute_path: string;
+  filename: string;
+  sha256: string;
+  bytes: number[];
+  url: string;
+}
+
+export interface AttachmentMaintenanceItem {
+  relative_path: string;
+  filename: string;
+  original_filename: string | null;
+  sha256: string;
+  size: number;
+  referenced: boolean;
+  reference_count: number;
+}
+
+export interface AttachmentMaintenanceSummary {
+  total_count: number;
+  referenced_count: number;
+  orphaned_count: number;
+  total_bytes: number;
+  referenced_bytes: number;
+  orphaned_bytes: number;
+  uploads: AttachmentMaintenanceItem[];
+}
+
+export interface AttachmentCleanupResult {
+  removed_count: number;
+  removed_bytes: number;
+  kept_count: number;
+  summary: AttachmentMaintenanceSummary;
+}
+
 type SearchMode = "text" | "regex" | "semantic";
 
 interface SearchResult {
@@ -51,6 +95,18 @@ const normalizeEntry = (entry: any) => {
 };
 
 const normalizeEntries = (entries: any[]) => entries.map(normalizeEntry);
+
+const normalizeUpload = <
+  T extends {
+    relative_path: string;
+    absolute_path: string;
+  },
+>(
+  upload: T,
+) => ({
+  ...upload,
+  url: convertFileSrc(upload.absolute_path),
+});
 
 const normalizeMigrationResult = (result: any) => {
   const updatedSource = normalizeEntry(result.updated_source);
@@ -72,33 +128,6 @@ const saveBlob = (blob: Blob, filename: string) => {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-};
-
-const entriesToMarkdown = (entries: any[]) => {
-  const grouped = new Map<string, any[]>();
-  normalizeEntries(entries).forEach((entry) => {
-    const key =
-      entry.target_date || entry.target_month || (entry.is_future ? "Future" : "Undated");
-    grouped.set(key, [...(grouped.get(key) || []), entry]);
-  });
-
-  return Array.from(grouped.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, items]) => {
-      const body = items
-        .map((entry) => {
-          const marker =
-            entry.entry_type === "task" ? "- [ ]" : entry.entry_type === "event" ? "- o" : "-";
-          const status = entry.status && entry.status !== "open" ? ` (${entry.status})` : "";
-          const tags = Array.isArray(entry.tags) && entry.tags.length > 0
-            ? `\n  Tags: ${entry.tags.map((tag: string) => `#${tag}`).join(" ")}`
-            : "";
-          return `${marker} ${entry.content}${status}${tags}`;
-        })
-        .join("\n");
-      return `## ${key}\n\n${body}`;
-    })
-    .join("\n\n");
 };
 
 export const entryService = {
@@ -292,26 +321,60 @@ export const entryService = {
 
   uploadFile: async (file: File) => {
     const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-    const stored = await invoke<{ relative_path: string; absolute_path: string }>(
-      "store_upload",
-      {
-        filename: file.name,
-        bytes,
-      },
-    );
-    return {
-      ...stored,
-      url: convertFileSrc(stored.absolute_path),
-    };
+    const stored = await invoke<Omit<StoredUpload, "url">>("store_upload", {
+      filename: file.name,
+      bytes,
+    });
+    return normalizeUpload(stored);
+  },
+
+  uploadPath: async (path: string) => {
+    const stored = await invoke<Omit<StoredUpload, "url">>("store_upload_path", {
+      path,
+    });
+    return normalizeUpload(stored);
+  },
+
+  listUploads: async () => {
+    const uploads = await invoke<Omit<UploadBackup, "url">[]>("list_uploads");
+    return uploads.map(normalizeUpload);
+  },
+
+  restoreUpload: async (upload: {
+    filename: string;
+    bytes: number[] | Uint8Array;
+  }) => {
+    const bytes =
+      upload.bytes instanceof Uint8Array ? Array.from(upload.bytes) : upload.bytes;
+    const stored = await invoke<Omit<StoredUpload, "url">>("restore_upload", {
+      filename: upload.filename,
+      bytes,
+    });
+    return normalizeUpload(stored);
+  },
+
+  openUpload: async (relativePath: string) => {
+    await invoke<void>("open_upload", { relativePath });
+  },
+
+  getAttachmentMaintenanceSummary: async () => {
+    return invoke<AttachmentMaintenanceSummary>("attachment_maintenance_summary");
+  },
+
+  cleanupUnusedUploads: async () => {
+    return invoke<AttachmentCleanupResult>("cleanup_unused_uploads");
+  },
+
+  cleanupAllUnusedUploads: async () => {
+    return invoke<AttachmentCleanupResult>("cleanup_all_unused_uploads");
   },
 
   downloadBackup: async () => {
-    const entries = await entryService.getAllForBackup();
-    const markdown = entriesToMarkdown(entries);
+    const bytes = await invoke<number[]>("export_markdown_archive");
     const dateStr = new Date().toISOString().split("T")[0];
     saveBlob(
-      new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
-      `bujo_archive_${dateStr}.md`,
+      new Blob([new Uint8Array(bytes)], { type: "application/zip" }),
+      `bujo_archive_${dateStr}.zip`,
     );
     return true;
   },

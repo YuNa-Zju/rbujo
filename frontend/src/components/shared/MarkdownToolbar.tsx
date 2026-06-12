@@ -16,7 +16,10 @@ import {
   Code,
 } from "lucide-react";
 import { useRef, useState } from "react";
-import { entryService } from "../../services/entryService";
+import {
+  chooseAttachmentUploadMode,
+  uploadFilesAsMarkdown,
+} from "../../services/attachmentService";
 import ImageUploader from "./ImageUploader";
 
 interface Props {
@@ -199,29 +202,22 @@ export default function MarkdownToolbar({ textareaRef }: Props) {
       const textarea = textareaRef.current;
       if (!textarea) return;
 
-      let currentPos = textarea.selectionStart;
       textarea.focus();
-
-      for (const file of Array.from(files)) {
-        const stored = await entryService.uploadFile(file);
-
-        const isImg = file.type.startsWith("image/");
-        const linkText = isImg
-          ? `![img](${stored.url})`
-          : `[${file.name}](${stored.url})`;
-
-        const text = textarea.value;
-        const hasBefore = currentPos === 0 || text[currentPos - 1] === "\n";
-        const insertContent = hasBefore ? `${linkText}\n` : `\n${linkText}\n`;
-
-        textarea.setSelectionRange(currentPos, currentPos);
-        executeReplace(insertContent);
-        currentPos += insertContent.length;
-      }
+      const mode = await chooseAttachmentUploadMode(Array.from(files));
+      const markdown = await uploadFilesAsMarkdown(files, mode);
+      const start = textarea.selectionStart;
+      const text = textarea.value;
+      const hasBefore = start === 0 || text[start - 1] === "\n";
+      const insertContent = hasBefore ? markdown : `\n${markdown}`;
+      textarea.setSelectionRange(start, start);
+      executeReplace(insertContent);
     } catch (e) {
       console.error(e);
     } finally {
       setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
 

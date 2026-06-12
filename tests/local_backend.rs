@@ -1,4 +1,7 @@
-use std::fs;
+use std::fs::{self, FileTimes};
+use std::io::{Cursor, Read};
+use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 use rbullet_journal::db;
 use rbullet_journal::local::{
@@ -14,6 +17,14 @@ fn temp_app_dir(label: &str) -> std::path::PathBuf {
 
 fn sqlite_url(dir: &std::path::Path) -> String {
     format!("sqlite://{}", dir.join("rbujo.sqlite3").display())
+}
+
+fn age_file_past_upload_grace(path: &Path) {
+    let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+    file.set_times(
+        FileTimes::new().set_modified(SystemTime::now() - Duration::from_secs(24 * 60 * 60 + 60)),
+    )
+    .unwrap();
 }
 
 #[tokio::test]
@@ -614,6 +625,402 @@ async fn uploads_are_stored_under_local_app_data_with_relative_urls() {
         fs::read(dir.join(&stored.relative_path)).unwrap(),
         vec![1, 2, 3, 4]
     );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn uploads_are_deduplicated_by_sha256_and_exported_for_backup() {
+    let dir = temp_app_dir("upload-dedupe");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+
+    let first = backend
+        .store_upload(UploadInput {
+            filename: "课堂截图.png".to_string(),
+            bytes: vec![7, 8, 9, 10],
+        })
+        .await
+        .unwrap();
+    let second = backend
+        .store_upload(UploadInput {
+            filename: "另一个名字.jpg".to_string(),
+            bytes: vec![7, 8, 9, 10],
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(first.relative_path, second.relative_path);
+    assert_eq!(first.sha256, second.sha256);
+    assert!(first.relative_path.starts_with("uploads/"));
+    assert!(first.relative_path.ends_with(".png"));
+
+    let uploads = backend.list_uploads_for_backup().await.unwrap();
+    assert_eq!(uploads.len(), 1);
+    assert_eq!(uploads[0].relative_path, first.relative_path);
+    assert_eq!(uploads[0].sha256, first.sha256);
+    assert_eq!(uploads[0].bytes, vec![7, 8, 9, 10]);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn upload_path_copies_external_file_into_private_uploads() {
+    let dir = temp_app_dir("upload-path");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let external_dir = temp_app_dir("external-upload-source");
+    let external_file = external_dir.join("飞天5k.jpeg");
+    fs::write(&external_file, vec![11, 12, 13]).unwrap();
+
+    let stored = backend
+        .store_upload_path(external_file.clone())
+        .await
+        .unwrap();
+
+    assert!(stored.relative_path.starts_with("uploads/"));
+    assert!(stored.relative_path.ends_with(".jpeg"));
+    assert_eq!(
+        fs::read(dir.join(&stored.relative_path)).unwrap(),
+        vec![11, 12, 13]
+    );
+    assert_ne!(dir.join(&stored.relative_path), external_file);
+
+    assert!(
+        backend
+            .store_upload_path(external_dir.clone())
+            .await
+            .is_err()
+    );
+    assert!(
+        backend
+            .store_upload_path(external_dir.join("missing.pdf"))
+            .await
+            .is_err()
+    );
+
+    fs::remove_dir_all(external_dir).ok();
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn attachment_maintenance_reports_and_cleans_orphaned_uploads() {
+    let dir = temp_app_dir("attachment-maintenance");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let referenced = backend
+        .store_upload(UploadInput {
+            filename: "referenced.png".to_string(),
+            bytes: vec![21, 22, 23],
+        })
+        .await
+        .unwrap();
+    let orphaned = backend
+        .store_upload(UploadInput {
+            filename: "orphaned.pdf".to_string(),
+            bytes: b"orphaned".to_vec(),
+        })
+        .await
+        .unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: format!(
+                "![referenced](asset://localhost/%2FUsers%2Fme%2FLibrary%2FApplication%20Support%2Ffun.yunazju.rbujo%2F{})",
+                referenced.relative_path.replace('/', "%2F")
+            ),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let summary = backend.attachment_maintenance_summary().await.unwrap();
+    assert_eq!(summary.total_count, 2);
+    assert_eq!(summary.referenced_count, 1);
+    assert_eq!(summary.orphaned_count, 1);
+    assert_eq!(
+        summary.total_bytes,
+        referenced.size as i64 + orphaned.size as i64
+    );
+    assert_eq!(summary.orphaned_bytes, orphaned.size as i64);
+    assert_eq!(
+        summary
+            .uploads
+            .iter()
+            .find(|upload| upload.relative_path == referenced.relative_path)
+            .unwrap()
+            .reference_count,
+        1
+    );
+    assert!(
+        !summary
+            .uploads
+            .iter()
+            .find(|upload| upload.relative_path == orphaned.relative_path)
+            .unwrap()
+            .referenced
+    );
+
+    age_file_past_upload_grace(&dir.join(&orphaned.relative_path));
+    let cleanup = backend.cleanup_unused_uploads().await.unwrap();
+    assert_eq!(cleanup.removed_count, 1);
+    assert_eq!(cleanup.removed_bytes, orphaned.size as i64);
+    assert!(dir.join(&referenced.relative_path).exists());
+    assert!(!dir.join(&orphaned.relative_path).exists());
+
+    backend.delete_entry(entry.id).await.unwrap();
+    assert!(!dir.join(&referenced.relative_path).exists());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn attachment_reference_scan_ignores_external_upload_urls() {
+    let dir = temp_app_dir("attachment-external-reference");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "external-name.pdf".to_string(),
+            bytes: b"external-looking".to_vec(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: format!("[external](https://example.com/{})", stored.relative_path),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let summary = backend.attachment_maintenance_summary().await.unwrap();
+    assert_eq!(summary.total_count, 1);
+    assert_eq!(summary.referenced_count, 0);
+    assert_eq!(summary.orphaned_count, 1);
+    assert!(!summary.uploads[0].referenced);
+
+    age_file_past_upload_grace(&dir.join(&stored.relative_path));
+    let cleanup = backend.cleanup_unused_uploads().await.unwrap();
+    assert_eq!(cleanup.removed_count, 1);
+    assert!(!dir.join(&stored.relative_path).exists());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn entry_delete_cleans_only_removed_entry_uploads() {
+    let dir = temp_app_dir("attachment-delete-scope");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let referenced = backend
+        .store_upload(UploadInput {
+            filename: "attached.png".to_string(),
+            bytes: vec![31, 32, 33],
+        })
+        .await
+        .unwrap();
+    let pending = backend
+        .store_upload(UploadInput {
+            filename: "pending.png".to_string(),
+            bytes: vec![41, 42, 43],
+        })
+        .await
+        .unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: format!(
+                "![attached](asset://localhost/{})",
+                referenced.relative_path
+            ),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    backend.delete_entry(entry.id).await.unwrap();
+
+    assert!(!dir.join(&referenced.relative_path).exists());
+    assert!(dir.join(&pending.relative_path).exists());
+    let cleanup = backend.cleanup_unused_uploads().await.unwrap();
+    assert_eq!(cleanup.removed_count, 0);
+    assert_eq!(cleanup.kept_count, 1);
+    assert!(dir.join(&pending.relative_path).exists());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn forced_attachment_cleanup_removes_recent_orphaned_uploads() {
+    let dir = temp_app_dir("attachment-cleanup-force");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let pending = backend
+        .store_upload(UploadInput {
+            filename: "pending.png".to_string(),
+            bytes: vec![51, 52, 53],
+        })
+        .await
+        .unwrap();
+
+    let protected = backend.cleanup_unused_uploads().await.unwrap();
+    assert_eq!(protected.removed_count, 0);
+    assert_eq!(protected.kept_count, 1);
+    assert!(dir.join(&pending.relative_path).exists());
+
+    let forced = backend.cleanup_all_unused_uploads().await.unwrap();
+    assert_eq!(forced.removed_count, 1);
+    assert_eq!(forced.kept_count, 0);
+    assert!(!dir.join(&pending.relative_path).exists());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_archive_rewrites_upload_links_and_includes_attachment_files() {
+    let dir = temp_app_dir("markdown-archive-uploads");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "lecture.pdf".to_string(),
+            bytes: b"%PDF-test".to_vec(),
+        })
+        .await
+        .unwrap();
+    let encoded_relative_path = stored.relative_path.replace('/', "%2F");
+    backend
+        .create_entry(CreateEntryInput {
+            content: format!(
+                "课件链接: [lecture](asset://localhost/%2FUsers%2Fme%2FLibrary%2FApplication%20Support%2Ffun.yunazju.rbujo%2F{encoded_relative_path})",
+            ),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["课件".to_string()],
+        })
+        .await
+        .unwrap();
+
+    let archive = backend.export_markdown_archive().await.unwrap();
+    let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
+
+    let mut markdown = String::new();
+    zip.by_name("entries.md")
+        .unwrap()
+        .read_to_string(&mut markdown)
+        .unwrap();
+    assert!(markdown.contains("attachments/"));
+    assert!(!markdown.contains("asset://localhost/%2FUsers%2F"));
+
+    let attachment_name = format!(
+        "attachments/{}",
+        std::path::Path::new(&stored.relative_path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+    );
+    let mut attachment = Vec::new();
+    zip.by_name(&attachment_name)
+        .unwrap()
+        .read_to_end(&mut attachment)
+        .unwrap();
+    assert_eq!(attachment, b"%PDF-test");
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_archive_does_not_rewrite_external_upload_links() {
+    let dir = temp_app_dir("markdown-archive-external");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "local.pdf".to_string(),
+            bytes: b"local".to_vec(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: format!(
+                "[local](asset://localhost/private/{}) [external](https://example.com/uploads/{})",
+                stored.relative_path,
+                std::path::Path::new(&stored.relative_path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+            ),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let archive = backend.export_markdown_archive().await.unwrap();
+    let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
+    let mut markdown = String::new();
+    zip.by_name("entries.md")
+        .unwrap()
+        .read_to_string(&mut markdown)
+        .unwrap();
+
+    assert!(markdown.contains("[local](attachments/"));
+    assert!(markdown.contains("https://example.com/uploads/"));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn open_upload_rejects_paths_outside_uploads() {
+    let dir = temp_app_dir("open-upload-safety");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    std::fs::write(dir.join("outside.txt"), b"outside").unwrap();
+    std::fs::create_dir_all(dir.join("uploads/folder")).unwrap();
+
+    assert!(
+        backend
+            .open_upload("/tmp/outside.txt".to_string())
+            .await
+            .is_err()
+    );
+    assert!(
+        backend
+            .open_upload("uploads/../outside.txt".to_string())
+            .await
+            .is_err()
+    );
+    assert!(
+        backend
+            .open_upload("uploads/missing.txt".to_string())
+            .await
+            .is_err()
+    );
+    assert!(
+        backend
+            .open_upload("uploads/folder".to_string())
+            .await
+            .is_err()
+    );
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(dir.join("outside.txt"), dir.join("uploads/link.txt")).unwrap();
+        assert!(
+            backend
+                .open_upload("uploads/link.txt".to_string())
+                .await
+                .is_err()
+        );
+    }
 
     fs::remove_dir_all(dir).ok();
 }

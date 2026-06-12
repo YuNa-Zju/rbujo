@@ -11,11 +11,13 @@ import { uiEvents } from "../../lib/uiEvents";
 
 const RECENT_RELEASE_NOTES = `## 最近一次更新
 
-- 软件名称统一为 BuJo。
-- Future Log 改为 Planning / Completed 双 tab。
-- 归档按时间分组，支持多选恢复或永久删除。
-- 修复 Windows 正式版启动时附带命令行窗口的问题。
-- 版本与更新弹窗样式重新整理。`;
+- 新建和编辑条目支持批量拖拽、粘贴附件。
+- 图片、PDF 和普通文件会复制到应用私有 uploads 目录。
+- 修复桌面端拖入输入框不插入附件链接的问题。
+- 修复私有附件 asset 链接无法在 Markdown 中读取的问题。
+- 相同文件按 SHA-256 去重保存，避免重复占用空间。
+- 图片上传可选择压缩或保留原图。
+- .bjk 备份和 Markdown 压缩包会携带附件并修复引用。`;
 
 const VERSION_NOTES_MARKDOWN_STYLES = `
   .version-release-notes.prose-custom-scale h2,

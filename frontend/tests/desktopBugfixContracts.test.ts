@@ -82,3 +82,102 @@ test("release patch script is exposed from the frontend package", async () => {
   assert.match(releaseSource, /git push origin master/);
   assert.match(releaseSource, /git push origin v\$\{nextVersion\}/);
 });
+
+test("desktop attachment commands are exposed for portable uploads", async () => {
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const configPath = path.resolve(
+    import.meta.dirname,
+    "../../src-tauri/tauri.conf.json",
+  );
+  const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const menuPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/components/UserMenu.tsx",
+  );
+  const markdownViewerPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/MarkdownViewer.tsx",
+  );
+  const uiEventsPath = path.resolve(import.meta.dirname, "../src/lib/uiEvents.ts");
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const addEntryPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/AddEntryModal.tsx",
+  );
+  const entryEditorPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/entry/EntryEditor.tsx",
+  );
+  const dropHookPath = path.resolve(
+    import.meta.dirname,
+    "../src/hooks/useTauriAttachmentDrop.ts",
+  );
+  const attachmentMaintenancePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/AttachmentMaintenanceController.tsx",
+  );
+  const toolbarPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/shared/MarkdownToolbar.tsx",
+  );
+  const source = await readFile(libPath, "utf8");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  const appSource = await readFile(appPath, "utf8");
+  const menuSource = await readFile(menuPath, "utf8");
+  const markdownViewerSource = await readFile(markdownViewerPath, "utf8");
+  const uiEventsSource = await readFile(uiEventsPath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+  const addEntrySource = await readFile(addEntryPath, "utf8");
+  const entryEditorSource = await readFile(entryEditorPath, "utf8");
+  const dropHookSource = await readFile(dropHookPath, "utf8");
+  const attachmentMaintenanceSource = await readFile(
+    attachmentMaintenancePath,
+    "utf8",
+  );
+  const toolbarSource = await readFile(toolbarPath, "utf8");
+
+  assert.match(source, /list_uploads/);
+  assert.match(source, /restore_upload/);
+  assert.match(source, /store_upload_path/);
+  assert.match(source, /open_upload/);
+  assert.match(source, /export_markdown_archive/);
+  assert.match(source, /attachment_maintenance_summary/);
+  assert.match(source, /cleanup_unused_uploads/);
+  assert.match(source, /cleanup_all_unused_uploads/);
+  assert.match(uiEventsSource, /OPEN_ATTACHMENT_MAINTENANCE/);
+  assert.match(appSource, /AttachmentMaintenanceController/);
+  assert.match(menuSource, /OPEN_ATTACHMENT_MAINTENANCE/);
+  assert.match(menuSource, /t\.attachmentMaintenance/);
+  assert.match(translationsSource, /attachmentMaintenance/);
+  assert.match(translationsSource, /维护附件/);
+  assert.match(translationsSource, /清理未引用附件/);
+  assert.match(translationsSource, /最近上传的未引用附件/);
+  assert.match(translationsSource, /未保存草稿中的附件链接/);
+  assert.match(translationsSource, /Attachment Maintenance/);
+  assert.match(translationsSource, /Clean Unreferenced/);
+  assert.match(translationsSource, /automatic maintenance keeps recent unreferenced uploads/);
+  assert.match(translationsSource, /unsaved drafts may break/);
+  assert.match(attachmentMaintenanceSource, /window\.confirm/);
+  assert.match(markdownViewerSource, /urlTransform=\{transformMarkdownUrl\}/);
+  assert.match(markdownViewerSource, /defaultUrlTransform/);
+  assert.match(markdownViewerSource, /parsed\.protocol === "asset:"/);
+  assert.match(markdownViewerSource, /parsed\.hostname === "asset\.localhost"/);
+  assert.deepEqual(config.app.security.assetProtocol, {
+    enable: true,
+    scope: ["$APPDATA/uploads/**"],
+  });
+  assert.match(dropHookSource, /onDragDropEvent/);
+  assert.match(dropHookSource, /getCurrentWebview\(\)\.onDragDropEvent/);
+  assert.match(dropHookSource, /currentWindow\.onDragDropEvent/);
+  assert.match(dropHookSource, /devicePixelRatio/);
+  assert.match(addEntrySource, /useTauriAttachmentDrop/);
+  assert.match(addEntrySource, /uploadPathsAsMarkdown/);
+  assert.match(addEntrySource, /shouldHandleDomAttachmentDrop\(isTauri\(\)/);
+  assert.match(entryEditorSource, /useTauriAttachmentDrop/);
+  assert.match(entryEditorSource, /uploadPathsAsMarkdown/);
+  assert.match(entryEditorSource, /shouldHandleDomAttachmentDrop\(isTauri\(\)/);
+  assert.match(toolbarSource, /fileInputRef\.current\.value = ""/);
+});

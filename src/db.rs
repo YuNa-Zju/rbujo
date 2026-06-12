@@ -117,6 +117,19 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS ix_search_chunks_owner
             ON search_chunks(owner_id);
 
+        CREATE TABLE IF NOT EXISTS attachment_records (
+            relative_path TEXT PRIMARY KEY,
+            filename TEXT NOT NULL,
+            original_filename TEXT,
+            sha256 TEXT NOT NULL,
+            size INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_attachment_records_updated
+            ON attachment_records(updated_at);
+
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
             name TEXT NOT NULL,

@@ -6,6 +6,7 @@ import {
   Languages,
   Archive,
   FileArchive,
+  HardDrive,
   Info,
   Rss,
   RefreshCw,
@@ -42,6 +43,10 @@ export default function UserMenu() {
 
   const handleOpenVersionInfo = () => {
     uiEvents.emit("OPEN_VERSION_INFO");
+  };
+
+  const handleOpenAttachmentMaintenance = () => {
+    uiEvents.emit("OPEN_ATTACHMENT_MAINTENANCE");
   };
 
   const handleOpenArchive = () => {
@@ -126,6 +131,13 @@ export default function UserMenu() {
             icon={FileArchive}
             label={t.backup?.title || "Backup & Export"}
             onClick={handleOpenBackup}
+          />
+          <MenuItem
+            icon={HardDrive}
+            label={
+              t.attachmentMaintenance?.menuLabel || "Attachment Maintenance"
+            }
+            onClick={handleOpenAttachmentMaintenance}
           />
           <MenuItem
             icon={RefreshCw}
