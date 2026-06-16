@@ -135,6 +135,21 @@ export function useJournalData(
       .then((data) => setOverviewCache((prev) => ({ ...prev, ...data })));
   }, [viewMode, currentDate, selectedDate]);
 
+  useEffect(() => {
+    if (viewMode === "year" || !isCacheLoaded) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        handleSilentRefresh();
+      }
+    };
+    window.addEventListener("focus", handleSilentRefresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", handleSilentRefresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [handleSilentRefresh, isCacheLoaded, viewMode]);
+
   // -------------------------------------------------------------------------
   // ✅ 5. EventBus Logic (保持之前的修复)
   // -------------------------------------------------------------------------

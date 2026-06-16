@@ -373,8 +373,16 @@ export const entryService = {
     return invoke<DailyMarkdownFile>("open_daily_markdown", { date });
   },
 
+  syncFutureMarkdownFiles: async () => {
+    return invoke<DailyMarkdownFile[]>("sync_future_markdown_files");
+  },
+
   getMarkdownWorkspace: async () => {
     return invoke<MarkdownWorkspace>("get_markdown_workspace");
+  },
+
+  openMarkdownWorkspace: async () => {
+    return invoke<MarkdownWorkspace>("open_markdown_workspace");
   },
 
   chooseMarkdownWorkspace: async () => {

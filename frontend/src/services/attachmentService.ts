@@ -224,7 +224,7 @@ export const extractUploadRelativePath = (url: string | null | undefined) => {
   } catch {
     // Keep the original string if it is not URI-encoded.
   }
-  const rawMatch = value.match(/^uploads\/[^)\]\s"'<>]+/);
+  const rawMatch = value.match(/^(?:attachments|uploads)\/[^)\]\s"'<>]+/);
   if (rawMatch) return rawMatch[0];
 
   try {
@@ -235,7 +235,7 @@ export const extractUploadRelativePath = (url: string | null | undefined) => {
         parsed.hostname === "asset.localhost");
     if (!isTauriAsset) return null;
     const match = decodeURIComponent(parsed.pathname).match(
-      /\/(uploads\/[^)\]\s"'<>]+)/,
+      /\/((?:attachments|uploads)\/[^)\]\s"'<>]+)/,
     );
     return match?.[1] ?? null;
   } catch {

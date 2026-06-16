@@ -160,27 +160,34 @@ test("markdown workspace controls live in the unified storage panel", async () =
   assert.doesNotMatch(appSource, /MarkdownSettingsController/);
   assert.match(storageSource, /chooseMarkdownWorkspace/);
   assert.match(storageSource, /getMarkdownWorkspace/);
+  assert.match(storageSource, /openMarkdownWorkspace/);
+  assert.match(storageSource, /createPortal/);
   assert.match(storageSource, /DailyRootPathCard/);
   assert.match(storageSource, /labels\.changePath/);
-  assert.match(storageSource, /labels\.done/);
+  assert.match(storageSource, /labels\.openFolder/);
+  assert.doesNotMatch(storageSource, /labels\.done/);
+  assert.doesNotMatch(storageSource, /<Check/);
   assert.match(storageSource, /labels\.dailyFolder/);
   assert.match(translationsSource, /存储管理/);
   assert.match(translationsSource, /更改路径/);
+  assert.match(translationsSource, /打开文件夹/);
   assert.match(translationsSource, /Markdown 存放文件夹/);
   assert.match(translationsSource, /Storage/);
   assert.match(translationsSource, /Change Path/);
 });
 
-test("storage panel shows daily-relative paths and navigates attachment references", async () => {
+test("storage panel focuses attachments and navigates attachment references", async () => {
   const storagePath = path.resolve(
     import.meta.dirname,
     "../src/components/modals/AttachmentMaintenanceController.tsx",
   );
   const source = await readFile(storagePath, "utf8");
 
-  assert.match(source, /toDailyAttachmentDisplayPath/);
-  assert.match(source, /Daily\/attachments/);
-  assert.match(source, /Daily\/\$\{viewMonth\}\/\$\{viewDate\}\.md/);
+  assert.doesNotMatch(source, /dailyMarkdownPathForDate/);
+  assert.doesNotMatch(source, /labels\.dailyMarkdown/);
+  assert.doesNotMatch(source, /PathRow/);
+  assert.match(source, /upload\.relative_path/);
+  assert.match(source, /attachments\//);
   assert.match(source, /useNavigate/);
   assert.match(source, /openableDailyReferenceDate/);
   assert.match(source, /reference\.target_date/);
@@ -188,6 +195,20 @@ test("storage panel shows daily-relative paths and navigates attachment referenc
   assert.match(source, /navigate\(`\/daily\/\$\{targetDate\}`/);
   assert.match(source, /reference\.entry_id/);
   assert.match(source, /labels\.openReference/);
+});
+
+test("future log refreshes disk-backed markdown when app regains focus", async () => {
+  const futureLogPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/FutureLogModal.tsx",
+  );
+  const source = await readFile(futureLogPath, "utf8");
+
+  assert.match(source, /entryService\.getFutureLog/);
+  assert.match(source, /document\.visibilityState === "visible"/);
+  assert.match(source, /window\.addEventListener\("focus", fetchFutureLog\)/);
+  assert.match(source, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(source, /window\.removeEventListener\("focus", fetchFutureLog\)/);
 });
 
 test("home daily header exposes open markdown next to the enter-day arrow", async () => {
@@ -337,7 +358,7 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(markdownViewerSource, /parsed\.hostname === "asset\.localhost"/);
   assert.deepEqual(config.app.security.assetProtocol, {
     enable: true,
-    scope: ["$APPDATA/uploads/**"],
+    scope: ["$APPDATA/attachments/**", "$APPDATA/uploads/**"],
   });
   assert.match(dropHookSource, /onDragDropEvent/);
   assert.match(dropHookSource, /getCurrentWebview\(\)\.onDragDropEvent/);

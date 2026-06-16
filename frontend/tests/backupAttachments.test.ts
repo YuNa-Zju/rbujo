@@ -14,17 +14,17 @@ test("backup object includes uploaded attachments for portable bjk export", () =
     [
       {
         id: "entry-1",
-        content: "![img](asset://localhost/private/uploads/hash.png)",
+        content: "![img](asset://localhost/private/attachments/hash.png)",
       },
     ],
     [
       {
-        relative_path: "uploads/hash.png",
-        absolute_path: "/private/app/uploads/hash.png",
+        relative_path: "attachments/hash.png",
+        absolute_path: "/private/app/attachments/hash.png",
         filename: "hash.png",
         sha256: "hash",
         bytes: [1, 2, 3],
-        url: "asset://localhost/private/uploads/hash.png",
+        url: "asset://localhost/private/attachments/hash.png",
       },
     ],
     123,
@@ -34,7 +34,7 @@ test("backup object includes uploaded attachments for portable bjk export", () =
   assert.equal(backup.version, 2);
   assert.equal(backup.count, 1);
   assert.deepEqual(backup.attachments?.[0], {
-    relative_path: "uploads/hash.png",
+    relative_path: "attachments/hash.png",
     filename: "hash.png",
     sha256: "hash",
     bytes: [1, 2, 3],
@@ -68,11 +68,11 @@ test("backup import restores attachments and rewrites old upload links before en
     },
     {
       restoreUpload: async () => ({
-        relative_path: "uploads/restored.png",
-        absolute_path: "/private/app/uploads/restored.png",
+        relative_path: "attachments/restored.png",
+        absolute_path: "/private/app/attachments/restored.png",
         sha256: "hash",
         size: 3,
-        url: "asset://localhost/private/uploads/restored.png",
+        url: "asset://localhost/private/attachments/restored.png",
       }),
       bulkImport: async (entries: any[]) => {
         importedEntries.push(...entries);
@@ -91,7 +91,7 @@ test("backup import restores attachments and rewrites old upload links before en
   assert.equal(response.inserted_count, 1);
   assert.equal(
     importedEntries[0].content,
-    "![img](asset://localhost/private/uploads/restored.png)\n![encoded](asset://localhost/private/uploads/restored.png)",
+    "![img](asset://localhost/private/attachments/restored.png)\n![encoded](asset://localhost/private/attachments/restored.png)",
   );
 });
 
@@ -106,7 +106,7 @@ test("backup import rejects attachments with mismatched hashes", async () => {
           count: 1,
           attachments: [
             {
-              relative_path: "uploads/hash.png",
+              relative_path: "attachments/hash.png",
               filename: "hash.png",
               sha256:
                 "0000000000000000000000000000000000000000000000000000000000000000",
@@ -116,7 +116,7 @@ test("backup import rejects attachments with mismatched hashes", async () => {
           data: [
             {
               id: "entry-1",
-              content: "![img](asset://localhost/private/uploads/hash.png)",
+              content: "![img](asset://localhost/private/attachments/hash.png)",
             },
           ],
         },

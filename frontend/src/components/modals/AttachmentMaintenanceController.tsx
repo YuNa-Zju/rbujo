@@ -1,12 +1,10 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Database,
-  FilePenLine,
   FileText,
   FolderOpen,
   HardDrive,
@@ -14,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
 import { EscModalWrapper } from "../common/EscModalWrapper";
@@ -31,6 +30,8 @@ import {
 type AttachmentMaintenanceLabels =
   (typeof translations)["zh"]["attachmentMaintenance"];
 
+const PRIMARY_ATTACHMENT_PATH_PREFIX = "attachments/";
+
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
@@ -43,34 +44,16 @@ const formatBytes = (bytes: number) => {
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 };
 
-const todayDateString = () => new Date().toISOString().slice(0, 10);
-
-const dailyMarkdownPathForDate = (viewDate: string) => {
-  const viewMonth = viewDate.slice(0, 7);
-  return `Daily/${viewMonth}/${viewDate}.md`;
-};
-
-const toDailyAttachmentDisplayPath = (relativePath: string) => {
-  if (relativePath.startsWith("Daily/attachments/")) return relativePath;
-  const fileName =
-    relativePath
-      .split(/[\\/]/)
-      .filter(Boolean)
-      .at(-1) || relativePath;
-  return `Daily/attachments/${fileName}`;
-};
-
-const joinDisplayPath = (root: string, child: string) => {
-  if (!root) return child;
-  return `${root.replace(/\/+$/, "")}/${child.replace(/^\/+/, "")}`;
-};
-
 const openableDailyReferenceDate = (
   reference: AttachmentMaintenanceItem["references"][number],
 ) => {
   if (reference.archived_at) return null;
   return reference.target_date || null;
 };
+
+const attachmentDisplayPath = (upload: AttachmentMaintenanceItem) =>
+  upload.relative_path ||
+  `${PRIMARY_ATTACHMENT_PATH_PREFIX}${upload.filename || "attachment"}`;
 
 export default function AttachmentMaintenanceController() {
   const navigate = useNavigate();
@@ -83,6 +66,7 @@ export default function AttachmentMaintenanceController() {
   const [workspace, setWorkspace] = useState<MarkdownWorkspace | null>(null);
   const [loading, setLoading] = useState(false);
   const [choosing, setChoosing] = useState(false);
+  const [openingFolder, setOpeningFolder] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadStorage = useCallback(async () => {
@@ -126,6 +110,20 @@ export default function AttachmentMaintenanceController() {
     }
   }, [labels.chooseFailed]);
 
+  const openWorkspace = useCallback(async () => {
+    setOpeningFolder(true);
+    setError(null);
+    try {
+      const nextWorkspace = await entryService.openMarkdownWorkspace();
+      setWorkspace(nextWorkspace);
+    } catch (nextError) {
+      console.error("Markdown workspace open failed", nextError);
+      setError(labels.openFolderFailed);
+    } finally {
+      setOpeningFolder(false);
+    }
+  }, [labels.openFolderFailed]);
+
   const openReference = useCallback(
     (reference: AttachmentMaintenanceItem["references"][number]) => {
       const targetDate = openableDailyReferenceDate(reference);
@@ -152,9 +150,11 @@ export default function AttachmentMaintenanceController() {
       workspace={workspace}
       loading={loading}
       choosing={choosing}
+      openingFolder={openingFolder}
       error={error}
       labels={labels}
       onChooseWorkspace={chooseWorkspace}
+      onOpenWorkspace={openWorkspace}
       onOpenReference={openReference}
       onClose={close}
     />
@@ -167,9 +167,11 @@ function AttachmentMaintenanceModal({
   workspace,
   loading,
   choosing,
+  openingFolder,
   error,
   labels,
   onChooseWorkspace,
+  onOpenWorkspace,
   onOpenReference,
   onClose,
 }: {
@@ -178,9 +180,11 @@ function AttachmentMaintenanceModal({
   workspace: MarkdownWorkspace | null;
   loading: boolean;
   choosing: boolean;
+  openingFolder: boolean;
   error: string | null;
   labels: AttachmentMaintenanceLabels;
   onChooseWorkspace: () => void;
+  onOpenWorkspace: () => void;
   onOpenReference: (
     reference: AttachmentMaintenanceItem["references"][number],
   ) => void;
@@ -190,8 +194,6 @@ function AttachmentMaintenanceModal({
   const [expandedUploads, setExpandedUploads] = useState<Set<string>>(
     () => new Set(),
   );
-  const viewDate = todayDateString();
-  const markdownPath = dailyMarkdownPathForDate(viewDate);
   const workspacePath = workspace ? workspace.absolute_path : "-";
   const uploads = useMemo(() => {
     return [...(summary?.uploads ?? [])].sort((left, right) => {
@@ -211,7 +213,9 @@ function AttachmentMaintenanceModal({
     });
   }, []);
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <EscModalWrapper
       id="AttachmentMaintenanceModal"
       isOpen={open}
@@ -234,7 +238,7 @@ function AttachmentMaintenanceModal({
               exit={{ scale: 0.96, opacity: 0, y: 12 }}
               transition={{ duration: 0.16, ease: "easeOut" }}
               className={`
-                relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border shadow-2xl
+                relative flex max-h-[min(88dvh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border shadow-2xl
                 ${styles.modal.base}
               `}
             >
@@ -254,24 +258,14 @@ function AttachmentMaintenanceModal({
                     </h2>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm rounded-full"
-                    onClick={onClose}
-                  >
-                    <Check size={15} />
-                    {labels.done}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="btn btn-ghost btn-sm btn-circle shrink-0"
-                    aria-label={labels.close}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="btn btn-ghost btn-sm btn-circle shrink-0"
+                  aria-label={labels.close}
+                >
+                  <X size={16} />
+                </button>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -280,7 +274,9 @@ function AttachmentMaintenanceModal({
                   workspacePath={workspacePath}
                   loading={loading}
                   choosing={choosing}
+                  openingFolder={openingFolder}
                   isDefault={workspace?.is_default ?? false}
+                  onOpenWorkspace={onOpenWorkspace}
                   onChooseWorkspace={onChooseWorkspace}
                 />
 
@@ -325,30 +321,6 @@ function AttachmentMaintenanceModal({
                   className={`mt-4 rounded-2xl border ${styles.card.bg} ${styles.card.border}`}
                 >
                   <div className="flex items-center justify-between gap-3 border-b border-base-content/10 px-4 py-3">
-                    <div>
-                      <span className={`text-sm font-bold ${styles.modal.title}`}>
-                        {labels.markdownList}
-                      </span>
-                      <div className={`mt-0.5 text-xs ${styles.card.textSecondary}`}>
-                        {labels.dailyFolder}
-                      </div>
-                    </div>
-                    {loading && <Loader2 size={16} className="animate-spin" />}
-                  </div>
-                  <div className="p-2">
-                    <PathRow
-                      icon={FilePenLine}
-                      title={labels.dailyMarkdown}
-                      path={markdownPath}
-                      detail={joinDisplayPath(workspace?.absolute_path ?? "", markdownPath)}
-                    />
-                  </div>
-                </div>
-
-                <div
-                  className={`mt-4 rounded-2xl border ${styles.card.bg} ${styles.card.border}`}
-                >
-                  <div className="flex items-center justify-between gap-3 border-b border-base-content/10 px-4 py-3">
                     <span className={`text-sm font-bold ${styles.modal.title}`}>
                       {labels.attachmentList}
                     </span>
@@ -364,9 +336,6 @@ function AttachmentMaintenanceModal({
                     ) : (
                       uploads.map((upload) => {
                         const expanded = expandedUploads.has(upload.relative_path);
-                        const dailyPath = toDailyAttachmentDisplayPath(
-                          upload.relative_path,
-                        );
                         return (
                           <div
                             key={upload.relative_path}
@@ -402,7 +371,7 @@ function AttachmentMaintenanceModal({
                                   <div
                                     className={`mt-0.5 truncate text-[11px] font-mono ${styles.card.textSecondary}`}
                                   >
-                                    {dailyPath}
+                                    {attachmentDisplayPath(upload)}
                                   </div>
                                 </div>
                               </div>
@@ -444,7 +413,8 @@ function AttachmentMaintenanceModal({
           </div>
         )}
       </AnimatePresence>
-    </EscModalWrapper>
+    </EscModalWrapper>,
+    document.body,
   );
 }
 
@@ -453,14 +423,18 @@ function DailyRootPathCard({
   workspacePath,
   loading,
   choosing,
+  openingFolder,
   isDefault,
+  onOpenWorkspace,
   onChooseWorkspace,
 }: {
   labels: AttachmentMaintenanceLabels;
   workspacePath: string;
   loading: boolean;
   choosing: boolean;
+  openingFolder: boolean;
   isDefault: boolean;
+  onOpenWorkspace: () => void;
   onChooseWorkspace: () => void;
 }) {
   return (
@@ -475,19 +449,34 @@ function DailyRootPathCard({
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          className="btn btn-primary btn-sm shrink-0 rounded-full"
-          onClick={onChooseWorkspace}
-          disabled={loading || choosing}
-        >
-          {choosing ? (
-            <Loader2 size={15} className="animate-spin" />
-          ) : (
-            <FolderOpen size={15} />
-          )}
-          {labels.changePath}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm rounded-full"
+            onClick={onOpenWorkspace}
+            disabled={loading || openingFolder}
+          >
+            {openingFolder ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <FolderOpen size={15} />
+            )}
+            {labels.openFolder}
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm rounded-full"
+            onClick={onChooseWorkspace}
+            disabled={loading || choosing}
+          >
+            {choosing ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <FolderOpen size={15} />
+            )}
+            {labels.changePath}
+          </button>
+        </div>
       </div>
       <div className="mt-3 rounded-xl bg-base-200/45 px-3 py-2 font-mono text-xs leading-relaxed text-base-content/70">
         {loading ? (
@@ -498,35 +487,6 @@ function DailyRootPathCard({
         ) : (
           workspacePath
         )}
-      </div>
-    </div>
-  );
-}
-
-function PathRow({
-  icon: Icon,
-  title,
-  path,
-  detail,
-}: {
-  icon: typeof FileText;
-  title: string;
-  path: string;
-  detail: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-xl px-3 py-2">
-      <div className="flex min-w-0 items-center gap-2">
-        <Icon size={15} className="shrink-0 text-primary/70" />
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">{title}</div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-base-content/50">
-            {path}
-          </div>
-          <div className="mt-0.5 truncate font-mono text-[10px] text-base-content/35">
-            {detail}
-          </div>
-        </div>
       </div>
     </div>
   );
