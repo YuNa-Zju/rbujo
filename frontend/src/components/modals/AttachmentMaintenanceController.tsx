@@ -1,16 +1,20 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Database,
+  FilePenLine,
   FileText,
+  FolderOpen,
   HardDrive,
   Loader2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { EscModalWrapper } from "../common/EscModalWrapper";
 import type { translations } from "../../config/translations";
@@ -21,6 +25,7 @@ import {
   entryService,
   type AttachmentMaintenanceItem,
   type AttachmentMaintenanceSummary,
+  type MarkdownWorkspace,
 } from "../../services/entryService";
 
 type AttachmentMaintenanceLabels =
@@ -38,24 +43,61 @@ const formatBytes = (bytes: number) => {
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 };
 
+const todayDateString = () => new Date().toISOString().slice(0, 10);
+
+const dailyMarkdownPathForDate = (viewDate: string) => {
+  const viewMonth = viewDate.slice(0, 7);
+  return `Daily/${viewMonth}/${viewDate}.md`;
+};
+
+const toDailyAttachmentDisplayPath = (relativePath: string) => {
+  if (relativePath.startsWith("Daily/attachments/")) return relativePath;
+  const fileName =
+    relativePath
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .at(-1) || relativePath;
+  return `Daily/attachments/${fileName}`;
+};
+
+const joinDisplayPath = (root: string, child: string) => {
+  if (!root) return child;
+  return `${root.replace(/\/+$/, "")}/${child.replace(/^\/+/, "")}`;
+};
+
+const openableDailyReferenceDate = (
+  reference: AttachmentMaintenanceItem["references"][number],
+) => {
+  if (reference.archived_at) return null;
+  return reference.target_date || null;
+};
+
 export default function AttachmentMaintenanceController() {
+  const navigate = useNavigate();
   const { t } = useTranslation();
   const labels = t.attachmentMaintenance;
   const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState<AttachmentMaintenanceSummary | null>(
     null,
   );
+  const [workspace, setWorkspace] = useState<MarkdownWorkspace | null>(null);
   const [loading, setLoading] = useState(false);
+  const [choosing, setChoosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadSummary = useCallback(async () => {
+  const loadStorage = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setSummary(await entryService.getAttachmentMaintenanceSummary());
+      const [nextSummary, nextWorkspace] = await Promise.all([
+        entryService.getAttachmentMaintenanceSummary(),
+        entryService.getMarkdownWorkspace(),
+      ]);
+      setSummary(nextSummary);
+      setWorkspace(nextWorkspace);
     } catch (nextError) {
-      console.error("Attachment maintenance summary failed", nextError);
-      setError(labels?.loadFailed || "Failed to read attachment statistics");
+      console.error("Storage maintenance summary failed", nextError);
+      setError(labels?.loadFailed || "Failed to read storage statistics");
     } finally {
       setLoading(false);
     }
@@ -63,12 +105,38 @@ export default function AttachmentMaintenanceController() {
 
   const openPanel = useCallback(() => {
     setOpen(true);
-    void loadSummary();
-  }, [loadSummary]);
+    void loadStorage();
+  }, [loadStorage]);
 
   const close = useCallback(() => {
     setOpen(false);
   }, []);
+
+  const chooseWorkspace = useCallback(async () => {
+    setChoosing(true);
+    setError(null);
+    try {
+      const nextWorkspace = await entryService.chooseMarkdownWorkspace();
+      if (nextWorkspace) setWorkspace(nextWorkspace);
+    } catch (nextError) {
+      console.error("Markdown workspace choose failed", nextError);
+      setError(labels.chooseFailed);
+    } finally {
+      setChoosing(false);
+    }
+  }, [labels.chooseFailed]);
+
+  const openReference = useCallback(
+    (reference: AttachmentMaintenanceItem["references"][number]) => {
+      const targetDate = openableDailyReferenceDate(reference);
+      if (!targetDate) return;
+      close();
+      navigate(`/daily/${targetDate}`, {
+        state: { focus: reference.entry_id, t: Date.now() },
+      });
+    },
+    [close, navigate],
+  );
 
   useEffect(() => {
     uiEvents.on("OPEN_ATTACHMENT_MAINTENANCE", openPanel);
@@ -81,9 +149,13 @@ export default function AttachmentMaintenanceController() {
     <AttachmentMaintenanceModal
       open={open}
       summary={summary}
+      workspace={workspace}
       loading={loading}
+      choosing={choosing}
       error={error}
       labels={labels}
+      onChooseWorkspace={chooseWorkspace}
+      onOpenReference={openReference}
       onClose={close}
     />
   );
@@ -92,22 +164,35 @@ export default function AttachmentMaintenanceController() {
 function AttachmentMaintenanceModal({
   open,
   summary,
+  workspace,
   loading,
+  choosing,
   error,
   labels,
+  onChooseWorkspace,
+  onOpenReference,
   onClose,
 }: {
   open: boolean;
   summary: AttachmentMaintenanceSummary | null;
+  workspace: MarkdownWorkspace | null;
   loading: boolean;
+  choosing: boolean;
   error: string | null;
   labels: AttachmentMaintenanceLabels;
+  onChooseWorkspace: () => void;
+  onOpenReference: (
+    reference: AttachmentMaintenanceItem["references"][number],
+  ) => void;
   onClose: () => void;
 }) {
   const { styles } = useAppTheme();
   const [expandedUploads, setExpandedUploads] = useState<Set<string>>(
     () => new Set(),
   );
+  const viewDate = todayDateString();
+  const markdownPath = dailyMarkdownPathForDate(viewDate);
+  const workspacePath = workspace ? workspace.absolute_path : "-";
   const uploads = useMemo(() => {
     return [...(summary?.uploads ?? [])].sort((left, right) => {
       if (left.referenced !== right.referenced) return left.referenced ? 1 : -1;
@@ -149,7 +234,7 @@ function AttachmentMaintenanceModal({
               exit={{ scale: 0.96, opacity: 0, y: 12 }}
               transition={{ duration: 0.16, ease: "easeOut" }}
               className={`
-                relative flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border shadow-2xl
+                relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border shadow-2xl
                 ${styles.modal.base}
               `}
             >
@@ -169,18 +254,37 @@ function AttachmentMaintenanceModal({
                     </h2>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="btn btn-ghost btn-sm btn-circle shrink-0"
-                  aria-label={labels.close}
-                >
-                  <X size={16} />
-                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm rounded-full"
+                    onClick={onClose}
+                  >
+                    <Check size={15} />
+                    {labels.done}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="btn btn-ghost btn-sm btn-circle shrink-0"
+                    aria-label={labels.close}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-                <div className="grid gap-3 sm:grid-cols-3">
+                <DailyRootPathCard
+                  labels={labels}
+                  workspacePath={workspacePath}
+                  loading={loading}
+                  choosing={choosing}
+                  isDefault={workspace?.is_default ?? false}
+                  onChooseWorkspace={onChooseWorkspace}
+                />
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <MetricCard
                     icon={Database}
                     label={labels.totalUsage}
@@ -212,12 +316,34 @@ function AttachmentMaintenanceModal({
                 </div>
 
                 {error && (
-                  <div
-                    className="mt-4 rounded-2xl border border-error/20 bg-error/10 px-4 py-3 text-sm font-medium text-error"
-                  >
+                  <div className="mt-4 rounded-2xl border border-error/20 bg-error/10 px-4 py-3 text-sm font-medium text-error">
                     {error}
                   </div>
                 )}
+
+                <div
+                  className={`mt-4 rounded-2xl border ${styles.card.bg} ${styles.card.border}`}
+                >
+                  <div className="flex items-center justify-between gap-3 border-b border-base-content/10 px-4 py-3">
+                    <div>
+                      <span className={`text-sm font-bold ${styles.modal.title}`}>
+                        {labels.markdownList}
+                      </span>
+                      <div className={`mt-0.5 text-xs ${styles.card.textSecondary}`}>
+                        {labels.dailyFolder}
+                      </div>
+                    </div>
+                    {loading && <Loader2 size={16} className="animate-spin" />}
+                  </div>
+                  <div className="p-2">
+                    <PathRow
+                      icon={FilePenLine}
+                      title={labels.dailyMarkdown}
+                      path={markdownPath}
+                      detail={joinDisplayPath(workspace?.absolute_path ?? "", markdownPath)}
+                    />
+                  </div>
+                </div>
 
                 <div
                   className={`mt-4 rounded-2xl border ${styles.card.bg} ${styles.card.border}`}
@@ -238,6 +364,9 @@ function AttachmentMaintenanceModal({
                     ) : (
                       uploads.map((upload) => {
                         const expanded = expandedUploads.has(upload.relative_path);
+                        const dailyPath = toDailyAttachmentDisplayPath(
+                          upload.relative_path,
+                        );
                         return (
                           <div
                             key={upload.relative_path}
@@ -273,7 +402,7 @@ function AttachmentMaintenanceModal({
                                   <div
                                     className={`mt-0.5 truncate text-[11px] font-mono ${styles.card.textSecondary}`}
                                   >
-                                    {upload.relative_path}
+                                    {dailyPath}
                                   </div>
                                 </div>
                               </div>
@@ -301,6 +430,7 @@ function AttachmentMaintenanceModal({
                               <AttachmentReferenceList
                                 upload={upload}
                                 labels={labels}
+                                onOpenReference={onOpenReference}
                               />
                             )}
                           </div>
@@ -310,16 +440,6 @@ function AttachmentMaintenanceModal({
                   </div>
                 </div>
               </div>
-
-              <div className="flex justify-end border-t border-base-content/10 px-6 py-4">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm rounded-full"
-                  onClick={onClose}
-                >
-                  {labels.close}
-                </button>
-              </div>
             </motion.div>
           </div>
         )}
@@ -328,12 +448,100 @@ function AttachmentMaintenanceModal({
   );
 }
 
+function DailyRootPathCard({
+  labels,
+  workspacePath,
+  loading,
+  choosing,
+  isDefault,
+  onChooseWorkspace,
+}: {
+  labels: AttachmentMaintenanceLabels;
+  workspacePath: string;
+  loading: boolean;
+  choosing: boolean;
+  isDefault: boolean;
+  onChooseWorkspace: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-base-content/10 bg-base-100/60 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <FolderOpen size={16} className="shrink-0 text-primary/75" />
+          <div className="min-w-0">
+            <div className="text-sm font-bold">{labels.dailyFolder}</div>
+            <div className="mt-0.5 text-[11px] font-medium text-base-content/45">
+              {isDefault ? labels.defaultBadge : labels.customBadge}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm shrink-0 rounded-full"
+          onClick={onChooseWorkspace}
+          disabled={loading || choosing}
+        >
+          {choosing ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : (
+            <FolderOpen size={15} />
+          )}
+          {labels.changePath}
+        </button>
+      </div>
+      <div className="mt-3 rounded-xl bg-base-200/45 px-3 py-2 font-mono text-xs leading-relaxed text-base-content/70">
+        {loading ? (
+          <span className="inline-flex items-center gap-2">
+            <Loader2 size={13} className="animate-spin" />
+            {labels.loading}
+          </span>
+        ) : (
+          workspacePath
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PathRow({
+  icon: Icon,
+  title,
+  path,
+  detail,
+}: {
+  icon: typeof FileText;
+  title: string;
+  path: string;
+  detail: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl px-3 py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon size={15} className="shrink-0 text-primary/70" />
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">{title}</div>
+          <div className="mt-0.5 truncate font-mono text-[11px] text-base-content/50">
+            {path}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[10px] text-base-content/35">
+            {detail}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AttachmentReferenceList({
   upload,
   labels,
+  onOpenReference,
 }: {
   upload: AttachmentMaintenanceItem;
   labels: AttachmentMaintenanceLabels;
+  onOpenReference: (
+    reference: AttachmentMaintenanceItem["references"][number],
+  ) => void;
 }) {
   return (
     <div className="mx-3 mb-3 rounded-xl border border-base-content/10 bg-base-100/50 px-3 py-2">
@@ -347,24 +555,36 @@ function AttachmentReferenceList({
         </div>
       ) : (
         <div className="space-y-2">
-          {upload.references.map((reference) => (
-            <div
-              key={reference.entry_id}
-              className="rounded-lg bg-base-200/45 px-3 py-2"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-xs font-bold">
-                  {formatReferenceDate(reference, labels)}
-                </span>
-                <span className="shrink-0 rounded-full bg-base-content/10 px-2 py-0.5 text-[10px] font-bold uppercase text-base-content/60">
-                  {reference.entry_type}
-                </span>
-              </div>
-              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-base-content/60">
-                {reference.preview || labels.emptyPreview}
-              </div>
-            </div>
-          ))}
+          {upload.references.map((reference) => {
+            const targetDate = formatReferenceDate(reference, labels);
+            const canOpen = Boolean(openableDailyReferenceDate(reference));
+            return (
+              <button
+                key={reference.entry_id}
+                type="button"
+                className="w-full rounded-lg bg-base-200/45 px-3 py-2 text-left transition-colors hover:bg-base-200"
+                onClick={() => canOpen && onOpenReference(reference)}
+                disabled={!canOpen}
+                title={
+                  canOpen
+                    ? labels.openReference
+                    : labels.openReferenceUnavailable
+                }
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-xs font-bold">
+                    {targetDate}
+                  </span>
+                  <span className="shrink-0 rounded-full bg-base-content/10 px-2 py-0.5 text-[10px] font-bold uppercase text-base-content/60">
+                    {reference.entry_type}
+                  </span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-base-content/60">
+                  {reference.preview || labels.emptyPreview}
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

@@ -45,6 +45,37 @@ jobs:
       - name: Install frontend dependencies
         run: npm install --prefix frontend
 
+      - name: Build release notes
+        id: release_notes
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          fi
+          BODY_FILE="$RUNNER_TEMP/release_body.md"
+          awk -v version="$VERSION" '
+            {
+              heading = "## v" version
+            }
+            index($0, heading) == 1 && (length($0) == length(heading) || substr($0, length(heading) + 1, 1) ~ /[[:space:]]/) { capture = 1; print; next }
+            capture && /^## v/ { exit }
+            capture { print }
+          ' CHANGELOG.md > "$BODY_FILE"
+          if [ ! -s "$BODY_FILE" ]; then
+            {
+              echo "## v$VERSION"
+              echo
+              echo "- 这次更新没有提供更新日志。"
+            } > "$BODY_FILE"
+          fi
+          {
+            echo "body<<EOF"
+            cat "$BODY_FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and publish desktop installer
         uses: tauri-apps/tauri-action@v0.6.2
         env:
@@ -55,15 +86,7 @@ jobs:
           tauriScript: npm run --prefix frontend tauri
           tagName: v__VERSION__
           releaseName: BuJo v__VERSION__
-          releaseBody: |
-            ## 更新日志
-
-            - 软件名称统一为 BuJo，避免 Windows WiX 产物名使用非 ASCII 字符。
-            - Future Log 改为 Planning / Completed 双 tab，过期年份条目进入归档。
-            - 归档按时间分组并支持多选恢复或永久删除。
-            - 编辑条目复用新建条目的统一弹窗。
-            - 修复 Windows 正式版启动时附带命令行窗口的问题。
-            - 版本信息和更新弹窗样式重新整理。
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

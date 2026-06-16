@@ -1389,22 +1389,45 @@ impl LocalBackend {
         Ok((relative_path, absolute_path))
     }
 
+    async fn legacy_daily_markdown_absolute_path(
+        &self,
+        date: &str,
+    ) -> AppResult<(String, PathBuf)> {
+        let relative_path = legacy_daily_markdown_relative_path(date);
+        let absolute_path = self.markdown_workspace_path().await?.join(&relative_path);
+        Ok((relative_path, absolute_path))
+    }
+
     async fn import_daily_markdown_if_changed(&self, date: &str) -> AppResult<bool> {
         let (_, absolute_path) = self.daily_markdown_absolute_path(date).await?;
-        let bytes = match tokio::fs::read(&absolute_path).await {
-            Ok(bytes) => bytes,
+        let (import_path, bytes, imported_legacy_path) = match tokio::fs::read(&absolute_path).await
+        {
+            Ok(bytes) => (absolute_path, bytes, false),
             Err(error)
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) =>
             {
-                return Ok(false);
+                let (_, legacy_absolute_path) =
+                    self.legacy_daily_markdown_absolute_path(date).await?;
+                match tokio::fs::read(&legacy_absolute_path).await {
+                    Ok(bytes) => (legacy_absolute_path, bytes, true),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        return Ok(false);
+                    }
+                    Err(error) => return Err(AppError::Internal(error.to_string())),
+                }
             }
             Err(error) => return Err(AppError::Internal(error.to_string())),
         };
         let content_sha256 = sha256_hex(&bytes);
-        let modified_ms = file_modified_millis(&absolute_path).await?;
+        let modified_ms = file_modified_millis(&import_path).await?;
         let state = self.daily_markdown_file_state(date).await?;
         if state
             .as_ref()
@@ -1412,9 +1435,8 @@ impl LocalBackend {
                 *state_modified_ms == modified_ms && state_sha256 == &content_sha256
             })
         {
-            return Ok(false);
+            return Ok(imported_legacy_path);
         }
-
         let markdown = String::from_utf8_lossy(&bytes).to_string();
         let parsed = parse_daily_markdown_file(&markdown);
         let sync_dates = self.apply_parsed_daily_markdown(date, parsed).await?;
@@ -1931,7 +1953,7 @@ impl LocalBackend {
                 .file_name()
                 .and_then(|value| value.to_str())
                 .ok_or_else(|| AppError::Internal("Invalid upload filename".to_string()))?;
-            zip.start_file(format!("attachments/{filename}"), options)
+            zip.start_file(format!("Daily/attachments/{filename}"), options)
                 .map_err(|error| AppError::Internal(error.to_string()))?;
             zip.write_all(&upload.bytes)
                 .map_err(|error| AppError::Internal(error.to_string()))?;
@@ -2743,6 +2765,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn daily_markdown_relative_path(date: &str) -> String {
+    let month = date.get(0..7).unwrap_or("unknown");
+    format!("Daily/{month}/{date}.md")
+}
+
+fn legacy_daily_markdown_relative_path(date: &str) -> String {
     format!("Daily/{date}.md")
 }
 
@@ -3180,7 +3207,10 @@ fn lcs_daily_markdown_hash_pairs(
 
 fn daily_markdown_migration_target(entry: &EntryResponse) -> String {
     if let Some(date) = entry.migrated_to_date.as_deref() {
-        format!("Migrated to [[Daily/{date}|{date}]]")
+        format!(
+            "Migrated to [[{}|{date}]]",
+            daily_markdown_relative_path(date)
+        )
     } else if let Some(month) = entry.migrated_to_month.as_deref() {
         format!("Migrated to [[Monthly/{month}|{month}]]")
     } else {
@@ -3388,7 +3418,8 @@ fn entries_to_obsidian_markdown_files(
 
 fn obsidian_archive_file_for_entry(entry: &EntryExportSchema) -> (String, String) {
     if let Some(target_date) = entry.target_date.clone() {
-        (format!("Daily/{target_date}.md"), target_date)
+        let month = target_date.get(0..7).unwrap_or("unknown");
+        (format!("Daily/{month}/{target_date}.md"), target_date)
     } else if let Some(target_month) = entry.target_month.clone() {
         (format!("Monthly/{target_month}.md"), target_month)
     } else if entry.is_future {
@@ -3522,11 +3553,7 @@ fn rewrite_upload_links_for_archive(
     archive_path: &str,
 ) -> String {
     let mut rewritten = content.to_string();
-    let attachment_prefix = if archive_path.contains('/') {
-        "../attachments"
-    } else {
-        "attachments"
-    };
+    let attachment_prefix = archive_attachment_prefix(archive_path);
     for upload in uploads {
         let Some(filename) = Path::new(&upload.relative_path)
             .file_name()
@@ -3560,6 +3587,16 @@ fn rewrite_upload_links_for_archive(
         }
     }
     rewritten
+}
+
+fn archive_attachment_prefix(archive_path: &str) -> &'static str {
+    if archive_path.starts_with("Daily/") {
+        "../attachments"
+    } else if archive_path.contains('/') {
+        "../Daily/attachments"
+    } else {
+        "Daily/attachments"
+    }
 }
 
 fn open_with_system(path: &Path) -> AppResult<()> {
