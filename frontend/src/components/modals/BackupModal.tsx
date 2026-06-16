@@ -374,22 +374,22 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
             >
               {/* Header */}
               <div
-                className={`px-6 pt-8 pb-6 flex items-start justify-between ${styles.modal.header}`}
+                className={`px-6 pt-8 pb-6 flex items-start justify-between gap-4 !flex-row ${styles.modal.header}`}
               >
-                <div className="flex items-center gap-4">
+                <div className="flex min-w-0 flex-1 items-center gap-4">
                   <div
-                    className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm border ${styles.modal.iconBox}`}
+                    className={`w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center shadow-sm border ${styles.modal.iconBox}`}
                   >
                     <Archive size={24} strokeWidth={2} />
                   </div>
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <h3
-                      className={`font-bold text-xl leading-tight ${styles.modal.title}`}
+                      className={`truncate font-bold text-xl leading-tight ${styles.modal.title}`}
                     >
                       {t.backup?.title || "Data & Backup"}
                     </h3>
                     <p
-                      className={`text-xs mt-1 font-medium ${styles.modal.subtitle}`}
+                      className={`mt-1 truncate text-xs font-medium ${styles.modal.subtitle}`}
                     >
                       {t.backup?.subtitle || "Safe, secure, and portable"}
                     </p>
@@ -399,7 +399,8 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
                 <button
                   onClick={closeModal}
                   disabled={loading}
-                  className={styles.modal.closeBtn}
+                  className={`${styles.modal.closeBtn} shrink-0`}
+                  aria-label={t.common?.close || "Close"}
                 >
                   <X size={18} />
                 </button>
