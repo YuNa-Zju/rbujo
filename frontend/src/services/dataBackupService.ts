@@ -108,6 +108,7 @@ export const importBackupObject = async (
     });
     replacements.set(attachment.relative_path, restored.url);
     replacements.set(`uploads/${filename}`, restored.url);
+    replacements.set(`attachments/${filename}`, restored.url);
   }
 
   const entries = backupObject.data.map((entry: any) => {

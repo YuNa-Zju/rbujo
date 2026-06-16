@@ -142,6 +142,24 @@ export default function DailyPage() {
     }
   }, [viewDate, isCacheLoaded]);
 
+  useEffect(() => {
+    if (!isValidDate || !isCacheLoaded) return;
+    const refreshCurrentDate = () => {
+      void fetchDateData(viewDate, true);
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        refreshCurrentDate();
+      }
+    };
+    window.addEventListener("focus", refreshCurrentDate);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshCurrentDate);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [viewDate, isValidDate, isCacheLoaded]);
+
   useEffect(() => setIsManualSorting(false), [viewDate]);
 
   // --- Handlers ---

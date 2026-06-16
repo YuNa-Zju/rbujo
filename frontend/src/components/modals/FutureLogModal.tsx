@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   X,
   CalendarCheck,
@@ -237,15 +237,8 @@ const FutureLogModal = ({ onClose }: Props) => {
     months: {},
   });
   const [futureLogMode, setFutureLogMode] = useState<FutureLogTab>("planning");
-  const monthIndexes = Array.from({ length: 12 }, (_, i) => i);
+  const monthIndexes = useMemo(() => Array.from({ length: 12 }, (_, i) => i), []);
   const currentYear = new Date().getFullYear();
-
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      setIsActive(true);
-      fetchFutureLog();
-    });
-  }, []);
 
   const handleClose = useCallback(() => {
     setIsActive(false);
@@ -305,7 +298,7 @@ const FutureLogModal = ({ onClose }: Props) => {
     }
   };
 
-  const fetchFutureLog = async () => {
+  const fetchFutureLog = useCallback(async () => {
     try {
       const allItems = await entryService.getFutureLog();
       const newLayout: FutureLayout = { undetermined: [], months: {} };
@@ -319,7 +312,29 @@ const FutureLogModal = ({ onClose }: Props) => {
     } catch (e) {
       console.error(e);
     }
-  };
+  }, [monthIndexes]);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      setIsActive(true);
+      fetchFutureLog();
+    });
+  }, [fetchFutureLog]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void fetchFutureLog();
+      }
+    };
+    window.addEventListener("focus", fetchFutureLog);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", fetchFutureLog);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [fetchFutureLog, isActive]);
 
   useEffect(() => {
     const handleUpdate = (updatedEntry: any) => {

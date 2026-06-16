@@ -24,6 +24,9 @@ const LOCAL_PASSWORD_PLACEHOLDER: &str = "local_desktop_profile";
 const EMBEDDING_DIMS: usize = 256;
 const UPLOAD_ORPHAN_GRACE_SECONDS: u64 = 24 * 60 * 60;
 const MARKDOWN_WORKSPACE_SETTING_KEY: &str = "markdown_workspace_path";
+const ATTACHMENT_DIR: &str = "attachments";
+const LEGACY_UPLOAD_DIR: &str = "uploads";
+const FUTURE_MARKDOWN_SOMEDAY_KEY: &str = "future:someday";
 
 const ENTRY_SELECT: &str = r#"
     SELECT entries.id AS id, entries.content AS content, entries.entry_type AS entry_type,
@@ -221,7 +224,7 @@ impl LocalBackend {
         tokio::fs::create_dir_all(&app_dir)
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
-        tokio::fs::create_dir_all(app_dir.join("uploads"))
+        tokio::fs::create_dir_all(app_dir.join(ATTACHMENT_DIR))
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
         let db_path = app_dir.join("rbujo.sqlite3");
@@ -240,6 +243,7 @@ impl LocalBackend {
             app_dir,
             owner_id,
         };
+        backend.migrate_legacy_uploads_to_attachments().await?;
         Ok(backend)
     }
 
@@ -285,6 +289,7 @@ impl LocalBackend {
             .await?;
         self.clear_daily_markdown_sync_state().await?;
         self.sync_all_daily_markdown_files().await;
+        let _ = self.write_future_markdown_files().await;
         self.get_markdown_workspace().await
     }
 
@@ -327,7 +332,7 @@ impl LocalBackend {
         let Some(std::path::Component::Normal(first)) = components.next() else {
             return Err(AppError::BadRequest("Invalid upload path".to_string()));
         };
-        if first != "uploads" {
+        if first != ATTACHMENT_DIR && first != LEGACY_UPLOAD_DIR {
             return Err(AppError::BadRequest("Invalid upload path".to_string()));
         }
         for component in components {
@@ -338,8 +343,35 @@ impl LocalBackend {
         Ok(self.app_dir.join(relative))
     }
 
-    async fn existing_upload_filename_for_sha(&self, sha256: &str) -> AppResult<Option<String>> {
-        let upload_dir = self.app_dir.join("uploads");
+    fn attachment_relative_path(filename: &str) -> String {
+        format!("{ATTACHMENT_DIR}/{filename}")
+    }
+
+    fn legacy_upload_relative_path(filename: &str) -> String {
+        format!("{LEGACY_UPLOAD_DIR}/{filename}")
+    }
+
+    async fn existing_upload_relative_path_for_sha(
+        &self,
+        sha256: &str,
+    ) -> AppResult<Option<String>> {
+        for directory in [ATTACHMENT_DIR, LEGACY_UPLOAD_DIR] {
+            if let Some(relative_path) = self
+                .existing_upload_relative_path_for_sha_in_dir(directory, sha256)
+                .await?
+            {
+                return Ok(Some(relative_path));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn existing_upload_relative_path_for_sha_in_dir(
+        &self,
+        directory: &str,
+        sha256: &str,
+    ) -> AppResult<Option<String>> {
+        let upload_dir = self.app_dir.join(directory);
         if tokio::fs::metadata(&upload_dir).await.is_err() {
             return Ok(None);
         }
@@ -366,11 +398,108 @@ impl LocalBackend {
                     .strip_prefix(sha256)
                     .is_some_and(|suffix| suffix.starts_with('.'))
             {
-                matches.push(filename);
+                matches.push(format!("{directory}/{filename}"));
             }
         }
         matches.sort();
         Ok(matches.into_iter().next())
+    }
+
+    async fn migrate_legacy_uploads_to_attachments(&self) -> AppResult<()> {
+        let legacy_dir = self.app_dir.join(LEGACY_UPLOAD_DIR);
+        if tokio::fs::metadata(&legacy_dir).await.is_err() {
+            return Ok(());
+        }
+
+        let attachment_dir = self.app_dir.join(ATTACHMENT_DIR);
+        tokio::fs::create_dir_all(&attachment_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+
+        let mut migrated_paths = Vec::new();
+        let mut read_dir = tokio::fs::read_dir(&legacy_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?
+        {
+            let metadata = entry
+                .metadata()
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            if !metadata.is_file() {
+                continue;
+            }
+
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let legacy_relative_path = Self::legacy_upload_relative_path(&filename);
+            let attachment_relative_path = Self::attachment_relative_path(&filename);
+            let attachment_path = self.app_dir.join(&attachment_relative_path);
+
+            if tokio::fs::metadata(&attachment_path).await.is_err()
+                && tokio::fs::hard_link(entry.path(), &attachment_path)
+                    .await
+                    .is_err()
+            {
+                tokio::fs::copy(entry.path(), &attachment_path)
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+            }
+
+            let bytes = tokio::fs::read(&attachment_path)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            let original_filename = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT original_filename FROM attachment_records WHERE relative_path = ?",
+            )
+            .bind(&legacy_relative_path)
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten();
+            self.register_upload_record(
+                &attachment_relative_path,
+                &filename,
+                original_filename.as_deref().or(Some(&filename)),
+                &sha256_hex(&bytes),
+                bytes.len() as i64,
+            )
+            .await?;
+            sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
+                .bind(&legacy_relative_path)
+                .execute(&self.pool)
+                .await?;
+            migrated_paths.push((legacy_relative_path, attachment_relative_path));
+        }
+
+        if migrated_paths.is_empty() {
+            return Ok(());
+        }
+
+        let entries = sqlx::query_as::<_, Entry>(&format!(
+            "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
+        ))
+        .bind(self.owner_id)
+        .fetch_all(&self.pool)
+        .await?;
+        for mut entry in entries {
+            let mut content = entry.content.clone();
+            for (legacy_relative_path, attachment_relative_path) in &migrated_paths {
+                content = rewrite_attachment_reference_path(
+                    &content,
+                    legacy_relative_path,
+                    attachment_relative_path,
+                );
+            }
+            if content != entry.content {
+                entry.content = content;
+                self.save_entry(&entry).await?;
+                self.index_entry(&entry).await?;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn db(&self) -> &SqlitePool {
@@ -385,6 +514,10 @@ impl LocalBackend {
             input.target_month.as_deref(),
             input.is_future,
         )?;
+        let affects_future = is_future != 0 || target_month.is_some();
+        if affects_future {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         self.import_daily_markdown_for_date_values(vec![target_date.clone()])
             .await;
         let id = Uuid::new_v4().to_string();
@@ -413,11 +546,23 @@ impl LocalBackend {
         let response = self.response_from_entry(entry).await?;
         self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
             .await;
+        if response_affects_future_markdown(&response) {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(response)
     }
 
     pub async fn update_entry(&self, id: String, patch: EntryPatch) -> AppResult<EntryResponse> {
         let existing = self.fetch_entry(&id).await?;
+        let previous_affects_future = entry_affects_future_markdown(&existing);
+        let patch_affects_future = patch
+            .target_month
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || patch.is_future == Some(true);
+        if previous_affects_future || patch_affects_future {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         let mut import_dates = vec![existing.target_date.clone()];
         if let Some(target_date) = patch.target_date.as_deref() {
             import_dates.push(Some(validate_date(target_date)?));
@@ -478,11 +623,18 @@ impl LocalBackend {
             response.target_date.clone(),
         ])
         .await;
+        if previous_affects_future || response_affects_future_markdown(&response) {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(response)
     }
 
     pub async fn archive_entry(&self, id: String) -> AppResult<EntryResponse> {
         let entry = self.fetch_entry(&id).await?;
+        let affects_future = entry_affects_future_markdown(&entry);
+        if affects_future {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         self.import_daily_markdown_for_date_values(vec![entry.target_date.clone()])
             .await;
         let mut entry = self.fetch_entry(&id).await?;
@@ -491,11 +643,18 @@ impl LocalBackend {
         let response = self.response_from_entry(entry).await?;
         self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
             .await;
+        if affects_future || response_affects_future_markdown(&response) {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(response)
     }
 
     pub async fn unarchive_entry(&self, id: String) -> AppResult<EntryResponse> {
         let entry = self.fetch_entry(&id).await?;
+        let affects_future = entry_affects_future_markdown(&entry);
+        if affects_future {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         self.import_daily_markdown_for_date_values(vec![entry.target_date.clone()])
             .await;
         let mut entry = self.fetch_entry(&id).await?;
@@ -504,11 +663,18 @@ impl LocalBackend {
         let response = self.response_from_entry(entry).await?;
         self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
             .await;
+        if affects_future || response_affects_future_markdown(&response) {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(response)
     }
 
     pub async fn delete_entry(&self, id: String) -> AppResult<()> {
         let entry = self.fetch_entry(&id).await?;
+        let affects_future = self.entry_chain_affects_future_markdown(&entry).await?;
+        if affects_future {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         let sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
         self.import_daily_markdown_for_date_values(sync_dates).await;
         let entry = self.fetch_entry(&id).await?;
@@ -532,11 +698,18 @@ impl LocalBackend {
         self.cleanup_upload_references_if_unused(removed_upload_refs)
             .await?;
         self.sync_daily_markdown_for_date_values(sync_dates).await;
+        if affects_future {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(())
     }
 
     pub async fn reopen_entry(&self, id: String) -> AppResult<ReopenResponse> {
         let entry = self.fetch_entry(&id).await?;
+        let affects_future = self.entry_chain_affects_future_markdown(&entry).await?;
+        if affects_future {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         let sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
         self.import_daily_markdown_for_date_values(sync_dates).await;
         let mut entry = self.fetch_entry(&id).await?;
@@ -555,6 +728,9 @@ impl LocalBackend {
             .await?;
         sync_dates.push(updated_entry.target_date.clone());
         self.sync_daily_markdown_for_date_values(sync_dates).await;
+        if affects_future || response_affects_future_markdown(&updated_entry) {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(ReopenResponse {
             success: true,
             updated_entry,
@@ -568,6 +744,10 @@ impl LocalBackend {
         target_month: Option<String>,
     ) -> AppResult<EntryResponse> {
         let entry = self.fetch_entry(&id).await?;
+        let previous_affects_future = entry_affects_future_markdown(&entry);
+        if previous_affects_future || target_month.is_some() {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         self.import_daily_markdown_for_date_values(vec![entry.target_date.clone()])
             .await;
         let mut entry = self.fetch_entry(&id).await?;
@@ -589,6 +769,7 @@ impl LocalBackend {
             response.target_date.clone(),
         ])
         .await;
+        let _ = self.write_future_markdown_files().await;
         Ok(response)
     }
 
@@ -626,6 +807,10 @@ impl LocalBackend {
     }
 
     pub async fn get_future_log(&self, include_archived: bool) -> AppResult<FutureLogResponse> {
+        if !include_archived {
+            self.import_future_markdown_files_if_changed().await?;
+            let _ = self.write_future_markdown_files().await;
+        }
         let archive_filter = if include_archived {
             ""
         } else {
@@ -712,16 +897,22 @@ impl LocalBackend {
 
     pub async fn reorder_entries(&self, entry_ids: Vec<String>) -> AppResult<()> {
         let mut sync_dates = Vec::new();
+        let mut affects_future = false;
         for entry_id in entry_ids.iter() {
             if let Ok(entry) = self.fetch_entry(entry_id).await {
+                affects_future |= entry_affects_future_markdown(&entry);
                 sync_dates.push(entry.target_date);
             }
+        }
+        if affects_future {
+            self.import_future_markdown_files_if_changed().await?;
         }
         self.import_daily_markdown_for_date_values(sync_dates.clone())
             .await;
         sync_dates.clear();
         for (index, entry_id) in entry_ids.iter().enumerate() {
             if let Ok(entry) = self.fetch_entry(entry_id).await {
+                affects_future |= entry_affects_future_markdown(&entry);
                 sync_dates.push(entry.target_date);
             }
             sqlx::query("UPDATE entries SET position = ? WHERE id = ? AND owner_id = ?")
@@ -732,6 +923,9 @@ impl LocalBackend {
                 .await?;
         }
         self.sync_daily_markdown_for_date_values(sync_dates).await;
+        if affects_future {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(())
     }
 
@@ -742,6 +936,10 @@ impl LocalBackend {
     ) -> AppResult<MigrationResult> {
         let target_date = validate_date(&target_date)?;
         let source = self.fetch_entry(&id).await?;
+        let source_affects_future = entry_affects_future_markdown(&source);
+        if source_affects_future {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         self.import_daily_markdown_for_date_values(vec![
             source.target_date.clone(),
             Some(target_date.clone()),
@@ -768,6 +966,9 @@ impl LocalBackend {
             created.target_date.clone(),
         ])
         .await;
+        if source_affects_future || entry_affects_future_markdown(&created) {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(MigrationResult {
             updated_source: self.response_from_entry(source).await?,
             created_entry: self.response_from_entry(created).await?,
@@ -781,6 +982,10 @@ impl LocalBackend {
     ) -> AppResult<MigrationResult> {
         let target_month = target_month.as_deref().map(validate_month).transpose()?;
         let source = self.fetch_entry(&id).await?;
+        let source_affects_future = entry_affects_future_markdown(&source);
+        if source_affects_future || target_month.is_some() {
+            self.import_future_markdown_files_if_changed().await?;
+        }
         self.import_daily_markdown_for_date_values(vec![source.target_date.clone()])
             .await;
         let mut source = self.fetch_entry(&id).await?;
@@ -804,6 +1009,9 @@ impl LocalBackend {
             created.target_date.clone(),
         ])
         .await;
+        if source_affects_future || entry_affects_future_markdown(&created) {
+            let _ = self.write_future_markdown_files().await;
+        }
         Ok(MigrationResult {
             updated_source: self.response_from_entry(source).await?,
             created_entry: self.response_from_entry(created).await?,
@@ -981,10 +1189,18 @@ impl LocalBackend {
         let mut updated_count = 0usize;
         let mut skipped_count = 0usize;
         let mut sync_dates = Vec::new();
+        let mut affects_future = false;
+        let mut imported_future_markdown = false;
 
         for item in entries {
             let tags = item.tags.clone();
             let mut imported = normalize_import_entry(item, self.owner_id)?;
+            let imported_affects_future = entry_affects_future_markdown(&imported);
+            affects_future |= imported_affects_future;
+            if imported_affects_future && !imported_future_markdown {
+                self.import_future_markdown_files_if_changed().await?;
+                imported_future_markdown = true;
+            }
             let existing_owner: Option<i64> =
                 sqlx::query_scalar("SELECT owner_id FROM entries WHERE id = ?")
                     .bind(&imported.id)
@@ -994,6 +1210,13 @@ impl LocalBackend {
             if let Some(owner_id) = existing_owner {
                 if owner_id == self.owner_id {
                     let previous = self.fetch_entry(&imported.id).await.ok();
+                    let previous_affects_future =
+                        previous.as_ref().is_some_and(entry_affects_future_markdown);
+                    if previous_affects_future && !imported_future_markdown {
+                        self.import_future_markdown_files_if_changed().await?;
+                        imported_future_markdown = true;
+                    }
+                    affects_future |= previous.as_ref().is_some_and(entry_affects_future_markdown);
                     self.save_entry(&imported).await?;
                     self.set_entry_tags(&imported.id, tags).await?;
                     self.index_entry(&imported).await?;
@@ -1031,6 +1254,9 @@ impl LocalBackend {
         }
 
         self.sync_daily_markdown_for_date_values(sync_dates).await;
+        if affects_future {
+            let _ = self.write_future_markdown_files().await;
+        }
 
         Ok(ImportResponseDto {
             success: true,
@@ -1057,8 +1283,12 @@ impl LocalBackend {
     pub async fn store_upload(&self, input: UploadInput) -> AppResult<StoredUpload> {
         let size = input.bytes.len();
         let sha256 = sha256_hex(&input.bytes);
-        if let Some(filename) = self.existing_upload_filename_for_sha(&sha256).await? {
-            let relative_path = format!("uploads/{filename}");
+        if let Some(relative_path) = self.existing_upload_relative_path_for_sha(&sha256).await? {
+            let filename = Path::new(&relative_path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| AppError::Internal("Invalid upload filename".to_string()))?
+                .to_string();
             let absolute_path = self.app_dir.join(&relative_path);
             self.register_upload_record(
                 &relative_path,
@@ -1083,7 +1313,7 @@ impl LocalBackend {
         } else {
             format!("{sha256}.{extension}")
         };
-        let relative_path = format!("uploads/{filename}");
+        let relative_path = Self::attachment_relative_path(&filename);
         let absolute_path = self.app_dir.join(&relative_path);
         if let Some(parent) = absolute_path.parent() {
             tokio::fs::create_dir_all(parent)
@@ -1167,7 +1397,25 @@ impl LocalBackend {
     }
 
     async fn scan_upload_files(&self) -> AppResult<Vec<AttachmentMaintenanceItem>> {
-        let upload_dir = self.app_dir.join("uploads");
+        let mut uploads = self.scan_upload_files_in_dir(ATTACHMENT_DIR).await?;
+        let attachment_filenames = uploads
+            .iter()
+            .map(|upload| upload.filename.clone())
+            .collect::<HashSet<_>>();
+        for upload in self.scan_upload_files_in_dir(LEGACY_UPLOAD_DIR).await? {
+            if !attachment_filenames.contains(&upload.filename) {
+                uploads.push(upload);
+            }
+        }
+        uploads.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        Ok(uploads)
+    }
+
+    async fn scan_upload_files_in_dir(
+        &self,
+        directory: &str,
+    ) -> AppResult<Vec<AttachmentMaintenanceItem>> {
+        let upload_dir = self.app_dir.join(directory);
         if tokio::fs::metadata(&upload_dir).await.is_err() {
             return Ok(Vec::new());
         }
@@ -1189,12 +1437,12 @@ impl LocalBackend {
                 continue;
             }
             let filename = entry.file_name().to_string_lossy().to_string();
-            let relative_path = format!("uploads/{filename}");
             let bytes = tokio::fs::read(entry.path())
                 .await
                 .map_err(|error| AppError::Internal(error.to_string()))?;
             let sha256 = sha256_hex(&bytes);
             let size = metadata.len() as i64;
+            let relative_path = format!("{directory}/{filename}");
             let original_filename = sqlx::query(
                 "SELECT original_filename FROM attachment_records WHERE relative_path = ?",
             )
@@ -1224,7 +1472,6 @@ impl LocalBackend {
                 references: Vec::new(),
             });
         }
-        uploads.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
         Ok(uploads)
     }
 
@@ -1301,6 +1548,34 @@ impl LocalBackend {
         }
 
         Ok(references)
+    }
+
+    async fn entry_chain_affects_future_markdown(&self, entry: &Entry) -> AppResult<bool> {
+        if entry_affects_future_markdown(entry) {
+            return Ok(true);
+        }
+        let mut current = entry.clone();
+        let mut seen = HashSet::new();
+
+        while let Some(next_id) = current.migrated_to_entry_id.clone() {
+            if !seen.insert(next_id.clone()) {
+                return Err(AppError::BadRequest(
+                    "Migration chain contains a cycle".to_string(),
+                ));
+            }
+            let child = self.fetch_entry(&next_id).await?;
+            if entry_affects_future_markdown(&child) {
+                return Ok(true);
+            }
+            current = child;
+            if seen.len() > 128 {
+                return Err(AppError::BadRequest(
+                    "Migration chain is too deep".to_string(),
+                ));
+            }
+        }
+
+        Ok(false)
     }
 
     async fn daily_dates_for_entry_chain(&self, entry: &Entry) -> AppResult<Vec<Option<String>>> {
@@ -1389,13 +1664,18 @@ impl LocalBackend {
         Ok((relative_path, absolute_path))
     }
 
-    async fn legacy_daily_markdown_absolute_path(
+    async fn legacy_daily_markdown_absolute_paths(
         &self,
         date: &str,
-    ) -> AppResult<(String, PathBuf)> {
-        let relative_path = legacy_daily_markdown_relative_path(date);
-        let absolute_path = self.markdown_workspace_path().await?.join(&relative_path);
-        Ok((relative_path, absolute_path))
+    ) -> AppResult<Vec<(String, PathBuf)>> {
+        let workspace = self.markdown_workspace_path().await?;
+        Ok(legacy_daily_markdown_relative_paths(date)
+            .into_iter()
+            .map(|relative_path| {
+                let absolute_path = workspace.join(&relative_path);
+                (relative_path, absolute_path)
+            })
+            .collect())
     }
 
     async fn import_daily_markdown_if_changed(&self, date: &str) -> AppResult<bool> {
@@ -1409,19 +1689,33 @@ impl LocalBackend {
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) =>
             {
-                let (_, legacy_absolute_path) =
-                    self.legacy_daily_markdown_absolute_path(date).await?;
-                match tokio::fs::read(&legacy_absolute_path).await {
-                    Ok(bytes) => (legacy_absolute_path, bytes, true),
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                        ) =>
-                    {
-                        return Ok(false);
+                let mut last_missing = true;
+                let mut found = None;
+                for (_, legacy_absolute_path) in
+                    self.legacy_daily_markdown_absolute_paths(date).await?
+                {
+                    match tokio::fs::read(&legacy_absolute_path).await {
+                        Ok(bytes) => {
+                            found = Some((legacy_absolute_path, bytes, true));
+                            break;
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                            ) =>
+                        {
+                            last_missing = true;
+                        }
+                        Err(error) => return Err(AppError::Internal(error.to_string())),
                     }
-                    Err(error) => return Err(AppError::Internal(error.to_string())),
+                }
+                if let Some(found) = found {
+                    found
+                } else if last_missing {
+                    return Ok(false);
+                } else {
+                    return Ok(false);
                 }
             }
             Err(error) => return Err(AppError::Internal(error.to_string())),
@@ -1667,6 +1961,351 @@ impl LocalBackend {
         })
     }
 
+    async fn future_markdown_absolute_path(
+        &self,
+        target_month: Option<&str>,
+    ) -> AppResult<(String, PathBuf)> {
+        let relative_path = future_markdown_relative_path(target_month);
+        let absolute_path = self.markdown_workspace_path().await?.join(&relative_path);
+        Ok((relative_path, absolute_path))
+    }
+
+    async fn future_markdown_scopes(&self) -> AppResult<Vec<Option<String>>> {
+        let mut scopes = vec![None];
+        let mut seen = HashSet::new();
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT target_month
+            FROM entries
+            WHERE owner_id = ?
+              AND target_month IS NOT NULL
+            ORDER BY target_month ASC
+            "#,
+        )
+        .bind(self.owner_id)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in rows {
+            if let Some(target_month) = row.try_get::<Option<String>, _>("target_month")?
+                && seen.insert(target_month.clone())
+            {
+                scopes.push(Some(target_month));
+            }
+        }
+
+        let future_dir = self.markdown_workspace_path().await?.join("Future");
+        if tokio::fs::metadata(future_dir.join("Future.md"))
+            .await
+            .is_ok()
+        {
+            scopes[0] = None;
+        }
+        if let Ok(mut year_dirs) = tokio::fs::read_dir(&future_dir).await {
+            while let Some(year_dir) = year_dirs
+                .next_entry()
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?
+            {
+                let metadata = year_dir
+                    .metadata()
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                if !metadata.is_dir() {
+                    continue;
+                }
+                let year = year_dir.file_name().to_string_lossy().to_string();
+                if year.len() != 4 || !year.chars().all(|ch| ch.is_ascii_digit()) {
+                    continue;
+                }
+                let mut month_files = tokio::fs::read_dir(year_dir.path())
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                while let Some(month_file) = month_files
+                    .next_entry()
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?
+                {
+                    let metadata = month_file
+                        .metadata()
+                        .await
+                        .map_err(|error| AppError::Internal(error.to_string()))?;
+                    if !metadata.is_file() {
+                        continue;
+                    }
+                    let filename = month_file.file_name().to_string_lossy().to_string();
+                    let Some(month) = filename.strip_suffix(".md") else {
+                        continue;
+                    };
+                    let target_month = format!("{year}-{month}");
+                    if validate_month(&target_month).is_ok() && seen.insert(target_month.clone()) {
+                        scopes.push(Some(target_month));
+                    }
+                }
+            }
+        }
+
+        Ok(scopes)
+    }
+
+    async fn import_future_markdown_files_if_changed(&self) -> AppResult<bool> {
+        let mut changed = false;
+        for target_month in self.future_markdown_scopes().await? {
+            if self
+                .import_future_markdown_scope_if_changed(target_month)
+                .await?
+            {
+                changed = true;
+            }
+        }
+        Ok(changed)
+    }
+
+    async fn import_future_markdown_scope_if_changed(
+        &self,
+        target_month: Option<String>,
+    ) -> AppResult<bool> {
+        let sync_key = future_markdown_sync_key(target_month.as_deref());
+        let (_, absolute_path) = self
+            .future_markdown_absolute_path(target_month.as_deref())
+            .await?;
+        let bytes = match tokio::fs::read(&absolute_path).await {
+            Ok(bytes) => bytes,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(AppError::Internal(error.to_string())),
+        };
+        let content_sha256 = sha256_hex(&bytes);
+        let modified_ms = file_modified_millis(&absolute_path).await?;
+        let state = self.daily_markdown_file_state(&sync_key).await?;
+        if state
+            .as_ref()
+            .is_some_and(|(state_modified_ms, state_sha256)| {
+                *state_modified_ms == modified_ms && state_sha256 == &content_sha256
+            })
+        {
+            return Ok(false);
+        }
+
+        let markdown = String::from_utf8_lossy(&bytes).to_string();
+        let parsed = parse_daily_markdown_file(&markdown);
+        self.apply_parsed_future_markdown(target_month.as_deref(), parsed)
+            .await?;
+        Ok(true)
+    }
+
+    async fn apply_parsed_future_markdown(
+        &self,
+        target_month: Option<&str>,
+        parsed_entries: Vec<ParsedDailyMarkdownEntry>,
+    ) -> AppResult<()> {
+        let sync_key = future_markdown_sync_key(target_month);
+        let existing = self.future_markdown_entries(target_month, false).await?;
+        let existing_by_id: HashMap<String, EntryResponse> = existing
+            .iter()
+            .cloned()
+            .map(|entry| (entry.id.clone(), entry))
+            .collect();
+        let sync_rows = self.daily_markdown_entry_states(&sync_key).await?;
+        let match_result =
+            match_daily_markdown_entries(&sync_rows, &parsed_entries, &existing_by_id);
+
+        let mut seen_ids = HashSet::new();
+        for (position_index, parsed) in parsed_entries.iter().enumerate() {
+            let position = position_index as i64;
+            let target_id = match_result
+                .matched_ids
+                .get(position_index)
+                .cloned()
+                .flatten();
+
+            if parsed.is_migration_pointer {
+                if let Some(id) = target_id {
+                    seen_ids.insert(id);
+                }
+                continue;
+            }
+
+            if let Some(id) = target_id {
+                let mut entry = self.fetch_entry(&id).await?;
+                entry.content = parsed.content.clone();
+                entry.entry_type = parsed.entry_type.clone();
+                entry.status = parsed.status.clone();
+                entry.target_date = None;
+                entry.target_month = target_month.map(str::to_string);
+                entry.is_future = 1;
+                entry.position = position;
+                entry.migrated_to_date = None;
+                entry.migrated_to_month = None;
+                entry.migrated_to_entry_id = None;
+                normalize_entry_state(&mut entry);
+                self.save_entry(&entry).await?;
+                self.set_entry_tags(&id, parsed.tags.clone()).await?;
+                self.index_entry(&entry).await?;
+                seen_ids.insert(id);
+            } else {
+                let id = self
+                    .create_future_markdown_entry_from_parsed(target_month, parsed, position)
+                    .await?;
+                seen_ids.insert(id);
+            }
+        }
+
+        for entry in existing {
+            if !seen_ids.contains(&entry.id)
+                && !match_result.retained_ids.contains(&entry.id)
+                && !matches!(
+                    entry.status.as_str(),
+                    STATUS_MIGRATED_FORWARD | STATUS_MIGRATED_FUTURE
+                )
+            {
+                self.delete_entry_from_markdown_import(&entry.id).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn create_future_markdown_entry_from_parsed(
+        &self,
+        target_month: Option<&str>,
+        parsed: &ParsedDailyMarkdownEntry,
+        position: i64,
+    ) -> AppResult<String> {
+        let id = Uuid::new_v4().to_string();
+        let entry = Entry {
+            id: id.clone(),
+            content: parsed.content.clone(),
+            entry_type: parsed.entry_type.clone(),
+            status: parsed.status.clone(),
+            created_at: now_string(),
+            target_date: None,
+            target_month: target_month.map(str::to_string),
+            is_future: 1,
+            source_entry_id: None,
+            owner_id: self.owner_id,
+            position,
+            from_date: None,
+            migrated_to_date: None,
+            migrated_to_month: None,
+            archived_at: None,
+            chain_root_id: None,
+            migrated_to_entry_id: None,
+        };
+        self.insert_entry(&entry).await?;
+        self.set_entry_tags(&id, parsed.tags.clone()).await?;
+        self.index_entry(&entry).await?;
+        Ok(id)
+    }
+
+    async fn future_markdown_entries(
+        &self,
+        target_month: Option<&str>,
+        include_archived: bool,
+    ) -> AppResult<Vec<EntryResponse>> {
+        let archive_filter = if include_archived {
+            ""
+        } else {
+            " AND archived_at IS NULL"
+        };
+        let entries = if let Some(target_month) = target_month {
+            sqlx::query_as::<_, Entry>(&format!(
+                r#"{ENTRY_SELECT}
+                WHERE owner_id = ?
+                  AND target_month = ?
+                  AND status NOT IN ('forward', 'future')
+                  {archive_filter}
+                ORDER BY position ASC, created_at DESC"#
+            ))
+            .bind(self.owner_id)
+            .bind(target_month)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, Entry>(&format!(
+                r#"{ENTRY_SELECT}
+                WHERE owner_id = ?
+                  AND is_future = 1
+                  AND target_date IS NULL
+                  AND target_month IS NULL
+                  AND status NOT IN ('forward', 'future')
+                  {archive_filter}
+                ORDER BY position ASC, created_at DESC"#
+            ))
+            .bind(self.owner_id)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        self.responses_from_entries(entries).await
+    }
+
+    async fn write_future_markdown_files(&self) -> AppResult<Vec<DailyMarkdownFile>> {
+        let mut files = Vec::new();
+        for target_month in self.future_markdown_scopes().await? {
+            let entries = self
+                .future_markdown_entries(target_month.as_deref(), false)
+                .await?;
+            let file_exists = {
+                let (_, absolute_path) = self
+                    .future_markdown_absolute_path(target_month.as_deref())
+                    .await?;
+                tokio::fs::metadata(absolute_path).await.is_ok()
+            };
+            if entries.is_empty() && target_month.is_some() && !file_exists {
+                continue;
+            }
+            if entries.is_empty() && target_month.is_none() && !file_exists {
+                continue;
+            }
+            files.push(
+                self.write_future_markdown_file(target_month.as_deref(), &entries)
+                    .await?,
+            );
+        }
+        Ok(files)
+    }
+
+    async fn write_future_markdown_file(
+        &self,
+        target_month: Option<&str>,
+        entries: &[EntryResponse],
+    ) -> AppResult<DailyMarkdownFile> {
+        let (relative_path, absolute_path) =
+            self.future_markdown_absolute_path(target_month).await?;
+        if let Some(parent) = absolute_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        }
+        let title = target_month.unwrap_or("Future");
+        let rendered = render_markdown_entry_file(title, entries);
+        tokio::fs::write(&absolute_path, &rendered.markdown)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        self.record_daily_markdown_sync_state(
+            &future_markdown_sync_key(target_month),
+            &relative_path,
+            &absolute_path,
+            &rendered.markdown,
+            &rendered.entry_lines,
+        )
+        .await?;
+        Ok(DailyMarkdownFile {
+            relative_path,
+            absolute_path: absolute_path.to_string_lossy().to_string(),
+            workspace_path: self
+                .markdown_workspace_path()
+                .await?
+                .to_string_lossy()
+                .to_string(),
+        })
+    }
+
     async fn record_daily_markdown_sync_state(
         &self,
         date: &str,
@@ -1862,53 +2501,77 @@ impl LocalBackend {
     }
 
     pub async fn list_uploads_for_backup(&self) -> AppResult<Vec<UploadBackup>> {
-        let upload_dir = self.app_dir.join("uploads");
-        if tokio::fs::metadata(&upload_dir).await.is_err() {
-            return Ok(Vec::new());
-        }
-
         let mut uploads = Vec::new();
-        let mut read_dir = tokio::fs::read_dir(&upload_dir)
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        while let Some(entry) = read_dir
-            .next_entry()
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?
-        {
-            let metadata = entry
-                .metadata()
-                .await
-                .map_err(|error| AppError::Internal(error.to_string()))?;
-            if !metadata.is_file() {
+        let mut attachment_filenames = HashSet::new();
+        for directory in [ATTACHMENT_DIR, LEGACY_UPLOAD_DIR] {
+            let upload_dir = self.app_dir.join(directory);
+            if tokio::fs::metadata(&upload_dir).await.is_err() {
                 continue;
             }
-            let filename = entry.file_name().to_string_lossy().to_string();
-            let bytes = tokio::fs::read(entry.path())
+
+            let mut read_dir = tokio::fs::read_dir(&upload_dir)
                 .await
                 .map_err(|error| AppError::Internal(error.to_string()))?;
-            let relative_path = format!("uploads/{filename}");
-            uploads.push(UploadBackup {
-                relative_path,
-                absolute_path: entry.path().to_string_lossy().to_string(),
-                filename,
-                sha256: sha256_hex(&bytes),
-                bytes,
-            });
+            while let Some(entry) = read_dir
+                .next_entry()
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?
+            {
+                let metadata = entry
+                    .metadata()
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                if !metadata.is_file() {
+                    continue;
+                }
+                let filename = entry.file_name().to_string_lossy().to_string();
+                if directory == LEGACY_UPLOAD_DIR && attachment_filenames.contains(&filename) {
+                    continue;
+                }
+                let bytes = tokio::fs::read(entry.path())
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                let relative_path = format!("{directory}/{filename}");
+                if directory == ATTACHMENT_DIR {
+                    attachment_filenames.insert(filename.clone());
+                }
+                uploads.push(UploadBackup {
+                    relative_path,
+                    absolute_path: entry.path().to_string_lossy().to_string(),
+                    filename,
+                    sha256: sha256_hex(&bytes),
+                    bytes,
+                });
+            }
         }
         uploads.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
         Ok(uploads)
     }
 
     pub async fn open_upload(&self, relative_path: String) -> AppResult<()> {
-        let path = self.upload_file_path(&relative_path)?;
-        let canonical_upload_dir = tokio::fs::canonicalize(self.app_dir.join("uploads"))
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let mut path = self.upload_file_path(&relative_path)?;
+        if tokio::fs::metadata(&path).await.is_err()
+            && let Some(filename) = relative_path.strip_prefix(&format!("{LEGACY_UPLOAD_DIR}/"))
+        {
+            let fallback_relative_path = Self::attachment_relative_path(filename);
+            let fallback_path = self.upload_file_path(&fallback_relative_path)?;
+            if tokio::fs::metadata(&fallback_path).await.is_ok() {
+                path = fallback_path;
+            }
+        }
         let canonical_path = tokio::fs::canonicalize(&path)
             .await
             .map_err(|_| AppError::NotFound("Upload not found".to_string()))?;
-        if !canonical_path.starts_with(&canonical_upload_dir) {
+        let mut inside_allowed_directory = false;
+        for directory in [ATTACHMENT_DIR, LEGACY_UPLOAD_DIR] {
+            if let Ok(canonical_dir) = tokio::fs::canonicalize(self.app_dir.join(directory)).await
+                && canonical_path.starts_with(&canonical_dir)
+            {
+                inside_allowed_directory = true;
+                break;
+            }
+        }
+        if !inside_allowed_directory {
             return Err(AppError::BadRequest("Invalid upload path".to_string()));
         }
 
@@ -1933,6 +2596,20 @@ impl LocalBackend {
         let file = self.sync_daily_markdown_file(date).await?;
         open_with_system(Path::new(&file.absolute_path))?;
         Ok(file)
+    }
+
+    pub async fn sync_future_markdown_files(&self) -> AppResult<Vec<DailyMarkdownFile>> {
+        self.import_future_markdown_files_if_changed().await?;
+        self.write_future_markdown_files().await
+    }
+
+    pub async fn open_markdown_workspace(&self) -> AppResult<MarkdownWorkspace> {
+        let workspace = self.get_markdown_workspace().await?;
+        tokio::fs::create_dir_all(&workspace.absolute_path)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        open_with_system(Path::new(&workspace.absolute_path))?;
+        Ok(workspace)
     }
 
     pub async fn export_markdown_archive(&self) -> AppResult<Vec<u8>> {
@@ -2616,6 +3293,14 @@ fn normalize_entry_state(entry: &mut Entry) {
     }
 }
 
+fn entry_affects_future_markdown(entry: &Entry) -> bool {
+    entry.is_future != 0 || entry.target_month.is_some()
+}
+
+fn response_affects_future_markdown(entry: &EntryResponse) -> bool {
+    entry.is_future || entry.target_month.is_some()
+}
+
 fn normalize_import_entry(item: EntryExportSchema, owner_id: i64) -> AppResult<Entry> {
     let mut entry = Entry {
         id: if item.id.trim().is_empty() {
@@ -2765,12 +3450,33 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn daily_markdown_relative_path(date: &str) -> String {
-    let month = date.get(0..7).unwrap_or("unknown");
-    format!("Daily/{month}/{date}.md")
+    let year = date.get(0..4).unwrap_or("unknown");
+    let month = date.get(5..7).unwrap_or("unknown");
+    format!("Daily/{year}/{month}/{date}.md")
 }
 
-fn legacy_daily_markdown_relative_path(date: &str) -> String {
-    format!("Daily/{date}.md")
+fn legacy_daily_markdown_relative_paths(date: &str) -> Vec<String> {
+    let month = date.get(0..7).unwrap_or("unknown");
+    vec![
+        format!("Daily/{month}/{date}.md"),
+        format!("Daily/{date}.md"),
+    ]
+}
+
+fn future_markdown_relative_path(target_month: Option<&str>) -> String {
+    if let Some(target_month) = target_month {
+        let year = target_month.get(0..4).unwrap_or("unknown");
+        let month = target_month.get(5..7).unwrap_or("unknown");
+        format!("Future/{year}/{month}.md")
+    } else {
+        "Future/Future.md".to_string()
+    }
+}
+
+fn future_markdown_sync_key(target_month: Option<&str>) -> String {
+    target_month
+        .map(|month| format!("future:{month}"))
+        .unwrap_or_else(|| FUTURE_MARKDOWN_SOMEDAY_KEY.to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -2810,7 +3516,11 @@ struct DailyMarkdownMatchResult {
 }
 
 fn render_daily_markdown_file(date: &str, entries: &[EntryResponse]) -> RenderedDailyMarkdown {
-    let mut markdown = format!("# {date}\n\n");
+    render_markdown_entry_file(date, entries)
+}
+
+fn render_markdown_entry_file(title: &str, entries: &[EntryResponse]) -> RenderedDailyMarkdown {
+    let mut markdown = format!("# {title}\n\n");
     let mut entry_lines = Vec::new();
     for (position, entry) in entries.iter().enumerate() {
         let line = render_daily_markdown_entry(entry);
@@ -2928,7 +3638,10 @@ fn daily_markdown_migration_pointer_status(content: &str) -> Option<&'static str
     let content = content.trim();
     if content.starts_with("Migrated to [[Daily/") {
         Some(STATUS_MIGRATED_FORWARD)
-    } else if content.starts_with("Migrated to [[Monthly/") || content == "Migrated to Future Log" {
+    } else if content.starts_with("Migrated to [[Monthly/")
+        || content.starts_with("Migrated to [[Future/")
+        || content == "Migrated to Future Log"
+    {
         Some(STATUS_MIGRATED_FUTURE)
     } else {
         None
@@ -3212,7 +3925,10 @@ fn daily_markdown_migration_target(entry: &EntryResponse) -> String {
             daily_markdown_relative_path(date)
         )
     } else if let Some(month) = entry.migrated_to_month.as_deref() {
-        format!("Migrated to [[Monthly/{month}|{month}]]")
+        format!(
+            "Migrated to [[{}|{month}]]",
+            future_markdown_relative_path(Some(month))
+        )
     } else {
         "Migrated to Future Log".to_string()
     }
@@ -3418,12 +4134,14 @@ fn entries_to_obsidian_markdown_files(
 
 fn obsidian_archive_file_for_entry(entry: &EntryExportSchema) -> (String, String) {
     if let Some(target_date) = entry.target_date.clone() {
-        let month = target_date.get(0..7).unwrap_or("unknown");
-        (format!("Daily/{month}/{target_date}.md"), target_date)
+        (daily_markdown_relative_path(&target_date), target_date)
     } else if let Some(target_month) = entry.target_month.clone() {
-        (format!("Monthly/{target_month}.md"), target_month)
+        (
+            future_markdown_relative_path(Some(&target_month)),
+            target_month,
+        )
     } else if entry.is_future {
-        ("Future.md".to_string(), "Future".to_string())
+        (future_markdown_relative_path(None), "Future".to_string())
     } else {
         ("Undated.md".to_string(), "Undated".to_string())
     }
@@ -3504,16 +4222,22 @@ fn percent_decode_lossy(value: &str) -> String {
 
 fn collect_upload_references(value: &str, references: &mut HashSet<String>) {
     if let Ok(local_asset_regex) = Regex::new(
-        r#"(?i)\b(?:asset://localhost|https?://asset\.localhost)[^)\]"'<>]*uploads/[^)\]\s"'<>]+"#,
+        r#"(?i)\b(?:asset://localhost|https?://asset\.localhost)[^)\]"'<>]*(?:attachments|uploads)/[^)\]\s"'<>]+"#,
     ) {
         for capture in local_asset_regex.find_iter(value) {
-            if let Some(index) = capture.as_str().find("uploads/") {
+            if let Some(index) = capture
+                .as_str()
+                .find(&format!("{ATTACHMENT_DIR}/"))
+                .or_else(|| capture.as_str().find(&format!("{LEGACY_UPLOAD_DIR}/")))
+            {
                 references.insert(capture.as_str()[index..].to_string());
             }
         }
     }
 
-    if let Ok(relative_regex) = Regex::new(r#"(^|[\(\[\s"'=])(?P<path>uploads/[^)\]\s"'<>]+)"#) {
+    if let Ok(relative_regex) =
+        Regex::new(r#"(^|[\(\[\s"'=])(?P<path>(?:attachments|uploads)/[^)\]\s"'<>]+)"#)
+    {
         for capture in relative_regex.captures_iter(value) {
             if let Some(path) = capture.name("path") {
                 references.insert(path.as_str().to_string());
@@ -3530,6 +4254,22 @@ fn upload_references_from_content(content: &str) -> HashSet<String> {
         collect_upload_references(&decoded, &mut references);
     }
     references
+}
+
+fn rewrite_attachment_reference_path(
+    content: &str,
+    old_relative_path: &str,
+    new_relative_path: &str,
+) -> String {
+    let mut rewritten = content.replace(old_relative_path, new_relative_path);
+    let encoded_old = percent_encode_url_component(old_relative_path);
+    let encoded_new = percent_encode_url_component(new_relative_path);
+    if let Ok(regex) = Regex::new(&format!("(?i){}", regex::escape(&encoded_old))) {
+        rewritten = regex
+            .replace_all(&rewritten, encoded_new.as_str())
+            .into_owned();
+    }
+    rewritten
 }
 
 fn attachment_reference_preview(content: &str) -> String {

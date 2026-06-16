@@ -345,12 +345,34 @@ async fn open_daily_markdown(
 }
 
 #[tauri::command]
+async fn sync_future_markdown_files(
+    state: State<'_, DesktopState>,
+) -> Result<Vec<DailyMarkdownFile>, String> {
+    state
+        .backend
+        .sync_future_markdown_files()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn get_markdown_workspace(
     state: State<'_, DesktopState>,
 ) -> Result<MarkdownWorkspace, String> {
     state
         .backend
         .get_markdown_workspace()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn open_markdown_workspace(
+    state: State<'_, DesktopState>,
+) -> Result<MarkdownWorkspace, String> {
+    state
+        .backend
+        .open_markdown_workspace()
         .await
         .map_err(to_error)
 }
@@ -625,7 +647,9 @@ pub fn run() {
             open_upload,
             sync_daily_markdown_file,
             open_daily_markdown,
+            sync_future_markdown_files,
             get_markdown_workspace,
+            open_markdown_workspace,
             choose_markdown_workspace,
             attachment_maintenance_summary,
             cleanup_unused_uploads,

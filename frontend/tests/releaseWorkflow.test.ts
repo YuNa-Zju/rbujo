@@ -32,3 +32,15 @@ test("release workflow publishes changelog section as release body", async () =>
   assert.match(workflow, /releaseBody:\s*\$\{\{\s*steps\.release_notes\.outputs\.body\s*\}\}/);
   assert.doesNotMatch(workflow, /软件名称统一为 BuJo/);
 });
+
+test("v0.3.1 release notes are written in Chinese", async () => {
+  const changelogPath = path.resolve(import.meta.dirname, "../../CHANGELOG.md");
+  const changelog = await readFile(changelogPath, "utf8");
+  const section = changelog.split(/^## v0\.3\.0/m)[0];
+
+  assert.match(section, /## v0\.3\.1/);
+  assert.match(section, /附件真实存储目录/);
+  assert.match(section, /Storage 面板精简/);
+  assert.match(section, /Future Log 增加 Markdown 磁盘同步/);
+  assert.match(section, /回到应用窗口/);
+});

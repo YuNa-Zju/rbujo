@@ -21,18 +21,18 @@ test("attachment markdown preserves batch order and uses image syntax only for i
     {
       name: "课程截图.png",
       type: "image/png",
-      url: "asset://localhost/private/uploads/a.png",
+      url: "asset://localhost/private/attachments/a.png",
     },
     {
       name: "slides.pdf",
       type: "application/pdf",
-      url: "asset://localhost/private/uploads/b.pdf",
+      url: "asset://localhost/private/attachments/b.pdf",
     },
   ]);
 
   assert.equal(
     markdown,
-    "![课程截图.png](asset://localhost/private/uploads/a.png)\n[slides.pdf](asset://localhost/private/uploads/b.pdf)\n",
+    "![课程截图.png](asset://localhost/private/attachments/a.png)\n[slides.pdf](asset://localhost/private/attachments/b.pdf)\n",
   );
 });
 
@@ -42,17 +42,17 @@ test("attachment markdown treats image extensions as images when mime type is mi
       {
         name: "dragged-photo.PNG",
         type: "",
-        url: "asset://localhost/private/uploads/photo.png",
+        url: "asset://localhost/private/attachments/photo.png",
       },
     ]),
-    "![dragged-photo.PNG](asset://localhost/private/uploads/photo.png)\n",
+    "![dragged-photo.PNG](asset://localhost/private/attachments/photo.png)\n",
   );
 });
 
 test("attachment paths keep dropped filenames and only target active editor bounds", () => {
   assert.equal(
     filenameFromPath(
-      "/Users/hemingyuna/Library/Application Support/fun.yunazju.rbujo/uploads/飞天5k.jpeg",
+      "/Users/hemingyuna/Library/Application Support/fun.yunazju.rbujo/attachments/飞天5k.jpeg",
     ),
     "飞天5k.jpeg",
   );
@@ -181,22 +181,23 @@ test("attachment upload mode only compresses supported image batches when reques
   assert.equal(resolveAttachmentUploadMode([png, pdf], "compressed"), "compressed");
 });
 
-test("upload references can be extracted and rewritten across exported backups", () => {
-  const oldUrl = "asset://localhost/private/uploads/abc123.png";
+test("attachment references can be extracted and rewritten across exported backups", () => {
+  const oldUrl = "asset://localhost/private/attachments/abc123.png";
   const encodedOldUrl =
-    "asset://localhost/%2FUsers%2Fme%2FLibrary%2FApplication%20Support%2Ffun.yunazju.rbujo%2Fuploads%2Fabc123.png";
-  const content = `![old](${oldUrl})\n[raw](uploads/report.pdf)`;
+    "asset://localhost/%2FUsers%2Fme%2FLibrary%2FApplication%20Support%2Ffun.yunazju.rbujo%2Fattachments%2Fabc123.png";
+  const content = `![old](${oldUrl})\n[raw](attachments/report.pdf)`;
 
-  assert.equal(extractUploadRelativePath(oldUrl), "uploads/abc123.png");
-  assert.equal(extractUploadRelativePath(encodedOldUrl), "uploads/abc123.png");
+  assert.equal(extractUploadRelativePath(oldUrl), "attachments/abc123.png");
+  assert.equal(extractUploadRelativePath(encodedOldUrl), "attachments/abc123.png");
+  assert.equal(extractUploadRelativePath("attachments/report.pdf"), "attachments/report.pdf");
   assert.equal(extractUploadRelativePath("uploads/report.pdf"), "uploads/report.pdf");
   assert.equal(extractUploadRelativePath("https://example.com/uploads/report.pdf"), null);
   assert.equal(
     replaceAttachmentReferences(`${content}\n![encoded](${encodedOldUrl})`, new Map([
-      ["uploads/abc123.png", "asset://localhost/private/uploads/new-image.png"],
-      ["uploads/report.pdf", "asset://localhost/private/uploads/new-report.pdf"],
+      ["attachments/abc123.png", "asset://localhost/private/attachments/new-image.png"],
+      ["attachments/report.pdf", "asset://localhost/private/attachments/new-report.pdf"],
     ])),
-    "![old](asset://localhost/private/uploads/new-image.png)\n[raw](asset://localhost/private/uploads/new-report.pdf)\n![encoded](asset://localhost/private/uploads/new-image.png)",
+    "![old](asset://localhost/private/attachments/new-image.png)\n[raw](asset://localhost/private/attachments/new-report.pdf)\n![encoded](asset://localhost/private/attachments/new-image.png)",
   );
 });
 

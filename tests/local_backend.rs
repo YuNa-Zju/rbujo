@@ -607,6 +607,274 @@ async fn future_entry_can_move_between_month_and_someday() {
 }
 
 #[tokio::test]
+async fn future_markdown_files_are_synced_for_someday_and_monthly_entries() {
+    let dir = temp_app_dir("future-markdown-disk");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "someday disk plan".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: None,
+            target_month: None,
+            is_future: true,
+            tags: vec!["future".to_string()],
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "july disk plan".to_string(),
+            entry_type: "task".to_string(),
+            target_date: None,
+            target_month: Some("2026-07".to_string()),
+            is_future: true,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let files = backend.sync_future_markdown_files().await.unwrap();
+    let paths = files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"Future/Future.md"));
+    assert!(paths.contains(&"Future/2026/07.md"));
+
+    let someday = fs::read_to_string(dir.join("journal/Future/Future.md")).unwrap();
+    assert!(someday.contains("- someday disk plan"));
+    assert!(someday.contains("Tags: #future"));
+    let monthly = fs::read_to_string(dir.join("journal/Future/2026/07.md")).unwrap();
+    assert!(monthly.contains("- [ ] july disk plan"));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn future_markdown_imports_external_edits_when_reading_future_log() {
+    let dir = temp_app_dir("future-markdown-import");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "future original body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: None,
+            target_month: None,
+            is_future: true,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend.sync_future_markdown_files().await.unwrap();
+    let markdown_path = dir.join("journal/Future/Future.md");
+    fs::write(
+        &markdown_path,
+        "# Future\n\n- [x] future body edited from markdown #external\n- new someday idea #idea\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    let future_log = backend.get_future_log(false).await.unwrap();
+    let edited = future_log
+        .future_log
+        .iter()
+        .find(|item| item.id == entry.id)
+        .expect("existing future entry should be updated from markdown");
+    assert_eq!(edited.content, "future body edited from markdown");
+    assert_eq!(edited.status, "completed");
+    assert_eq!(edited.tags, vec!["external".to_string()]);
+    assert!(
+        future_log
+            .future_log
+            .iter()
+            .any(|item| item.entry_type == "idea" && item.content == "new someday idea")
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn future_log_read_generates_missing_markdown_files_for_existing_entries() {
+    let dir = temp_app_dir("future-markdown-read-writes");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "existing future plan".to_string(),
+            entry_type: "task".to_string(),
+            target_date: None,
+            target_month: Some("2026-08".to_string()),
+            is_future: true,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    fs::remove_file(dir.join("journal/Future/2026/08.md")).ok();
+
+    backend.get_future_log(false).await.unwrap();
+
+    let monthly = fs::read_to_string(dir.join("journal/Future/2026/08.md")).unwrap();
+    assert!(monthly.contains("- [ ] existing future plan"));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_workspace_switch_writes_future_markdown_files() {
+    let dir = temp_app_dir("future-markdown-workspace-switch");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "workspace future plan".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: None,
+            target_month: None,
+            is_future: true,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let workspace = dir.join("custom-journal");
+
+    backend
+        .set_markdown_workspace(workspace.clone())
+        .await
+        .unwrap();
+
+    let someday = fs::read_to_string(workspace.join("Future/Future.md")).unwrap();
+    assert!(someday.contains("- workspace future plan"));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn future_entry_writes_import_dirty_markdown_before_appending() {
+    let dir = temp_app_dir("future-markdown-dirty-before-write");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let original = backend
+        .create_entry(CreateEntryInput {
+            content: "future original before dirty edit".to_string(),
+            entry_type: "task".to_string(),
+            target_date: None,
+            target_month: None,
+            is_future: true,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend.sync_future_markdown_files().await.unwrap();
+    let markdown_path = dir.join("journal/Future/Future.md");
+    fs::write(
+        &markdown_path,
+        "# Future\n\n- [x] future edited before app write #external\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    let appended = backend
+        .create_entry(CreateEntryInput {
+            content: "future appended in app".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: None,
+            target_month: None,
+            is_future: true,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let future_log = backend.get_future_log(false).await.unwrap();
+
+    let edited = future_log
+        .future_log
+        .iter()
+        .find(|item| item.id == original.id)
+        .expect("dirty markdown should update existing entry before app write");
+    assert_eq!(edited.content, "future edited before app write");
+    assert_eq!(edited.status, "completed");
+    assert!(
+        future_log
+            .future_log
+            .iter()
+            .any(|item| item.id == appended.id)
+    );
+
+    let markdown = fs::read_to_string(markdown_path).unwrap();
+    assert!(markdown.contains("future edited before app write"));
+    assert!(markdown.contains("future appended in app"));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn default_markdown_workspace_is_created_before_opening() {
+    let dir = temp_app_dir("default-markdown-open");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    assert!(!dir.join("journal").exists());
+
+    let result = backend.open_markdown_workspace().await;
+
+    assert!(dir.join("journal").is_dir());
+    if cfg!(target_os = "macos") {
+        assert!(result.is_ok());
+    }
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn migrated_legacy_upload_links_remain_openable() {
+    let dir = temp_app_dir("legacy-upload-link-open");
+    fs::create_dir_all(dir.join("uploads")).unwrap();
+    fs::write(dir.join("uploads/legacy.png"), [1, 2, 3, 4]).unwrap();
+
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+
+    assert!(dir.join("attachments/legacy.png").is_file());
+    assert!(dir.join("uploads/legacy.png").is_file());
+    assert!(
+        backend
+            .open_upload("uploads/legacy.png".to_string())
+            .await
+            .is_ok()
+    );
+    assert!(
+        backend
+            .open_upload("attachments/legacy.png".to_string())
+            .await
+            .is_ok()
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn legacy_upload_path_falls_back_to_attachment_file() {
+    let dir = temp_app_dir("legacy-upload-fallback");
+    fs::create_dir_all(dir.join("attachments")).unwrap();
+    fs::write(dir.join("attachments/legacy.png"), [1, 2, 3, 4]).unwrap();
+
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+
+    assert!(
+        backend
+            .open_upload("uploads/legacy.png".to_string())
+            .await
+            .is_ok()
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn uploads_are_stored_under_local_app_data_with_relative_urls() {
     let dir = temp_app_dir("uploads");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -619,7 +887,7 @@ async fn uploads_are_stored_under_local_app_data_with_relative_urls() {
         .await
         .unwrap();
 
-    assert!(stored.relative_path.starts_with("uploads/"));
+    assert!(stored.relative_path.starts_with("attachments/"));
     assert!(stored.relative_path.ends_with(".png"));
     assert_eq!(
         fs::read(dir.join(&stored.relative_path)).unwrap(),
@@ -651,7 +919,7 @@ async fn uploads_are_deduplicated_by_sha256_and_exported_for_backup() {
 
     assert_eq!(first.relative_path, second.relative_path);
     assert_eq!(first.sha256, second.sha256);
-    assert!(first.relative_path.starts_with("uploads/"));
+    assert!(first.relative_path.starts_with("attachments/"));
     assert!(first.relative_path.ends_with(".png"));
 
     let uploads = backend.list_uploads_for_backup().await.unwrap();
@@ -676,7 +944,7 @@ async fn upload_path_copies_external_file_into_private_uploads() {
         .await
         .unwrap();
 
-    assert!(stored.relative_path.starts_with("uploads/"));
+    assert!(stored.relative_path.starts_with("attachments/"));
     assert!(stored.relative_path.ends_with(".jpeg"));
     assert_eq!(
         fs::read(dir.join(&stored.relative_path)).unwrap(),
@@ -732,7 +1000,7 @@ async fn daily_markdown_file_is_synced_when_daily_entries_change() {
         .sync_daily_markdown_file("2026-06-16".to_string())
         .await
         .unwrap();
-    assert_eq!(file.relative_path, "Daily/2026-06/2026-06-16.md");
+    assert_eq!(file.relative_path, "Daily/2026/06/2026-06-16.md");
     let markdown_path = dir.join("journal").join(&file.relative_path);
     let markdown = fs::read_to_string(&markdown_path).unwrap();
     assert!(markdown.starts_with("# 2026-06-16"));
@@ -839,7 +1107,7 @@ async fn daily_markdown_imports_legacy_flat_file_before_month_folder_write() {
         })
         .await
         .unwrap();
-    let nested_path = dir.join("journal/Daily/2026-06/2026-06-16.md");
+    let nested_path = dir.join("journal/Daily/2026/06/2026-06-16.md");
     fs::remove_file(&nested_path).unwrap();
     let legacy_path = dir.join("journal/Daily/2026-06-16.md");
     fs::write(
@@ -859,7 +1127,7 @@ async fn daily_markdown_imports_legacy_flat_file_before_month_folder_write() {
         .await
         .unwrap();
 
-    assert_eq!(synced.relative_path, "Daily/2026-06/2026-06-16.md");
+    assert_eq!(synced.relative_path, "Daily/2026/06/2026-06-16.md");
     let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
     let edited = daily_entries
         .iter()
@@ -881,12 +1149,64 @@ async fn daily_markdown_imports_legacy_flat_file_before_month_folder_write() {
 }
 
 #[tokio::test]
+async fn daily_markdown_imports_legacy_year_month_file_before_year_month_folder_write() {
+    let dir = temp_app_dir("daily-markdown-legacy-year-month-import");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "legacy year month original".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let nested_path = dir.join("journal/Daily/2026/06/2026-06-16.md");
+    fs::remove_file(&nested_path).unwrap();
+    let legacy_path = dir.join("journal/Daily/2026-06/2026-06-16.md");
+    fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+    fs::write(
+        &legacy_path,
+        "# 2026-06-16\n\n- [x] legacy year month edited #legacy-month\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&legacy_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    let synced = backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+
+    assert_eq!(synced.relative_path, "Daily/2026/06/2026-06-16.md");
+    let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    let edited = daily_entries
+        .iter()
+        .find(|item| item.id == entry.id)
+        .expect("legacy year-month file should update the existing entry");
+    assert_eq!(edited.content, "legacy year month edited");
+    assert_eq!(edited.status, "completed");
+    assert_eq!(edited.tags, vec!["legacy-month".to_string()]);
+    let nested_markdown = fs::read_to_string(&nested_path).unwrap();
+    assert!(nested_markdown.contains("legacy year month edited"));
+    assert!(legacy_path.exists());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn markdown_workspace_switch_overwrites_existing_folder_from_bujo() {
     let dir = temp_app_dir("daily-markdown-workspace-overwrite");
     let workspace = temp_app_dir("daily-markdown-workspace-existing");
-    fs::create_dir_all(workspace.join("Daily/2026-06")).unwrap();
+    fs::create_dir_all(workspace.join("Daily/2026/06")).unwrap();
     fs::write(
-        workspace.join("Daily/2026-06/2026-06-16.md"),
+        workspace.join("Daily/2026/06/2026-06-16.md"),
         "# 2026-06-16\n\n- [ ] stale folder content\n",
     )
     .unwrap();
@@ -919,7 +1239,7 @@ async fn markdown_workspace_switch_overwrites_existing_folder_from_bujo() {
             .iter()
             .all(|item| item.content != "stale folder content")
     );
-    let markdown = fs::read_to_string(workspace.join("Daily/2026-06/2026-06-16.md")).unwrap();
+    let markdown = fs::read_to_string(workspace.join("Daily/2026/06/2026-06-16.md")).unwrap();
     assert!(markdown.contains("current bujo content"));
     assert!(!markdown.contains("stale folder content"));
 
@@ -1296,8 +1616,8 @@ async fn markdown_workspace_can_move_to_user_selected_directory() {
         })
         .await
         .unwrap();
-    assert!(workspace.join("Daily/2026-06/2026-06-21.md").exists());
-    assert!(!dir.join("journal/Daily/2026-06/2026-06-21.md").exists());
+    assert!(workspace.join("Daily/2026/06/2026-06-21.md").exists());
+    assert!(!dir.join("journal/Daily/2026/06/2026-06-21.md").exists());
 
     let reopened = LocalBackend::open(dir.clone()).await.unwrap();
     let persisted = reopened.get_markdown_workspace().await.unwrap();
@@ -1367,7 +1687,7 @@ async fn daily_markdown_auto_syncs_archive_reorder_import_and_future_moves() {
         })
         .await
         .unwrap();
-    let markdown_path = dir.join("journal/Daily/2026-06/2026-06-16.md");
+    let markdown_path = dir.join("journal/Daily/2026/06/2026-06-16.md");
 
     backend
         .reorder_entries(vec![second.id.clone(), first.id.clone()])
@@ -1414,7 +1734,7 @@ async fn daily_markdown_auto_syncs_archive_reorder_import_and_future_moves() {
         .unwrap();
     let backup = source.get_all_entries_for_backup().await.unwrap();
     backend.import_entries(backup).await.unwrap();
-    let imported = fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-20.md")).unwrap();
+    let imported = fs::read_to_string(dir.join("journal/Daily/2026/06/2026-06-20.md")).unwrap();
     assert!(imported.contains("imported daily markdown body"));
 
     fs::remove_dir_all(source_dir).ok();
@@ -1443,12 +1763,12 @@ async fn daily_markdown_renders_migration_sources_as_links_not_duplicate_content
         .unwrap();
 
     let source_markdown =
-        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-16.md")).unwrap();
-    assert!(source_markdown.contains("Migrated to [[Daily/2026-06/2026-06-17.md|2026-06-17]]"));
+        fs::read_to_string(dir.join("journal/Daily/2026/06/2026-06-16.md")).unwrap();
+    assert!(source_markdown.contains("Migrated to [[Daily/2026/06/2026-06-17.md|2026-06-17]]"));
     assert!(!source_markdown.contains("migrate without duplicating this body"));
 
     let target_markdown =
-        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-17.md")).unwrap();
+        fs::read_to_string(dir.join("journal/Daily/2026/06/2026-06-17.md")).unwrap();
     assert!(target_markdown.contains("migrate without duplicating this body"));
 
     fs::remove_dir_all(dir).ok();
@@ -1477,11 +1797,11 @@ async fn daily_markdown_resyncs_when_reopening_or_deleting_migrated_children() {
     backend.reopen_entry(entry.id.clone()).await.unwrap();
 
     let reopened_source =
-        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-16.md")).unwrap();
+        fs::read_to_string(dir.join("journal/Daily/2026/06/2026-06-16.md")).unwrap();
     assert!(reopened_source.contains("restore this migrated body"));
     assert!(!reopened_source.contains("Migrated to"));
     let reopened_target =
-        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-17.md")).unwrap();
+        fs::read_to_string(dir.join("journal/Daily/2026/06/2026-06-17.md")).unwrap();
     assert!(!reopened_target.contains("restore this migrated body"));
 
     let migration = backend
@@ -1494,11 +1814,11 @@ async fn daily_markdown_resyncs_when_reopening_or_deleting_migrated_children() {
         .unwrap();
 
     let parent_after_child_delete =
-        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-16.md")).unwrap();
+        fs::read_to_string(dir.join("journal/Daily/2026/06/2026-06-16.md")).unwrap();
     assert!(parent_after_child_delete.contains("restore this migrated body"));
     assert!(!parent_after_child_delete.contains("Migrated to"));
     let deleted_target =
-        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-18.md")).unwrap();
+        fs::read_to_string(dir.join("journal/Daily/2026/06/2026-06-18.md")).unwrap();
     assert!(!deleted_target.contains("restore this migrated body"));
 
     fs::remove_dir_all(dir).ok();
@@ -1783,7 +2103,7 @@ async fn markdown_archive_rewrites_upload_links_and_includes_attachment_files() 
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
 
     let mut markdown = String::new();
-    zip.by_name("Daily/2026-06/2026-06-12.md")
+    zip.by_name("Daily/2026/06/2026-06-12.md")
         .unwrap()
         .read_to_string(&mut markdown)
         .unwrap();
@@ -1861,7 +2181,7 @@ async fn markdown_archive_groups_entries_into_obsidian_daily_monthly_and_future_
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
 
     let mut first_daily = String::new();
-    zip.by_name("Daily/2026-06/2026-06-12.md")
+    zip.by_name("Daily/2026/06/2026-06-12.md")
         .unwrap()
         .read_to_string(&mut first_daily)
         .unwrap();
@@ -1870,14 +2190,14 @@ async fn markdown_archive_groups_entries_into_obsidian_daily_monthly_and_future_
     assert!(first_daily.contains("Tags: #daily"));
 
     let mut second_daily = String::new();
-    zip.by_name("Daily/2026-06/2026-06-13.md")
+    zip.by_name("Daily/2026/06/2026-06-13.md")
         .unwrap()
         .read_to_string(&mut second_daily)
         .unwrap();
     assert!(second_daily.contains("- daily two"));
 
     let mut monthly = String::new();
-    zip.by_name("Monthly/2026-07.md")
+    zip.by_name("Future/2026/07.md")
         .unwrap()
         .read_to_string(&mut monthly)
         .unwrap();
@@ -1885,7 +2205,7 @@ async fn markdown_archive_groups_entries_into_obsidian_daily_monthly_and_future_
     assert!(monthly.contains("- o monthly plan"));
 
     let mut future = String::new();
-    zip.by_name("Future.md")
+    zip.by_name("Future/Future.md")
         .unwrap()
         .read_to_string(&mut future)
         .unwrap();
@@ -1927,7 +2247,7 @@ async fn markdown_archive_does_not_rewrite_external_upload_links() {
     let archive = backend.export_markdown_archive().await.unwrap();
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
     let mut markdown = String::new();
-    zip.by_name("Daily/2026-06/2026-06-12.md")
+    zip.by_name("Daily/2026/06/2026-06-12.md")
         .unwrap()
         .read_to_string(&mut markdown)
         .unwrap();
@@ -1943,11 +2263,30 @@ async fn open_upload_rejects_paths_outside_uploads() {
     let dir = temp_app_dir("open-upload-safety");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
     std::fs::write(dir.join("outside.txt"), b"outside").unwrap();
+    std::fs::create_dir_all(dir.join("attachments/folder")).unwrap();
     std::fs::create_dir_all(dir.join("uploads/folder")).unwrap();
 
     assert!(
         backend
             .open_upload("/tmp/outside.txt".to_string())
+            .await
+            .is_err()
+    );
+    assert!(
+        backend
+            .open_upload("attachments/../outside.txt".to_string())
+            .await
+            .is_err()
+    );
+    assert!(
+        backend
+            .open_upload("attachments/missing.txt".to_string())
+            .await
+            .is_err()
+    );
+    assert!(
+        backend
+            .open_upload("attachments/folder".to_string())
             .await
             .is_err()
     );
