@@ -74,6 +74,10 @@ export const buildAttachmentMarkdown = (items: AttachmentMarkdownItem[]) =>
     .join("\n")
     .concat(items.length > 0 ? "\n" : "");
 
+export const attachmentMarkdownUrlFromStoredUpload = (
+  stored: Pick<StoredUpload, "relative_path" | "url">,
+) => stored.relative_path || stored.url;
+
 export const insertMarkdownAtSelection = (
   currentText: string,
   selectionStart: number,
@@ -243,6 +247,41 @@ export const extractUploadRelativePath = (url: string | null | undefined) => {
   }
 };
 
+export const collectUploadRelativePaths = (content: string) => {
+  const references = new Set<string>();
+
+  const collectFromValue = (value: string) => {
+    const candidates: Array<{ index: number; value: string }> = [];
+    const localAssetPattern =
+      /\b(?:asset:\/\/localhost|https?:\/\/asset\.localhost)[^)\]\s"'<>]+/gi;
+    for (const match of value.matchAll(localAssetPattern)) {
+      candidates.push({ index: match.index ?? 0, value: match[0] });
+    }
+
+    const relativePathPattern =
+      /(^|[\(\[\s"'=])((?:attachments|uploads)\/[^)\]\s"'<>]+)/g;
+    for (const match of value.matchAll(relativePathPattern)) {
+      candidates.push({ index: match.index ?? 0, value: match[2] });
+    }
+
+    candidates.sort((left, right) => left.index - right.index);
+    for (const candidate of candidates) {
+      const relativePath = extractUploadRelativePath(candidate.value);
+      if (relativePath) references.add(relativePath);
+    }
+  };
+
+  collectFromValue(content);
+  try {
+    const decoded = decodeURIComponent(content);
+    if (decoded !== content) collectFromValue(decoded);
+  } catch {
+    // Content may contain user-written percent signs that are not URL escapes.
+  }
+
+  return Array.from(references);
+};
+
 export const replaceAttachmentReferences = (
   content: string,
   replacements: Map<string, string>,
@@ -368,7 +407,7 @@ export const uploadFilesAsMarkdown = async (
     uploaded.map(({ originalFile, uploadFile, stored }) => ({
       name: uploadFile.name || originalFile.name,
       type: uploadFile.type || originalFile.type,
-      url: stored.url,
+      url: attachmentMarkdownUrlFromStoredUpload(stored),
     })),
   );
 };
@@ -382,7 +421,7 @@ export const uploadPathsAsMarkdown = async (paths: string[]) => {
     const stored = await entryService.uploadPath(path);
     items.push({
       name: filenameFromPath(path),
-      url: stored.url,
+      url: attachmentMarkdownUrlFromStoredUpload(stored),
     });
   }
 

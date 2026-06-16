@@ -40,6 +40,10 @@ export interface StoredUpload {
   url: string;
 }
 
+export interface ResolvedUpload extends StoredUpload {
+  requested_path: string;
+}
+
 export interface DailyMarkdownFile {
   relative_path: string;
   absolute_path: string;
@@ -367,6 +371,13 @@ export const entryService = {
 
   openUpload: async (relativePath: string) => {
     await invoke<void>("open_upload", { relativePath });
+  },
+
+  resolveUploads: async (relativePaths: string[]) => {
+    const uploads = await invoke<Omit<ResolvedUpload, "url">[]>("resolve_uploads", {
+      relativePaths,
+    });
+    return uploads.map(normalizeUpload);
   },
 
   openDailyMarkdown: async (date: string) => {

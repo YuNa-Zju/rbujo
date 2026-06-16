@@ -1,6 +1,9 @@
 import pako from "pako";
 import type { ImportResponse, StoredUpload, UploadBackup } from "./entryService";
-import { replaceAttachmentReferences } from "./attachmentService.ts";
+import {
+  attachmentMarkdownUrlFromStoredUpload,
+  replaceAttachmentReferences,
+} from "./attachmentService.ts";
 
 // 文件头标识
 const BACKUP_HEADER = "BUJO_SECURE_BACKUP_V1";
@@ -106,9 +109,10 @@ export const importBackupObject = async (
       filename,
       bytes,
     });
-    replacements.set(attachment.relative_path, restored.url);
-    replacements.set(`uploads/${filename}`, restored.url);
-    replacements.set(`attachments/${filename}`, restored.url);
+    const restoredMarkdownUrl = attachmentMarkdownUrlFromStoredUpload(restored);
+    replacements.set(attachment.relative_path, restoredMarkdownUrl);
+    replacements.set(`uploads/${filename}`, restoredMarkdownUrl);
+    replacements.set(`attachments/${filename}`, restoredMarkdownUrl);
   }
 
   const entries = backupObject.data.map((entry: any) => {
