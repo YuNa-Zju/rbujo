@@ -136,6 +136,12 @@ pub struct StoredUpload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyMarkdownFile {
+    pub relative_path: String,
+    pub absolute_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadBackup {
     pub relative_path: String,
     pub absolute_path: String,
@@ -320,11 +326,15 @@ impl LocalBackend {
         let entry = self.fetch_entry(&id).await?;
         self.set_entry_tags(&id, tags).await?;
         self.index_entry(&entry).await?;
-        self.response_from_entry(entry).await
+        let response = self.response_from_entry(entry).await?;
+        self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
+            .await?;
+        Ok(response)
     }
 
     pub async fn update_entry(&self, id: String, patch: EntryPatch) -> AppResult<EntryResponse> {
         let mut entry = self.fetch_entry(&id).await?;
+        let previous_target_date = entry.target_date.clone();
         let previous_upload_refs = patch
             .content
             .as_ref()
@@ -371,6 +381,11 @@ impl LocalBackend {
             .await?;
         self.cleanup_upload_references_if_unused(previous_upload_refs)
             .await?;
+        self.sync_daily_markdown_for_date_values(vec![
+            previous_target_date,
+            response.target_date.clone(),
+        ])
+        .await?;
         Ok(response)
     }
 
@@ -378,18 +393,25 @@ impl LocalBackend {
         let mut entry = self.fetch_entry(&id).await?;
         entry.archived_at = Some(now_string());
         self.save_entry(&entry).await?;
-        self.response_from_entry(entry).await
+        let response = self.response_from_entry(entry).await?;
+        self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
+            .await?;
+        Ok(response)
     }
 
     pub async fn unarchive_entry(&self, id: String) -> AppResult<EntryResponse> {
         let mut entry = self.fetch_entry(&id).await?;
         entry.archived_at = None;
         self.save_entry(&entry).await?;
-        self.response_from_entry(entry).await
+        let response = self.response_from_entry(entry).await?;
+        self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
+            .await?;
+        Ok(response)
     }
 
     pub async fn delete_entry(&self, id: String) -> AppResult<()> {
         let entry = self.fetch_entry(&id).await?;
+        let sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
         let removed_upload_refs = self.upload_references_for_entry_chain(&entry).await?;
         self.collect_and_delete_children(&id).await?;
         if let Some(parent_id) = entry.source_entry_id {
@@ -403,6 +425,7 @@ impl LocalBackend {
             .await?;
         self.cleanup_upload_references_if_unused(removed_upload_refs)
             .await?;
+        self.sync_daily_markdown_for_date_values(sync_dates).await?;
         Ok(())
     }
 
@@ -433,6 +456,7 @@ impl LocalBackend {
         target_month: Option<String>,
     ) -> AppResult<EntryResponse> {
         let mut entry = self.fetch_entry(&id).await?;
+        let previous_target_date = entry.target_date.clone();
         entry.target_month = target_month.as_deref().map(validate_month).transpose()?;
         entry.target_date = None;
         entry.is_future = 1;
@@ -442,7 +466,15 @@ impl LocalBackend {
         normalize_entry_state(&mut entry);
         self.save_entry(&entry).await?;
         self.index_entry(&entry).await?;
-        self.response_from_entry(self.fetch_entry(&id).await?).await
+        let response = self
+            .response_from_entry(self.fetch_entry(&id).await?)
+            .await?;
+        self.sync_daily_markdown_for_date_values(vec![
+            previous_target_date,
+            response.target_date.clone(),
+        ])
+        .await?;
+        Ok(response)
     }
 
     pub async fn get_daily_log(
@@ -553,7 +585,11 @@ impl LocalBackend {
     }
 
     pub async fn reorder_entries(&self, entry_ids: Vec<String>) -> AppResult<()> {
+        let mut sync_dates = Vec::new();
         for (index, entry_id) in entry_ids.iter().enumerate() {
+            if let Ok(entry) = self.fetch_entry(entry_id).await {
+                sync_dates.push(entry.target_date);
+            }
             sqlx::query("UPDATE entries SET position = ? WHERE id = ? AND owner_id = ?")
                 .bind(index as i64)
                 .bind(entry_id)
@@ -561,6 +597,7 @@ impl LocalBackend {
                 .execute(&self.pool)
                 .await?;
         }
+        self.sync_daily_markdown_for_date_values(sync_dates).await?;
         Ok(())
     }
 
@@ -571,6 +608,7 @@ impl LocalBackend {
     ) -> AppResult<MigrationResult> {
         let target_date = validate_date(&target_date)?;
         let mut source = self.fetch_entry(&id).await?;
+        let previous_target_date = source.target_date.clone();
         let created = self
             .create_migration_child(&mut source, Some(&target_date), None)
             .await?;
@@ -584,6 +622,12 @@ impl LocalBackend {
         self.save_entry(&source).await?;
         self.index_entry(&source).await?;
         self.index_entry(&created).await?;
+        self.sync_daily_markdown_for_date_values(vec![
+            previous_target_date,
+            source.target_date.clone(),
+            created.target_date.clone(),
+        ])
+        .await?;
         Ok(MigrationResult {
             updated_source: self.response_from_entry(source).await?,
             created_entry: self.response_from_entry(created).await?,
@@ -597,6 +641,7 @@ impl LocalBackend {
     ) -> AppResult<MigrationResult> {
         let target_month = target_month.as_deref().map(validate_month).transpose()?;
         let mut source = self.fetch_entry(&id).await?;
+        let previous_target_date = source.target_date.clone();
         let created = self
             .create_migration_child(&mut source, None, target_month.as_deref())
             .await?;
@@ -610,6 +655,12 @@ impl LocalBackend {
         self.save_entry(&source).await?;
         self.index_entry(&source).await?;
         self.index_entry(&created).await?;
+        self.sync_daily_markdown_for_date_values(vec![
+            previous_target_date,
+            source.target_date.clone(),
+            created.target_date.clone(),
+        ])
+        .await?;
         Ok(MigrationResult {
             updated_source: self.response_from_entry(source).await?,
             created_entry: self.response_from_entry(created).await?,
@@ -786,6 +837,7 @@ impl LocalBackend {
         let mut inserted_ids = Vec::new();
         let mut updated_count = 0usize;
         let mut skipped_count = 0usize;
+        let mut sync_dates = Vec::new();
 
         for item in entries {
             let tags = item.tags.clone();
@@ -798,15 +850,19 @@ impl LocalBackend {
 
             if let Some(owner_id) = existing_owner {
                 if owner_id == self.owner_id {
+                    let previous = self.fetch_entry(&imported.id).await.ok();
                     self.save_entry(&imported).await?;
                     self.set_entry_tags(&imported.id, tags).await?;
                     self.index_entry(&imported).await?;
+                    sync_dates.push(previous.and_then(|entry| entry.target_date));
+                    sync_dates.push(imported.target_date.clone());
                     updated_count += 1;
                 } else {
                     imported.id = Uuid::new_v4().to_string();
                     self.insert_entry(&imported).await?;
                     self.set_entry_tags(&imported.id, tags).await?;
                     self.index_entry(&imported).await?;
+                    sync_dates.push(imported.target_date.clone());
                     inserted_ids.push(imported.id);
                 }
             } else {
@@ -826,9 +882,12 @@ impl LocalBackend {
                 self.insert_entry(&imported).await?;
                 self.set_entry_tags(&imported.id, tags).await?;
                 self.index_entry(&imported).await?;
+                sync_dates.push(imported.target_date.clone());
                 inserted_ids.push(id);
             }
         }
+
+        self.sync_daily_markdown_for_date_values(sync_dates).await?;
 
         Ok(ImportResponseDto {
             success: true,
@@ -1101,6 +1160,43 @@ impl LocalBackend {
         Ok(references)
     }
 
+    async fn daily_dates_for_entry_chain(&self, entry: &Entry) -> AppResult<Vec<Option<String>>> {
+        let mut dates = vec![entry.target_date.clone()];
+        let mut current = entry.clone();
+        let mut seen = HashSet::new();
+
+        while let Some(next_id) = current.migrated_to_entry_id.clone() {
+            if !seen.insert(next_id.clone()) {
+                return Err(AppError::BadRequest(
+                    "Migration chain contains a cycle".to_string(),
+                ));
+            }
+            let child = self.fetch_entry(&next_id).await?;
+            dates.push(child.target_date.clone());
+            current = child;
+            if seen.len() > 128 {
+                return Err(AppError::BadRequest(
+                    "Migration chain is too deep".to_string(),
+                ));
+            }
+        }
+
+        Ok(dates)
+    }
+
+    async fn sync_daily_markdown_for_date_values(
+        &self,
+        dates: Vec<Option<String>>,
+    ) -> AppResult<()> {
+        let mut seen = HashSet::new();
+        for date in dates.into_iter().flatten() {
+            if seen.insert(date.clone()) {
+                self.sync_daily_markdown_file(date).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn cleanup_upload_references_if_unused(
         &self,
         candidates: HashSet<String>,
@@ -1297,6 +1393,32 @@ impl LocalBackend {
             ));
         }
         open_with_system(&canonical_path)
+    }
+
+    pub async fn sync_daily_markdown_file(&self, date: String) -> AppResult<DailyMarkdownFile> {
+        let date = validate_date(&date)?;
+        let relative_path = daily_markdown_relative_path(&date);
+        let absolute_path = self.app_dir.join(&relative_path);
+        if let Some(parent) = absolute_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        }
+        let entries = self.get_daily_log(&date, false).await?;
+        let markdown = render_daily_markdown_file(&date, &entries)?;
+        tokio::fs::write(&absolute_path, markdown)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        Ok(DailyMarkdownFile {
+            relative_path,
+            absolute_path: absolute_path.to_string_lossy().to_string(),
+        })
+    }
+
+    pub async fn open_daily_markdown(&self, date: String) -> AppResult<DailyMarkdownFile> {
+        let file = self.sync_daily_markdown_file(date).await?;
+        open_with_system(Path::new(&file.absolute_path))?;
+        Ok(file)
     }
 
     pub async fn export_markdown_archive(&self) -> AppResult<Vec<u8>> {
@@ -2124,6 +2246,78 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn daily_markdown_relative_path(date: &str) -> String {
+    format!("journal/Daily/{date}.md")
+}
+
+fn render_daily_markdown_file(date: &str, entries: &[EntryResponse]) -> AppResult<String> {
+    let mut markdown = format!("# {date}\n\n");
+    for entry in entries {
+        markdown.push_str(&render_daily_markdown_entry(entry)?);
+        markdown.push('\n');
+    }
+    Ok(markdown)
+}
+
+fn render_daily_markdown_entry(entry: &EntryResponse) -> AppResult<String> {
+    let metadata = serde_json::to_string(&serde_json::json!({
+        "id": entry.id,
+        "entry_type": entry.entry_type,
+        "status": entry.status,
+        "tags": entry.tags,
+        "position": entry.position,
+        "created_at": entry.created_at,
+    }))
+    .map_err(|error| AppError::Internal(error.to_string()))?;
+    if matches!(
+        entry.status.as_str(),
+        STATUS_MIGRATED_FORWARD | STATUS_MIGRATED_FUTURE
+    ) {
+        return Ok(format!(
+            "<!-- rbujo-entry {metadata} -->\n- {}\n<!-- /rbujo-entry -->\n",
+            daily_markdown_migration_target(entry)
+        ));
+    }
+    let marker = match entry.entry_type.as_str() {
+        TYPE_TASK if entry.status == STATUS_COMPLETED => "- [x]",
+        TYPE_TASK => "- [ ]",
+        TYPE_EVENT => "- o",
+        _ => "-",
+    };
+    let status = if matches!(entry.status.as_str(), STATUS_OPEN | STATUS_COMPLETED) {
+        String::new()
+    } else {
+        format!(" ({})", entry.status)
+    };
+    let tags = if entry.tags.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nTags: {}",
+            entry
+                .tags
+                .iter()
+                .map(|tag| format!("#{tag}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    };
+    let content = entry.content.trim_end();
+    Ok(format!(
+        "<!-- rbujo-entry {metadata} -->\n{marker} {content}{status}{tags}\n<!-- /rbujo-entry -->\n"
+    ))
+}
+
+fn daily_markdown_migration_target(entry: &EntryResponse) -> String {
+    if let Some(date) = entry.migrated_to_date.as_deref() {
+        format!("Migrated to [[Daily/{date}|{date}]]")
+    } else if let Some(month) = entry.migrated_to_month.as_deref() {
+        format!("Migrated to [[Monthly/{month}|{month}]]")
+    } else {
+        "Migrated to Future Log".to_string()
+    }
 }
 
 fn entries_to_markdown_archive(entries: &[EntryExportSchema], uploads: &[UploadBackup]) -> String {

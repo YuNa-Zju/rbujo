@@ -10,6 +10,7 @@ import {
   ArrowLeft,
   LayoutGrid,
   List,
+  FilePenLine,
   Clock, // 用于排序图标
   Check,
 } from "lucide-react";
@@ -58,6 +59,7 @@ export default function DailyPage() {
   const [dailyCache, setDailyCache] = useState<Record<string, any[]>>({});
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
   const [isCacheLoaded, setIsCacheLoaded] = useState(false);
+  const [openingMarkdown, setOpeningMarkdown] = useState(false);
 
   // --- DND State ---
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -149,6 +151,22 @@ export default function DailyPage() {
     const dir = targetStr > viewDate ? "right" : "left";
     sessionStorage.setItem("calendar_focus_date", targetStr);
     navigate(`/daily/${targetStr}`, { state: { direction: dir } });
+  };
+
+  const handleOpenDailyMarkdown = async () => {
+    if (!isValidDate || openingMarkdown) return;
+    setOpeningMarkdown(true);
+    try {
+      await entryService.openDailyMarkdown(viewDate);
+    } catch (error) {
+      console.error("Failed to open daily markdown", error);
+      alert(
+        t.daily.openMarkdownFailed ||
+          "Failed to open the Markdown file. Please try again.",
+      );
+    } finally {
+      setOpeningMarkdown(false);
+    }
   };
 
   const currentEntries = dailyCache[viewDate] || [];
@@ -348,7 +366,17 @@ export default function DailyPage() {
         </div>
 
         {/* ✅ 右侧：只保留操作触发器 */}
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            className="btn btn-ghost btn-circle btn-sm text-base-content/60"
+            onClick={handleOpenDailyMarkdown}
+            disabled={!isValidDate || openingMarkdown}
+            title={t.daily.openMarkdown || "Open Markdown in default editor"}
+            aria-label={t.daily.openMarkdown || "Open Markdown in default editor"}
+          >
+            <FilePenLine size={18} />
+          </button>
           {/* 统一的功能入口 */}
           <HeaderActionTrigger />
         </div>
