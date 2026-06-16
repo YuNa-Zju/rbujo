@@ -328,7 +328,7 @@ impl LocalBackend {
         self.index_entry(&entry).await?;
         let response = self.response_from_entry(entry).await?;
         self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
-            .await?;
+            .await;
         Ok(response)
     }
 
@@ -385,7 +385,7 @@ impl LocalBackend {
             previous_target_date,
             response.target_date.clone(),
         ])
-        .await?;
+        .await;
         Ok(response)
     }
 
@@ -395,7 +395,7 @@ impl LocalBackend {
         self.save_entry(&entry).await?;
         let response = self.response_from_entry(entry).await?;
         self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
-            .await?;
+            .await;
         Ok(response)
     }
 
@@ -405,7 +405,7 @@ impl LocalBackend {
         self.save_entry(&entry).await?;
         let response = self.response_from_entry(entry).await?;
         self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
-            .await?;
+            .await;
         Ok(response)
     }
 
@@ -430,7 +430,7 @@ impl LocalBackend {
             .await?;
         self.cleanup_upload_references_if_unused(removed_upload_refs)
             .await?;
-        self.sync_daily_markdown_for_date_values(sync_dates).await?;
+        self.sync_daily_markdown_for_date_values(sync_dates).await;
         Ok(())
     }
 
@@ -450,7 +450,7 @@ impl LocalBackend {
             .response_from_entry(self.fetch_entry(&id).await?)
             .await?;
         sync_dates.push(updated_entry.target_date.clone());
-        self.sync_daily_markdown_for_date_values(sync_dates).await?;
+        self.sync_daily_markdown_for_date_values(sync_dates).await;
         Ok(ReopenResponse {
             success: true,
             updated_entry,
@@ -481,7 +481,7 @@ impl LocalBackend {
             previous_target_date,
             response.target_date.clone(),
         ])
-        .await?;
+        .await;
         Ok(response)
     }
 
@@ -605,7 +605,7 @@ impl LocalBackend {
                 .execute(&self.pool)
                 .await?;
         }
-        self.sync_daily_markdown_for_date_values(sync_dates).await?;
+        self.sync_daily_markdown_for_date_values(sync_dates).await;
         Ok(())
     }
 
@@ -635,7 +635,7 @@ impl LocalBackend {
             source.target_date.clone(),
             created.target_date.clone(),
         ])
-        .await?;
+        .await;
         Ok(MigrationResult {
             updated_source: self.response_from_entry(source).await?,
             created_entry: self.response_from_entry(created).await?,
@@ -668,7 +668,7 @@ impl LocalBackend {
             source.target_date.clone(),
             created.target_date.clone(),
         ])
-        .await?;
+        .await;
         Ok(MigrationResult {
             updated_source: self.response_from_entry(source).await?,
             created_entry: self.response_from_entry(created).await?,
@@ -895,7 +895,7 @@ impl LocalBackend {
             }
         }
 
-        self.sync_daily_markdown_for_date_values(sync_dates).await?;
+        self.sync_daily_markdown_for_date_values(sync_dates).await;
 
         Ok(ImportResponseDto {
             success: true,
@@ -1192,17 +1192,13 @@ impl LocalBackend {
         Ok(dates)
     }
 
-    async fn sync_daily_markdown_for_date_values(
-        &self,
-        dates: Vec<Option<String>>,
-    ) -> AppResult<()> {
+    async fn sync_daily_markdown_for_date_values(&self, dates: Vec<Option<String>>) {
         let mut seen = HashSet::new();
         for date in dates.into_iter().flatten() {
             if seen.insert(date.clone()) {
-                self.sync_daily_markdown_file(date).await?;
+                let _ = self.sync_daily_markdown_file(date).await;
             }
         }
-        Ok(())
     }
 
     async fn cleanup_upload_references_if_unused(
