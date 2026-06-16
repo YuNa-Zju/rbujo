@@ -11,6 +11,7 @@ import {
 test("release utils bump patch versions", () => {
   assert.equal(bumpVersion("0.2.1", "patch"), "0.2.2");
   assert.equal(bumpVersion("1.4.9", "patch"), "1.4.10");
+  assert.equal(bumpVersion("0.2.8", "minor"), "0.3.0");
 });
 
 test("release utils update json manifests without changing unrelated fields", () => {

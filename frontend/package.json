@@ -10,6 +10,7 @@
     "test:frontend": "node --test tests/*.test.ts",
     "test:update": "node --test tests/updateService.test.ts",
     "release:patch": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
     "preview": "vite preview",
     "tauri": "cd .. && npm --prefix frontend exec -- tauri",
     "tauri:dev": "cd .. && npm --prefix frontend exec -- tauri dev",

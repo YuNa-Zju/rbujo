@@ -732,7 +732,7 @@ async fn daily_markdown_file_is_synced_when_daily_entries_change() {
         .sync_daily_markdown_file("2026-06-16".to_string())
         .await
         .unwrap();
-    assert_eq!(file.relative_path, "Daily/2026-06-16.md");
+    assert_eq!(file.relative_path, "Daily/2026-06/2026-06-16.md");
     let markdown_path = dir.join("journal").join(&file.relative_path);
     let markdown = fs::read_to_string(&markdown_path).unwrap();
     assert!(markdown.starts_with("# 2026-06-16"));
@@ -825,12 +825,68 @@ async fn daily_markdown_imports_external_edits_when_timestamp_changes() {
 }
 
 #[tokio::test]
+async fn daily_markdown_imports_legacy_flat_file_before_month_folder_write() {
+    let dir = temp_app_dir("daily-markdown-legacy-flat-import");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "legacy original body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let nested_path = dir.join("journal/Daily/2026-06/2026-06-16.md");
+    fs::remove_file(&nested_path).unwrap();
+    let legacy_path = dir.join("journal/Daily/2026-06-16.md");
+    fs::write(
+        &legacy_path,
+        "# 2026-06-16\n\n- [x] legacy body edited from flat file #legacy\n- flat file inserted idea #idea\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&legacy_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    let synced = backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+
+    assert_eq!(synced.relative_path, "Daily/2026-06/2026-06-16.md");
+    let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    let edited = daily_entries
+        .iter()
+        .find(|item| item.id == entry.id)
+        .expect("legacy flat file should update the existing entry");
+    assert_eq!(edited.content, "legacy body edited from flat file");
+    assert_eq!(edited.status, "completed");
+    assert_eq!(edited.tags, vec!["legacy".to_string()]);
+    assert!(
+        daily_entries
+            .iter()
+            .any(|item| item.content == "flat file inserted idea")
+    );
+    let nested_markdown = fs::read_to_string(&nested_path).unwrap();
+    assert!(nested_markdown.contains("legacy body edited from flat file"));
+    assert!(legacy_path.exists());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn markdown_workspace_switch_overwrites_existing_folder_from_bujo() {
     let dir = temp_app_dir("daily-markdown-workspace-overwrite");
     let workspace = temp_app_dir("daily-markdown-workspace-existing");
-    fs::create_dir_all(workspace.join("Daily")).unwrap();
+    fs::create_dir_all(workspace.join("Daily/2026-06")).unwrap();
     fs::write(
-        workspace.join("Daily/2026-06-16.md"),
+        workspace.join("Daily/2026-06/2026-06-16.md"),
         "# 2026-06-16\n\n- [ ] stale folder content\n",
     )
     .unwrap();
@@ -863,7 +919,7 @@ async fn markdown_workspace_switch_overwrites_existing_folder_from_bujo() {
             .iter()
             .all(|item| item.content != "stale folder content")
     );
-    let markdown = fs::read_to_string(workspace.join("Daily/2026-06-16.md")).unwrap();
+    let markdown = fs::read_to_string(workspace.join("Daily/2026-06/2026-06-16.md")).unwrap();
     assert!(markdown.contains("current bujo content"));
     assert!(!markdown.contains("stale folder content"));
 
@@ -1240,8 +1296,8 @@ async fn markdown_workspace_can_move_to_user_selected_directory() {
         })
         .await
         .unwrap();
-    assert!(workspace.join("Daily/2026-06-21.md").exists());
-    assert!(!dir.join("journal/Daily/2026-06-21.md").exists());
+    assert!(workspace.join("Daily/2026-06/2026-06-21.md").exists());
+    assert!(!dir.join("journal/Daily/2026-06/2026-06-21.md").exists());
 
     let reopened = LocalBackend::open(dir.clone()).await.unwrap();
     let persisted = reopened.get_markdown_workspace().await.unwrap();
@@ -1311,7 +1367,7 @@ async fn daily_markdown_auto_syncs_archive_reorder_import_and_future_moves() {
         })
         .await
         .unwrap();
-    let markdown_path = dir.join("journal/Daily/2026-06-16.md");
+    let markdown_path = dir.join("journal/Daily/2026-06/2026-06-16.md");
 
     backend
         .reorder_entries(vec![second.id.clone(), first.id.clone()])
@@ -1358,7 +1414,7 @@ async fn daily_markdown_auto_syncs_archive_reorder_import_and_future_moves() {
         .unwrap();
     let backup = source.get_all_entries_for_backup().await.unwrap();
     backend.import_entries(backup).await.unwrap();
-    let imported = fs::read_to_string(dir.join("journal/Daily/2026-06-20.md")).unwrap();
+    let imported = fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-20.md")).unwrap();
     assert!(imported.contains("imported daily markdown body"));
 
     fs::remove_dir_all(source_dir).ok();
@@ -1386,11 +1442,13 @@ async fn daily_markdown_renders_migration_sources_as_links_not_duplicate_content
         .await
         .unwrap();
 
-    let source_markdown = fs::read_to_string(dir.join("journal/Daily/2026-06-16.md")).unwrap();
-    assert!(source_markdown.contains("Migrated to [[Daily/2026-06-17|2026-06-17]]"));
+    let source_markdown =
+        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-16.md")).unwrap();
+    assert!(source_markdown.contains("Migrated to [[Daily/2026-06/2026-06-17.md|2026-06-17]]"));
     assert!(!source_markdown.contains("migrate without duplicating this body"));
 
-    let target_markdown = fs::read_to_string(dir.join("journal/Daily/2026-06-17.md")).unwrap();
+    let target_markdown =
+        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-17.md")).unwrap();
     assert!(target_markdown.contains("migrate without duplicating this body"));
 
     fs::remove_dir_all(dir).ok();
@@ -1418,10 +1476,12 @@ async fn daily_markdown_resyncs_when_reopening_or_deleting_migrated_children() {
         .unwrap();
     backend.reopen_entry(entry.id.clone()).await.unwrap();
 
-    let reopened_source = fs::read_to_string(dir.join("journal/Daily/2026-06-16.md")).unwrap();
+    let reopened_source =
+        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-16.md")).unwrap();
     assert!(reopened_source.contains("restore this migrated body"));
     assert!(!reopened_source.contains("Migrated to"));
-    let reopened_target = fs::read_to_string(dir.join("journal/Daily/2026-06-17.md")).unwrap();
+    let reopened_target =
+        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-17.md")).unwrap();
     assert!(!reopened_target.contains("restore this migrated body"));
 
     let migration = backend
@@ -1434,10 +1494,11 @@ async fn daily_markdown_resyncs_when_reopening_or_deleting_migrated_children() {
         .unwrap();
 
     let parent_after_child_delete =
-        fs::read_to_string(dir.join("journal/Daily/2026-06-16.md")).unwrap();
+        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-16.md")).unwrap();
     assert!(parent_after_child_delete.contains("restore this migrated body"));
     assert!(!parent_after_child_delete.contains("Migrated to"));
-    let deleted_target = fs::read_to_string(dir.join("journal/Daily/2026-06-18.md")).unwrap();
+    let deleted_target =
+        fs::read_to_string(dir.join("journal/Daily/2026-06/2026-06-18.md")).unwrap();
     assert!(!deleted_target.contains("restore this migrated body"));
 
     fs::remove_dir_all(dir).ok();
@@ -1722,7 +1783,7 @@ async fn markdown_archive_rewrites_upload_links_and_includes_attachment_files() 
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
 
     let mut markdown = String::new();
-    zip.by_name("Daily/2026-06-12.md")
+    zip.by_name("Daily/2026-06/2026-06-12.md")
         .unwrap()
         .read_to_string(&mut markdown)
         .unwrap();
@@ -1731,7 +1792,7 @@ async fn markdown_archive_rewrites_upload_links_and_includes_attachment_files() 
     assert!(!markdown.contains("asset://localhost/%2FUsers%2F"));
 
     let attachment_name = format!(
-        "attachments/{}",
+        "Daily/attachments/{}",
         std::path::Path::new(&stored.relative_path)
             .file_name()
             .unwrap()
@@ -1800,7 +1861,7 @@ async fn markdown_archive_groups_entries_into_obsidian_daily_monthly_and_future_
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
 
     let mut first_daily = String::new();
-    zip.by_name("Daily/2026-06-12.md")
+    zip.by_name("Daily/2026-06/2026-06-12.md")
         .unwrap()
         .read_to_string(&mut first_daily)
         .unwrap();
@@ -1809,7 +1870,7 @@ async fn markdown_archive_groups_entries_into_obsidian_daily_monthly_and_future_
     assert!(first_daily.contains("Tags: #daily"));
 
     let mut second_daily = String::new();
-    zip.by_name("Daily/2026-06-13.md")
+    zip.by_name("Daily/2026-06/2026-06-13.md")
         .unwrap()
         .read_to_string(&mut second_daily)
         .unwrap();
@@ -1866,7 +1927,7 @@ async fn markdown_archive_does_not_rewrite_external_upload_links() {
     let archive = backend.export_markdown_archive().await.unwrap();
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
     let mut markdown = String::new();
-    zip.by_name("Daily/2026-06-12.md")
+    zip.by_name("Daily/2026-06/2026-06-12.md")
         .unwrap()
         .read_to_string(&mut markdown)
         .unwrap();

@@ -10,6 +10,7 @@ import {
   MapPin,
   ArrowDownUp,
   Check,
+  FilePenLine,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "../../hooks/useTranslation";
@@ -83,6 +84,7 @@ export default function CalendarPage() {
   const [activeItem, setActiveItem] = useState<any | null>(null);
   const [isManualSorting, setIsManualSorting] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | undefined>(undefined);
+  const [openSelectedMarkdown, setOpenSelectedMarkdown] = useState(false);
 
   // ✅ 监听路由参数打开 Future Log
   useEffect(() => {
@@ -183,6 +185,22 @@ export default function CalendarPage() {
   const currentDailyEntries =
     dailyCache[format(selectedDate, "yyyy-MM-dd")] || [];
   useTagPreloader(currentDailyEntries);
+
+  const handleOpenSelectedMarkdown = async () => {
+    if (openSelectedMarkdown) return;
+    setOpenSelectedMarkdown(true);
+    try {
+      await entryService.openDailyMarkdown(format(selectedDate, "yyyy-MM-dd"));
+    } catch (error) {
+      console.error("Failed to open selected daily markdown", error);
+      alert(
+        t.daily.openMarkdownFailed ||
+          "Failed to open the Markdown file. Please try again.",
+      );
+    } finally {
+      setOpenSelectedMarkdown(false);
+    }
+  };
 
   return (
     <div
@@ -313,7 +331,20 @@ export default function CalendarPage() {
                     </>
                   )}
                 </h2>
-                {currentDailyEntries.length > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-circle bg-base-100 border shadow-sm"
+                    onClick={handleOpenSelectedMarkdown}
+                    disabled={openSelectedMarkdown}
+                    title={t.daily.openMarkdown || "Open Markdown in default editor"}
+                    aria-label={
+                      t.daily.openMarkdown || "Open Markdown in default editor"
+                    }
+                  >
+                    <FilePenLine size={16} />
+                  </button>
+                  {currentDailyEntries.length > 1 && (
                   <button
                     className={`btn btn-sm btn-circle border shadow-sm transition-all ${isManualSorting ? "btn-primary" : "bg-base-100"}`}
                     onClick={() => setIsManualSorting(!isManualSorting)}
@@ -324,7 +355,8 @@ export default function CalendarPage() {
                       <ArrowDownUp size={16} />
                     )}
                   </button>
-                )}
+                  )}
+                </div>
               </div>
 
               <div

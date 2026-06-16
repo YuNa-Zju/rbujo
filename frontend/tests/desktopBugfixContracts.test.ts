@@ -116,7 +116,7 @@ test("daily page can open the disk-backed markdown file in the system editor", a
   assert.match(translationsSource, /Open Markdown in default editor/);
 });
 
-test("markdown workspace settings are exposed from the user menu", async () => {
+test("markdown workspace controls live in the unified storage panel", async () => {
   const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
   const capabilityPath = path.resolve(
     import.meta.dirname,
@@ -136,9 +136,9 @@ test("markdown workspace settings are exposed from the user menu", async () => {
     import.meta.dirname,
     "../src/config/translations.ts",
   );
-  const settingsPath = path.resolve(
+  const storagePath = path.resolve(
     import.meta.dirname,
-    "../src/components/modals/MarkdownSettingsController.tsx",
+    "../src/components/modals/AttachmentMaintenanceController.tsx",
   );
   const libSource = await readFile(libPath, "utf8");
   const capability = JSON.parse(await readFile(capabilityPath, "utf8"));
@@ -147,7 +147,7 @@ test("markdown workspace settings are exposed from the user menu", async () => {
   const menuSource = await readFile(menuPath, "utf8");
   const uiEventsSource = await readFile(uiEventsPath, "utf8");
   const translationsSource = await readFile(translationsPath, "utf8");
-  const settingsSource = await readFile(settingsPath, "utf8");
+  const storageSource = await readFile(storagePath, "utf8");
 
   assert.match(libSource, /get_markdown_workspace/);
   assert.match(libSource, /choose_markdown_workspace/);
@@ -155,14 +155,53 @@ test("markdown workspace settings are exposed from the user menu", async () => {
   assert.ok(capability.permissions.includes("dialog:allow-open"));
   assert.match(entryServiceSource, /getMarkdownWorkspace/);
   assert.match(entryServiceSource, /chooseMarkdownWorkspace/);
-  assert.match(uiEventsSource, /OPEN_MARKDOWN_SETTINGS/);
-  assert.match(menuSource, /OPEN_MARKDOWN_SETTINGS/);
-  assert.match(menuSource, /t\.markdownSettings/);
-  assert.match(appSource, /MarkdownSettingsController/);
-  assert.match(settingsSource, /chooseMarkdownWorkspace/);
-  assert.match(settingsSource, /OPEN_MARKDOWN_SETTINGS/);
-  assert.match(translationsSource, /Markdown 设置/);
-  assert.match(translationsSource, /Project Folder/);
+  assert.doesNotMatch(uiEventsSource, /OPEN_MARKDOWN_SETTINGS/);
+  assert.doesNotMatch(menuSource, /OPEN_MARKDOWN_SETTINGS/);
+  assert.doesNotMatch(appSource, /MarkdownSettingsController/);
+  assert.match(storageSource, /chooseMarkdownWorkspace/);
+  assert.match(storageSource, /getMarkdownWorkspace/);
+  assert.match(storageSource, /DailyRootPathCard/);
+  assert.match(storageSource, /labels\.changePath/);
+  assert.match(storageSource, /labels\.done/);
+  assert.match(storageSource, /labels\.dailyFolder/);
+  assert.match(translationsSource, /存储管理/);
+  assert.match(translationsSource, /更改路径/);
+  assert.match(translationsSource, /Markdown 存放文件夹/);
+  assert.match(translationsSource, /Storage/);
+  assert.match(translationsSource, /Change Path/);
+});
+
+test("storage panel shows daily-relative paths and navigates attachment references", async () => {
+  const storagePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/AttachmentMaintenanceController.tsx",
+  );
+  const source = await readFile(storagePath, "utf8");
+
+  assert.match(source, /toDailyAttachmentDisplayPath/);
+  assert.match(source, /Daily\/attachments/);
+  assert.match(source, /Daily\/\$\{viewMonth\}\/\$\{viewDate\}\.md/);
+  assert.match(source, /useNavigate/);
+  assert.match(source, /openableDailyReferenceDate/);
+  assert.match(source, /reference\.target_date/);
+  assert.match(source, /reference\.archived_at/);
+  assert.match(source, /navigate\(`\/daily\/\$\{targetDate\}`/);
+  assert.match(source, /reference\.entry_id/);
+  assert.match(source, /labels\.openReference/);
+});
+
+test("home daily header exposes open markdown next to the enter-day arrow", async () => {
+  const calendarPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/CalendarPage.tsx",
+  );
+  const source = await readFile(calendarPath, "utf8");
+
+  assert.match(source, /handleOpenSelectedMarkdown/);
+  assert.match(source, /entryService\.openDailyMarkdown/);
+  assert.match(source, /FilePenLine/);
+  assert.match(source, /t\.daily\.openMarkdown/);
+  assert.match(source, /openSelectedMarkdown/);
 });
 
 test("release patch script is exposed from the frontend package", async () => {
@@ -172,6 +211,7 @@ test("release patch script is exposed from the frontend package", async () => {
   const releaseSource = await readFile(releasePath, "utf8");
 
   assert.equal(packageJson.scripts["release:patch"], "node scripts/release.mjs patch");
+  assert.equal(packageJson.scripts["release:minor"], "node scripts/release.mjs minor");
   assert.match(releaseSource, /git push origin master/);
   assert.match(releaseSource, /git push origin v\$\{nextVersion\}/);
 });
@@ -277,10 +317,10 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(menuSource, /OPEN_ATTACHMENT_MAINTENANCE/);
   assert.match(menuSource, /t\.attachmentMaintenance/);
   assert.match(translationsSource, /attachmentMaintenance/);
-  assert.match(translationsSource, /维护附件/);
+  assert.match(translationsSource, /存储管理/);
   assert.match(translationsSource, /展开引用/);
   assert.match(translationsSource, /引用此附件的日记/);
-  assert.match(translationsSource, /Attachments/);
+  assert.match(translationsSource, /Storage/);
   assert.doesNotMatch(translationsSource, /Attachment Maintenance/);
   assert.match(translationsSource, /Show References/);
   assert.match(translationsSource, /Notes referencing this file/);
