@@ -2,11 +2,13 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Database,
+  FileText,
   HardDrive,
   Loader2,
   RefreshCw,
-  Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -18,6 +20,7 @@ import { useTranslation } from "../../hooks/useTranslation";
 import { uiEvents } from "../../lib/uiEvents";
 import {
   entryService,
+  type AttachmentMaintenanceItem,
   type AttachmentMaintenanceSummary,
 } from "../../services/entryService";
 
@@ -44,8 +47,6 @@ export default function AttachmentMaintenanceController() {
     null,
   );
   const [loading, setLoading] = useState(false);
-  const [cleaning, setCleaning] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadSummary = useCallback(async () => {
@@ -63,7 +64,6 @@ export default function AttachmentMaintenanceController() {
 
   const openPanel = useCallback(() => {
     setOpen(true);
-    setMessage(null);
     void loadSummary();
   }, [loadSummary]);
 
@@ -78,55 +78,15 @@ export default function AttachmentMaintenanceController() {
     };
   }, [openPanel]);
 
-  const cleanup = useCallback(async () => {
-    const confirmation =
-      labels?.cleanupConfirm ||
-      "This will delete attachments not referenced by saved notes. Attachment links in unsaved drafts may break. Continue?";
-    if (!window.confirm(confirmation)) return;
-
-    setCleaning(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const result = await entryService.cleanupAllUnusedUploads();
-      setSummary(result.summary);
-      const template =
-        result.kept_count > 0
-          ? labels?.cleanupSuccessWithKept ||
-            "Cleaned {{count}} attachments and freed {{size}}. Kept {{kept}} recent unreferenced attachments."
-          : labels?.cleanupSuccess ||
-            "Cleaned {{count}} attachments and freed {{size}}";
-      setMessage(
-        template
-          .replace("{{count}}", String(result.removed_count))
-          .replace("{{size}}", formatBytes(result.removed_bytes))
-          .replace("{{kept}}", String(result.kept_count)),
-      );
-    } catch (nextError) {
-      console.error("Attachment cleanup failed", nextError);
-      setError(labels?.cleanupFailed || "Failed to clean attachments");
-    } finally {
-      setCleaning(false);
-    }
-  }, [
-    labels?.cleanupFailed,
-    labels?.cleanupConfirm,
-    labels?.cleanupSuccess,
-    labels?.cleanupSuccessWithKept,
-  ]);
-
   return (
     <AttachmentMaintenanceModal
       open={open}
       summary={summary}
       loading={loading}
-      cleaning={cleaning}
-      message={message}
       error={error}
       labels={labels}
       onClose={close}
       onRefresh={loadSummary}
-      onCleanup={cleanup}
     />
   );
 }
@@ -135,32 +95,40 @@ function AttachmentMaintenanceModal({
   open,
   summary,
   loading,
-  cleaning,
-  message,
   error,
   labels,
   onClose,
   onRefresh,
-  onCleanup,
 }: {
   open: boolean;
   summary: AttachmentMaintenanceSummary | null;
   loading: boolean;
-  cleaning: boolean;
-  message: string | null;
   error: string | null;
   labels: AttachmentMaintenanceLabels;
   onClose: () => void;
   onRefresh: () => void;
-  onCleanup: () => void;
 }) {
   const { styles } = useAppTheme();
+  const [expandedUploads, setExpandedUploads] = useState<Set<string>>(
+    () => new Set(),
+  );
   const uploads = useMemo(() => {
     return [...(summary?.uploads ?? [])].sort((left, right) => {
       if (left.referenced !== right.referenced) return left.referenced ? 1 : -1;
       return right.size - left.size;
     });
   }, [summary]);
+  const toggleUpload = useCallback((relativePath: string) => {
+    setExpandedUploads((current) => {
+      const next = new Set(current);
+      if (next.has(relativePath)) {
+        next.delete(relativePath);
+      } else {
+        next.add(relativePath);
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <EscModalWrapper
@@ -247,15 +215,11 @@ function AttachmentMaintenanceModal({
                   />
                 </div>
 
-                {(message || error) && (
+                {error && (
                   <div
-                    className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-medium ${
-                      error
-                        ? "border-error/20 bg-error/10 text-error"
-                        : "border-success/20 bg-success/10 text-success"
-                    }`}
+                    className="mt-4 rounded-2xl border border-error/20 bg-error/10 px-4 py-3 text-sm font-medium text-error"
                   >
-                    {error || message}
+                    {error}
                   </div>
                 )}
 
@@ -276,42 +240,76 @@ function AttachmentMaintenanceModal({
                         {labels.empty}
                       </div>
                     ) : (
-                      uploads.map((upload) => (
-                        <div
-                          key={upload.relative_path}
-                          className="flex items-center justify-between gap-3 rounded-xl px-3 py-2 hover:bg-base-200/50"
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold">
-                              {upload.original_filename || upload.filename}
-                            </div>
-                            <div
-                              className={`mt-0.5 truncate text-[11px] font-mono ${styles.card.textSecondary}`}
+                      uploads.map((upload) => {
+                        const expanded = expandedUploads.has(upload.relative_path);
+                        return (
+                          <div
+                            key={upload.relative_path}
+                            className="rounded-xl hover:bg-base-200/50"
+                          >
+                            <button
+                              type="button"
+                              className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left"
+                              onClick={() => toggleUpload(upload.relative_path)}
+                              aria-expanded={expanded}
+                              title={
+                                expanded
+                                  ? labels.hideReferences
+                                  : labels.showReferences
+                              }
                             >
-                              {upload.relative_path}
-                            </div>
+                              <div className="flex min-w-0 items-center gap-2">
+                                {expanded ? (
+                                  <ChevronDown
+                                    size={15}
+                                    className="shrink-0 text-base-content/45"
+                                  />
+                                ) : (
+                                  <ChevronRight
+                                    size={15}
+                                    className="shrink-0 text-base-content/45"
+                                  />
+                                )}
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-semibold">
+                                    {upload.original_filename || upload.filename}
+                                  </div>
+                                  <div
+                                    className={`mt-0.5 truncate text-[11px] font-mono ${styles.card.textSecondary}`}
+                                  >
+                                    {upload.relative_path}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <span
+                                  className={`rounded-full px-2 py-1 text-[11px] font-bold ${
+                                    upload.referenced
+                                      ? "bg-success/10 text-success"
+                                      : "bg-warning/10 text-warning"
+                                  }`}
+                                >
+                                  {upload.referenced
+                                    ? labels.referenced.replace(
+                                        "{{count}}",
+                                        String(upload.reference_count),
+                                      )
+                                    : labels.orphaned}
+                                </span>
+                                <span className="w-16 text-right text-xs font-bold text-base-content/60">
+                                  {formatBytes(upload.size)}
+                                </span>
+                              </div>
+                            </button>
+                            {expanded && (
+                              <AttachmentReferenceList
+                                upload={upload}
+                                labels={labels}
+                              />
+                            )}
                           </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <span
-                              className={`rounded-full px-2 py-1 text-[11px] font-bold ${
-                                upload.referenced
-                                  ? "bg-success/10 text-success"
-                                  : "bg-warning/10 text-warning"
-                              }`}
-                            >
-                              {upload.referenced
-                                ? labels.referenced.replace(
-                                    "{{count}}",
-                                    String(upload.reference_count),
-                                  )
-                                : labels.orphaned}
-                            </span>
-                            <span className="w-16 text-right text-xs font-bold text-base-content/60">
-                              {formatBytes(upload.size)}
-                            </span>
-                          </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -327,25 +325,17 @@ function AttachmentMaintenanceModal({
                   type="button"
                   className="btn btn-ghost btn-sm rounded-full"
                   onClick={onRefresh}
-                  disabled={loading || cleaning}
+                  disabled={loading}
                 >
                   <RefreshCw size={15} />
                   {labels.refresh}
                 </button>
                 <button
                   type="button"
-                  className="btn btn-primary btn-sm rounded-full px-5"
-                  onClick={onCleanup}
-                  disabled={
-                    loading || cleaning || (summary?.orphaned_count ?? 0) === 0
-                  }
+                  className="btn btn-ghost btn-sm rounded-full"
+                  onClick={onClose}
                 >
-                  {cleaning ? (
-                    <Loader2 size={15} className="animate-spin" />
-                  ) : (
-                    <Trash2 size={15} />
-                  )}
-                  {labels.cleanup}
+                  {labels.close}
                 </button>
               </div>
             </motion.div>
@@ -354,6 +344,59 @@ function AttachmentMaintenanceModal({
       </AnimatePresence>
     </EscModalWrapper>
   );
+}
+
+function AttachmentReferenceList({
+  upload,
+  labels,
+}: {
+  upload: AttachmentMaintenanceItem;
+  labels: AttachmentMaintenanceLabels;
+}) {
+  return (
+    <div className="mx-3 mb-3 rounded-xl border border-base-content/10 bg-base-100/50 px-3 py-2">
+      <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-base-content/45">
+        <FileText size={13} />
+        {labels.referencesHeader}
+      </div>
+      {upload.references.length === 0 ? (
+        <div className="py-2 text-xs font-medium text-base-content/45">
+          {labels.noReferences}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {upload.references.map((reference) => (
+            <div
+              key={reference.entry_id}
+              className="rounded-lg bg-base-200/45 px-3 py-2"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-xs font-bold">
+                  {formatReferenceDate(reference, labels)}
+                </span>
+                <span className="shrink-0 rounded-full bg-base-content/10 px-2 py-0.5 text-[10px] font-bold uppercase text-base-content/60">
+                  {reference.entry_type}
+                </span>
+              </div>
+              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-base-content/60">
+                {reference.preview || labels.emptyPreview}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatReferenceDate(
+  reference: AttachmentMaintenanceItem["references"][number],
+  labels: AttachmentMaintenanceLabels,
+) {
+  if (reference.target_date) return reference.target_date;
+  if (reference.target_month) return reference.target_month;
+  if (reference.created_at) return reference.created_at.slice(0, 10);
+  return labels.unknownDate;
 }
 
 function MetricCard({
