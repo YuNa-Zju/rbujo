@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use rbullet_journal::local::{
     AttachmentCleanupResult, AttachmentMaintenanceSummary, CreateEntryInput, DailyMarkdownFile,
-    EntryPatch, FutureLogResponse, LocalBackend, MarkdownWorkspace, MigrationResult, SearchOptions,
-    SearchResult, StoredUpload, UploadBackup, UploadInput,
+    EntryPatch, FutureLogResponse, LocalBackend, MarkdownWorkspace, MigrationResult,
+    ResolvedUpload, SearchOptions, SearchResult, StoredUpload, UploadBackup, UploadInput,
 };
 use rbullet_journal::models::{
     EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
@@ -316,6 +316,18 @@ async fn open_upload(state: State<'_, DesktopState>, relative_path: String) -> R
     state
         .backend
         .open_upload(relative_path)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn resolve_uploads(
+    state: State<'_, DesktopState>,
+    relative_paths: Vec<String>,
+) -> Result<Vec<ResolvedUpload>, String> {
+    state
+        .backend
+        .resolve_uploads(relative_paths)
         .await
         .map_err(to_error)
 }
@@ -645,6 +657,7 @@ pub fn run() {
             list_uploads,
             restore_upload,
             open_upload,
+            resolve_uploads,
             sync_daily_markdown_file,
             open_daily_markdown,
             sync_future_markdown_files,

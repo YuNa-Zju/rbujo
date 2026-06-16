@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect } from "react";
+import { useEffect, useMemo, useState, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,7 +14,11 @@ import CodeBlock from "./markdown/CodeBlock";
 import { uiEvents } from "../lib/uiEvents";
 import { useReadOnly } from "../context/ReadOnlyContext";
 import { useAppTheme } from "../hooks/useAppTheme";
-import { extractUploadRelativePath } from "../services/attachmentService";
+import {
+  collectUploadRelativePaths,
+  extractUploadRelativePath,
+  replaceAttachmentReferences,
+} from "../services/attachmentService";
 import { entryService } from "../services/entryService";
 
 // ✅ 引入拆分后的文件 (假设你已经拆分了，如果没有请把上面的 CUSTOM_MARKDOWN_STYLES 复制回来)
@@ -124,8 +128,54 @@ export default function MarkdownViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [attachmentRenderUrls, setAttachmentRenderUrls] = useState<
+    Record<string, string>
+  >({});
 
   const isTogglingRef = useRef(false);
+
+  const uploadReferences = useMemo(
+    () => collectUploadRelativePaths(content),
+    [content],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (uploadReferences.length === 0) {
+      setAttachmentRenderUrls({});
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    entryService
+      .resolveUploads(uploadReferences)
+      .then((uploads) => {
+        if (cancelled) return;
+        const nextUrls: Record<string, string> = {};
+        for (const upload of uploads) {
+          nextUrls[upload.requested_path] = upload.url;
+          nextUrls[upload.relative_path] = upload.url;
+        }
+        setAttachmentRenderUrls(nextUrls);
+      })
+      .catch((error) => {
+        console.error("Failed to resolve attachment links", error);
+        if (!cancelled) setAttachmentRenderUrls({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uploadReferences]);
+
+  const renderedContent = useMemo(() => {
+    const replacements = new Map(Object.entries(attachmentRenderUrls));
+    return replacements.size > 0
+      ? replaceAttachmentReferences(content, replacements)
+      : content;
+  }, [attachmentRenderUrls, content]);
 
   // 动态主题色
   const themeStyles = (() => {
@@ -170,7 +220,7 @@ export default function MarkdownViewer({
         setHasMeasured(true);
       });
     }
-  }, [content, disableOverflowCheck]);
+  }, [renderedContent, disableOverflowCheck]);
 
   const handleCheckboxChange = (index: number) => {
     if (!onTaskToggle) return;
@@ -406,7 +456,7 @@ export default function MarkdownViewer({
                 ),
               }}
             >
-              {content}
+              {renderedContent}
             </ReactMarkdown>
           </div>
         </motion.div>

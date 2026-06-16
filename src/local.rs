@@ -140,6 +140,15 @@ pub struct StoredUpload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedUpload {
+    pub requested_path: String,
+    pub relative_path: String,
+    pub absolute_path: String,
+    pub sha256: String,
+    pub size: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailyMarkdownFile {
     pub relative_path: String,
     pub absolute_path: String,
@@ -349,6 +358,18 @@ impl LocalBackend {
 
     fn legacy_upload_relative_path(filename: &str) -> String {
         format!("{LEGACY_UPLOAD_DIR}/{filename}")
+    }
+
+    fn upload_fallback_candidates(relative_path: &str) -> Vec<String> {
+        let mut candidates = Vec::new();
+        if let Some(filename) = relative_path.strip_prefix(&format!("{LEGACY_UPLOAD_DIR}/")) {
+            candidates.push(Self::attachment_relative_path(filename));
+        }
+        candidates.push(relative_path.to_string());
+        if let Some(filename) = relative_path.strip_prefix(&format!("{ATTACHMENT_DIR}/")) {
+            candidates.push(Self::legacy_upload_relative_path(filename));
+        }
+        candidates
     }
 
     async fn existing_upload_relative_path_for_sha(
@@ -1363,6 +1384,79 @@ impl LocalBackend {
             .map_err(|error| AppError::Internal(error.to_string()))?;
 
         self.store_upload(UploadInput { filename, bytes }).await
+    }
+
+    async fn resolve_upload_reference(
+        &self,
+        requested_path: &str,
+    ) -> AppResult<Option<ResolvedUpload>> {
+        for candidate_relative_path in Self::upload_fallback_candidates(requested_path) {
+            let Ok(path) = self.upload_file_path(&candidate_relative_path) else {
+                continue;
+            };
+            let Ok(canonical_path) = tokio::fs::canonicalize(&path).await else {
+                continue;
+            };
+
+            let mut inside_allowed_directory = false;
+            for directory in [ATTACHMENT_DIR, LEGACY_UPLOAD_DIR] {
+                if let Ok(canonical_dir) =
+                    tokio::fs::canonicalize(self.app_dir.join(directory)).await
+                    && canonical_path.starts_with(&canonical_dir)
+                {
+                    inside_allowed_directory = true;
+                    break;
+                }
+            }
+            if !inside_allowed_directory {
+                continue;
+            }
+
+            let metadata = tokio::fs::metadata(&canonical_path)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            if !metadata.is_file() {
+                continue;
+            }
+            let stored_sha = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT sha256 FROM attachment_records WHERE relative_path = ?",
+            )
+            .bind(&candidate_relative_path)
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten();
+            let sha256 = match stored_sha {
+                Some(value) => value,
+                None => {
+                    let bytes = tokio::fs::read(&canonical_path)
+                        .await
+                        .map_err(|error| AppError::Internal(error.to_string()))?;
+                    sha256_hex(&bytes)
+                }
+            };
+            return Ok(Some(ResolvedUpload {
+                requested_path: requested_path.to_string(),
+                relative_path: candidate_relative_path,
+                absolute_path: canonical_path.to_string_lossy().to_string(),
+                sha256,
+                size: metadata.len() as usize,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    pub async fn resolve_uploads(
+        &self,
+        relative_paths: Vec<String>,
+    ) -> AppResult<Vec<ResolvedUpload>> {
+        let mut resolved = Vec::new();
+        for relative_path in relative_paths {
+            if let Some(upload) = self.resolve_upload_reference(&relative_path).await? {
+                resolved.push(upload);
+            }
+        }
+        Ok(resolved)
     }
 
     async fn register_upload_record(
@@ -4302,28 +4396,39 @@ fn rewrite_upload_links_for_archive(
             continue;
         };
         let target = format!("{attachment_prefix}/{filename}");
-        let escaped_relative_path = regex::escape(&upload.relative_path);
-        let escaped_encoded_relative_path =
-            regex::escape(&percent_encode_url_component(&upload.relative_path));
-        for pattern in [
-            format!(r#"asset://[^\s\)\]"']*/{escaped_relative_path}"#),
-            format!(r#"https?://asset\.localhost[^\s\)\]"']*/{escaped_relative_path}"#),
-            format!(r#"asset://[^\s\)\]"']*(?i:{escaped_encoded_relative_path})"#),
-            format!(r#"https?://asset\.localhost[^\s\)\]"']*(?i:{escaped_encoded_relative_path})"#),
-        ] {
-            let Ok(regex) = Regex::new(&pattern) else {
-                continue;
-            };
-            rewritten = regex.replace_all(&rewritten, target.as_str()).into_owned();
-        }
+        let mut relative_paths = vec![
+            upload.relative_path.clone(),
+            LocalBackend::attachment_relative_path(filename),
+            LocalBackend::legacy_upload_relative_path(filename),
+        ];
+        relative_paths.sort();
+        relative_paths.dedup();
+        for relative_path in relative_paths {
+            let escaped_relative_path = regex::escape(&relative_path);
+            let escaped_encoded_relative_path =
+                regex::escape(&percent_encode_url_component(&relative_path));
+            for pattern in [
+                format!(r#"asset://[^\s\)\]"']*/{escaped_relative_path}"#),
+                format!(r#"https?://asset\.localhost[^\s\)\]"']*/{escaped_relative_path}"#),
+                format!(r#"asset://[^\s\)\]"']*(?i:{escaped_encoded_relative_path})"#),
+                format!(
+                    r#"https?://asset\.localhost[^\s\)\]"']*(?i:{escaped_encoded_relative_path})"#
+                ),
+            ] {
+                let Ok(regex) = Regex::new(&pattern) else {
+                    continue;
+                };
+                rewritten = regex.replace_all(&rewritten, target.as_str()).into_owned();
+            }
 
-        let raw_pattern = format!(r#"(^|[\(\s"'=]){escaped_relative_path}(?=$|[\)\]\s"'<>])"#);
-        if let Ok(regex) = Regex::new(&raw_pattern) {
-            rewritten = regex
-                .replace_all(&rewritten, |captures: &regex::Captures<'_>| {
-                    format!("{}{}", &captures[1], target)
-                })
-                .into_owned();
+            let raw_pattern = format!(r#"(^|[\(\s"'=]){escaped_relative_path}($|[\)\]\s"'<>])"#);
+            if let Ok(regex) = Regex::new(&raw_pattern) {
+                rewritten = regex
+                    .replace_all(&rewritten, |captures: &regex::Captures<'_>| {
+                        format!("{}{}{}", &captures[1], target, &captures[2])
+                    })
+                    .into_owned();
+            }
         }
     }
     rewritten

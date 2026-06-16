@@ -875,6 +875,50 @@ async fn legacy_upload_path_falls_back_to_attachment_file() {
 }
 
 #[tokio::test]
+async fn resolve_uploads_canonicalizes_relative_and_legacy_paths() {
+    let dir = temp_app_dir("resolve-upload-links");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "notes.pdf".to_string(),
+            bytes: vec![9, 8, 7],
+        })
+        .await
+        .unwrap();
+    let filename = Path::new(&stored.relative_path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    let resolved = backend
+        .resolve_uploads(vec![
+            stored.relative_path.clone(),
+            format!("uploads/{filename}"),
+            "attachments/missing.pdf".to_string(),
+        ])
+        .await
+        .unwrap();
+
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(resolved[0].requested_path, stored.relative_path);
+    assert_eq!(resolved[1].requested_path, format!("uploads/{filename}"));
+    assert!(
+        resolved
+            .iter()
+            .all(|item| item.relative_path == stored.relative_path)
+    );
+    assert!(
+        resolved
+            .iter()
+            .all(|item| item.absolute_path.ends_with(&filename))
+    );
+    assert!(resolved.iter().all(|item| item.sha256 == stored.sha256));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn uploads_are_stored_under_local_app_data_with_relative_urls() {
     let dir = temp_app_dir("uploads");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -2085,10 +2129,15 @@ async fn markdown_archive_rewrites_upload_links_and_includes_attachment_files() 
         .await
         .unwrap();
     let encoded_relative_path = stored.relative_path.replace('/', "%2F");
+    let stored_filename = std::path::Path::new(&stored.relative_path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     backend
         .create_entry(CreateEntryInput {
             content: format!(
-                "课件链接: [lecture](asset://localhost/%2FUsers%2Fme%2FLibrary%2FApplication%20Support%2Ffun.yunazju.rbujo%2F{encoded_relative_path})",
+                "课件链接: [lecture](asset://localhost/%2FUsers%2Fme%2FLibrary%2FApplication%20Support%2Ffun.yunazju.rbujo%2F{encoded_relative_path}) [legacy](uploads/{stored_filename}) [legacy-asset](asset://localhost/private/uploads/{stored_filename})",
             ),
             entry_type: "idea".to_string(),
             target_date: Some("2026-06-12".to_string()),
@@ -2110,14 +2159,10 @@ async fn markdown_archive_rewrites_upload_links_and_includes_attachment_files() 
     assert!(zip.by_name("entries.md").is_err());
     assert!(markdown.contains("../attachments/"));
     assert!(!markdown.contains("asset://localhost/%2FUsers%2F"));
+    assert!(!markdown.contains(&format!("uploads/{stored_filename}")));
+    assert!(!markdown.contains("asset://localhost/private/uploads/"));
 
-    let attachment_name = format!(
-        "Daily/attachments/{}",
-        std::path::Path::new(&stored.relative_path)
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-    );
+    let attachment_name = format!("Daily/attachments/{}", stored_filename);
     let mut attachment = Vec::new();
     zip.by_name(&attachment_name)
         .unwrap()

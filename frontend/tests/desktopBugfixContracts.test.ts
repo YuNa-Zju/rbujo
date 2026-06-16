@@ -284,6 +284,14 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
     import.meta.dirname,
     "../src/components/MarkdownViewer.tsx",
   );
+  const entryServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/entryService.ts",
+  );
+  const attachmentServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/attachmentService.ts",
+  );
   const uiEventsPath = path.resolve(import.meta.dirname, "../src/lib/uiEvents.ts");
   const translationsPath = path.resolve(
     import.meta.dirname,
@@ -314,6 +322,8 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   const appSource = await readFile(appPath, "utf8");
   const menuSource = await readFile(menuPath, "utf8");
   const markdownViewerSource = await readFile(markdownViewerPath, "utf8");
+  const entryServiceSource = await readFile(entryServicePath, "utf8");
+  const attachmentServiceSource = await readFile(attachmentServicePath, "utf8");
   const uiEventsSource = await readFile(uiEventsPath, "utf8");
   const translationsSource = await readFile(translationsPath, "utf8");
   const addEntrySource = await readFile(addEntryPath, "utf8");
@@ -328,6 +338,7 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(source, /list_uploads/);
   assert.match(source, /restore_upload/);
   assert.match(source, /store_upload_path/);
+  assert.match(source, /resolve_uploads/);
   assert.match(source, /open_upload/);
   assert.match(source, /export_markdown_archive/);
   assert.match(source, /attachment_maintenance_summary/);
@@ -356,6 +367,14 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(markdownViewerSource, /defaultUrlTransform/);
   assert.match(markdownViewerSource, /parsed\.protocol === "asset:"/);
   assert.match(markdownViewerSource, /parsed\.hostname === "asset\.localhost"/);
+  assert.match(markdownViewerSource, /collectUploadRelativePaths/);
+  assert.match(markdownViewerSource, /resolveUploads/);
+  assert.match(markdownViewerSource, /replaceAttachmentReferences/);
+  assert.match(markdownViewerSource, /renderedContent/);
+  assert.match(entryServiceSource, /resolve_uploads/);
+  assert.match(attachmentServiceSource, /attachmentMarkdownUrlFromStoredUpload/);
+  assert.match(attachmentServiceSource, /url: attachmentMarkdownUrlFromStoredUpload\(stored\)/);
+  assert.doesNotMatch(attachmentServiceSource, /url: stored\.url/);
   assert.deepEqual(config.app.security.assetProtocol, {
     enable: true,
     scope: ["$APPDATA/attachments/**", "$APPDATA/uploads/**"],

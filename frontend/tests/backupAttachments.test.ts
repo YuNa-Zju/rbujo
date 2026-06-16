@@ -91,8 +91,9 @@ test("backup import restores attachments and rewrites old upload links before en
   assert.equal(response.inserted_count, 1);
   assert.equal(
     importedEntries[0].content,
-    "![img](asset://localhost/private/attachments/restored.png)\n![encoded](asset://localhost/private/attachments/restored.png)",
+    "![img](attachments/restored.png)\n![encoded](attachments/restored.png)",
   );
+  assert.doesNotMatch(importedEntries[0].content, /asset:\/\/localhost/);
 });
 
 test("backup import rejects attachments with mismatched hashes", async () => {

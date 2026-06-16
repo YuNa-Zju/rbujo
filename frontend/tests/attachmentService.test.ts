@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  attachmentMarkdownUrlFromStoredUpload,
   buildAttachmentMarkdown,
+  collectUploadRelativePaths,
   extractUploadRelativePath,
   filenameFromPath,
   isCompressibleImageFile,
@@ -47,6 +49,29 @@ test("attachment markdown treats image extensions as images when mime type is mi
     ]),
     "![dragged-photo.PNG](asset://localhost/private/attachments/photo.png)\n",
   );
+});
+
+test("stored uploads are inserted as stable relative markdown links", () => {
+  const stored = {
+    relative_path: "attachments/hash.pdf",
+    absolute_path:
+      "/Users/me/Library/Application Support/fun.yunazju.rbujo/attachments/hash.pdf",
+    sha256: "hash",
+    size: 10,
+    url: "asset://localhost/%2FUsers%2Fme%2FLibrary%2FApplication%20Support%2Ffun.yunazju.rbujo%2Fattachments%2Fhash.pdf",
+  };
+
+  const markdown = buildAttachmentMarkdown([
+    {
+      name: "paper.pdf",
+      type: "application/pdf",
+      url: attachmentMarkdownUrlFromStoredUpload(stored),
+    },
+  ]);
+
+  assert.equal(markdown, "[paper.pdf](attachments/hash.pdf)\n");
+  assert.doesNotMatch(markdown, /asset:\/\/localhost/);
+  assert.doesNotMatch(markdown, /Application%20Support|\/Users\//);
 });
 
 test("attachment paths keep dropped filenames and only target active editor bounds", () => {
@@ -199,6 +224,24 @@ test("attachment references can be extracted and rewritten across exported backu
     ])),
     "![old](asset://localhost/private/attachments/new-image.png)\n[raw](asset://localhost/private/attachments/new-report.pdf)\n![encoded](asset://localhost/private/attachments/new-image.png)",
   );
+});
+
+test("upload references can be collected for render-time backend resolution", () => {
+  const encodedAsset =
+    "asset://localhost/%2FUsers%2Fme%2FLibrary%2FApplication%20Support%2Ffun.yunazju.rbujo%2Fattachments%2Fc.png";
+  const content = [
+    "![img](attachments/a.png)",
+    "[legacy](uploads/b.pdf)",
+    `![asset](${encodedAsset})`,
+    "[external](https://example.com/uploads/d.pdf)",
+    "plain text",
+  ].join("\n");
+
+  assert.deepEqual(collectUploadRelativePaths(content), [
+    "attachments/a.png",
+    "uploads/b.pdf",
+    "attachments/c.png",
+  ]);
 });
 
 test("external upload-like links are not rewritten during backup import", () => {
