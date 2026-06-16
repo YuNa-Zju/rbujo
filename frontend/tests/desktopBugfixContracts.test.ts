@@ -86,6 +86,36 @@ test("entry editing reuses the add-entry modal including future options", async 
   assert.match(addEntrySource, /is_future/);
 });
 
+test("daily page can open the disk-backed markdown file in the system editor", async () => {
+  const dailyPagePath = path.resolve(
+    import.meta.dirname,
+    "../src/features/daily/DailyPage.tsx",
+  );
+  const entryServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/entryService.ts",
+  );
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const dailyPageSource = await readFile(dailyPagePath, "utf8");
+  const entryServiceSource = await readFile(entryServicePath, "utf8");
+  const libSource = await readFile(libPath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+
+  assert.match(libSource, /open_daily_markdown/);
+  assert.match(libSource, /sync_daily_markdown_file/);
+  assert.match(entryServiceSource, /openDailyMarkdown/);
+  assert.match(entryServiceSource, /invoke<DailyMarkdownFile>\("open_daily_markdown"/);
+  assert.match(dailyPageSource, /handleOpenDailyMarkdown/);
+  assert.match(dailyPageSource, /FilePenLine/);
+  assert.match(dailyPageSource, /t\.daily\.openMarkdown/);
+  assert.match(translationsSource, /用默认编辑器打开 Markdown/);
+  assert.match(translationsSource, /Open Markdown in default editor/);
+});
+
 test("release patch script is exposed from the frontend package", async () => {
   const packagePath = path.resolve(import.meta.dirname, "../package.json");
   const releasePath = path.resolve(import.meta.dirname, "../scripts/release.mjs");

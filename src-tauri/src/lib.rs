@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rbullet_journal::local::{
-    AttachmentCleanupResult, AttachmentMaintenanceSummary, CreateEntryInput, EntryPatch,
-    FutureLogResponse, LocalBackend, MigrationResult, SearchOptions, SearchResult, StoredUpload,
-    UploadBackup, UploadInput,
+    AttachmentCleanupResult, AttachmentMaintenanceSummary, CreateEntryInput, DailyMarkdownFile,
+    EntryPatch, FutureLogResponse, LocalBackend, MigrationResult, SearchOptions, SearchResult,
+    StoredUpload, UploadBackup, UploadInput,
 };
 use rbullet_journal::models::{
     EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
@@ -321,6 +321,30 @@ async fn open_upload(state: State<'_, DesktopState>, relative_path: String) -> R
 }
 
 #[tauri::command]
+async fn sync_daily_markdown_file(
+    state: State<'_, DesktopState>,
+    date: String,
+) -> Result<DailyMarkdownFile, String> {
+    state
+        .backend
+        .sync_daily_markdown_file(date)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn open_daily_markdown(
+    state: State<'_, DesktopState>,
+    date: String,
+) -> Result<DailyMarkdownFile, String> {
+    state
+        .backend
+        .open_daily_markdown(date)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn attachment_maintenance_summary(
     state: State<'_, DesktopState>,
 ) -> Result<AttachmentMaintenanceSummary, String> {
@@ -559,6 +583,8 @@ pub fn run() {
             list_uploads,
             restore_upload,
             open_upload,
+            sync_daily_markdown_file,
+            open_daily_markdown,
             attachment_maintenance_summary,
             cleanup_unused_uploads,
             cleanup_all_unused_uploads,

@@ -173,6 +173,8 @@ export const translations = {
       sortTime: "时间排序",
       sortType: "类型排序",
       sorting: "排序中...",
+      openMarkdown: "用默认编辑器打开 Markdown",
+      openMarkdownFailed: "打开 Markdown 文件失败，请稍后重试。",
     },
     addEntry: {
       newEntryTitle: "新建条目",
@@ -609,6 +611,8 @@ export const translations = {
       sortTime: "By Time",
       sortType: "By Type",
       sorting: "Sorting...",
+      openMarkdown: "Open Markdown in default editor",
+      openMarkdownFailed: "Failed to open the Markdown file. Please try again.",
     },
     addEntry: {
       newEntryTitle: "New Entry",
