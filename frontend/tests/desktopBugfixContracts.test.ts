@@ -53,6 +53,20 @@ test("update and version dialogs use polished aligned layouts", async () => {
   assert.match(versionSource, /w-full/);
 });
 
+test("backup modal header keeps title and close button aligned", async () => {
+  const backupPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/BackupModal.tsx",
+  );
+  const source = await readFile(backupPath, "utf8");
+
+  assert.match(source, /flex items-start justify-between gap-4/);
+  assert.match(source, /min-w-0 flex-1/);
+  assert.match(source, /truncate/);
+  assert.match(source, /styles\.modal\.closeBtn.*shrink-0/);
+  assert.match(source, /aria-label=\{t\.common\?\.close/);
+});
+
 test("entry editing reuses the add-entry modal including future options", async () => {
   const entryItemPath = path.resolve(
     import.meta.dirname,
