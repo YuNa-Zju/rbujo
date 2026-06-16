@@ -145,6 +145,18 @@ pub struct UploadBackup {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentEntryReference {
+    pub entry_id: String,
+    pub entry_type: String,
+    pub status: String,
+    pub target_date: Option<String>,
+    pub target_month: Option<String>,
+    pub created_at: Option<String>,
+    pub archived_at: Option<String>,
+    pub preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachmentMaintenanceItem {
     pub relative_path: String,
     pub filename: String,
@@ -153,6 +165,7 @@ pub struct AttachmentMaintenanceItem {
     pub size: i64,
     pub referenced: bool,
     pub reference_count: usize,
+    pub references: Vec<AttachmentEntryReference>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1006,6 +1019,7 @@ impl LocalBackend {
                 size,
                 referenced: false,
                 reference_count: 0,
+                references: Vec::new(),
             });
         }
         uploads.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
@@ -1013,18 +1027,54 @@ impl LocalBackend {
     }
 
     async fn upload_reference_counts(&self) -> AppResult<HashMap<String, usize>> {
-        let rows = sqlx::query("SELECT content FROM entries WHERE owner_id = ?")
+        Ok(self
+            .upload_references_by_upload()
+            .await?
+            .into_iter()
+            .map(|(relative_path, references)| (relative_path, references.len()))
+            .collect())
+    }
+
+    async fn upload_references_by_upload(
+        &self,
+    ) -> AppResult<HashMap<String, Vec<AttachmentEntryReference>>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, content, entry_type, status, target_date, target_month, created_at, archived_at
+            FROM entries
+            WHERE owner_id = ?
+            ORDER BY COALESCE(target_date, target_month, created_at) DESC, created_at DESC
+            "#,
+        )
             .bind(self.owner_id)
             .fetch_all(&self.pool)
             .await?;
-        let mut counts = HashMap::new();
+        let mut references_by_upload = HashMap::new();
         for row in rows {
+            let entry_id: String = row.try_get("id")?;
             let content: String = row.try_get("content")?;
-            for reference in upload_references_from_content(&content) {
-                *counts.entry(reference).or_insert(0) += 1;
+            let references = upload_references_from_content(&content);
+            if references.is_empty() {
+                continue;
+            }
+            let entry_reference = AttachmentEntryReference {
+                entry_id,
+                entry_type: row.try_get("entry_type")?,
+                status: row.try_get("status")?,
+                target_date: row.try_get("target_date")?,
+                target_month: row.try_get("target_month")?,
+                created_at: row.try_get("created_at")?,
+                archived_at: row.try_get("archived_at")?,
+                preview: attachment_reference_preview(&content),
+            };
+            for reference in references {
+                references_by_upload
+                    .entry(reference)
+                    .or_insert_with(Vec::new)
+                    .push(entry_reference.clone());
             }
         }
-        Ok(counts)
+        Ok(references_by_upload)
     }
 
     async fn upload_references_for_entry_chain(&self, entry: &Entry) -> AppResult<HashSet<String>> {
@@ -1088,7 +1138,7 @@ impl LocalBackend {
 
     pub async fn attachment_maintenance_summary(&self) -> AppResult<AttachmentMaintenanceSummary> {
         let mut uploads = self.scan_upload_files().await?;
-        let reference_counts = self.upload_reference_counts().await?;
+        let mut references_by_upload = self.upload_references_by_upload().await?;
 
         let mut total_bytes = 0;
         let mut referenced_bytes = 0;
@@ -1096,12 +1146,13 @@ impl LocalBackend {
         let mut referenced_count = 0;
 
         for upload in &mut uploads {
-            let reference_count = reference_counts
-                .get(&upload.relative_path)
-                .copied()
-                .unwrap_or(0);
+            let references = references_by_upload
+                .remove(&upload.relative_path)
+                .unwrap_or_default();
+            let reference_count = references.len();
             upload.reference_count = reference_count;
             upload.referenced = reference_count > 0;
+            upload.references = references;
             total_bytes += upload.size;
             if upload.referenced {
                 referenced_count += 1;
@@ -2200,6 +2251,21 @@ fn upload_references_from_content(content: &str) -> HashSet<String> {
         collect_upload_references(&decoded, &mut references);
     }
     references
+}
+
+fn attachment_reference_preview(content: &str) -> String {
+    let compact = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let limit = 120;
+    let mut preview = compact.chars().take(limit).collect::<String>();
+    if compact.chars().count() > limit {
+        preview.push_str("...");
+    }
+    preview
 }
 
 fn rewrite_upload_links_for_archive(content: &str, uploads: &[UploadBackup]) -> String {

@@ -49,6 +49,17 @@ export interface UploadBackup {
   url: string;
 }
 
+export interface AttachmentEntryReference {
+  entry_id: string;
+  entry_type: string;
+  status: string;
+  target_date: string | null;
+  target_month: string | null;
+  created_at: string | null;
+  archived_at: string | null;
+  preview: string;
+}
+
 export interface AttachmentMaintenanceItem {
   relative_path: string;
   filename: string;
@@ -57,6 +68,7 @@ export interface AttachmentMaintenanceItem {
   size: number;
   referenced: boolean;
   reference_count: number;
+  references: AttachmentEntryReference[];
 }
 
 export interface AttachmentMaintenanceSummary {

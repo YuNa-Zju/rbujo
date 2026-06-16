@@ -421,17 +421,16 @@ export const translations = {
       referenced: "{{count}} 引用",
       orphaned: "未引用",
       refresh: "刷新",
-      cleanup: "清理未引用附件",
       close: "关闭",
+      showReferences: "展开引用",
+      hideReferences: "收起引用",
+      referencesHeader: "引用此附件的日记",
+      noReferences: "暂无已保存日记引用此附件",
+      emptyPreview: "无内容预览",
+      unknownDate: "未知日期",
       cleanupHint:
-        "此按钮会清理当前未引用附件；自动维护会暂时保留最近上传的未引用附件。",
-      cleanupConfirm:
-        "将删除当前未被笔记引用的附件。未保存草稿中的附件链接也会失效，确定继续吗？",
+        "展开附件可以查看哪些日记引用了它。未引用附件会由自动维护在安全窗口后清理，最近上传的文件会先保留。",
       loadFailed: "读取附件统计失败",
-      cleanupFailed: "清理附件失败",
-      cleanupSuccess: "已清理 {{count}} 个附件，释放 {{size}}",
-      cleanupSuccessWithKept:
-        "已清理 {{count}} 个附件，释放 {{size}}。保留 {{kept}} 个最近上传的未引用附件。",
     },
   },
   en: {
@@ -859,17 +858,16 @@ export const translations = {
       referenced: "{{count}} refs",
       orphaned: "Unreferenced",
       refresh: "Refresh",
-      cleanup: "Clean Unreferenced",
       close: "Close",
+      showReferences: "Show References",
+      hideReferences: "Hide References",
+      referencesHeader: "Notes referencing this file",
+      noReferences: "No saved notes reference this attachment",
+      emptyPreview: "No preview",
+      unknownDate: "Unknown date",
       cleanupHint:
-        "This button cleans current unreferenced attachments; automatic maintenance keeps recent unreferenced uploads temporarily.",
-      cleanupConfirm:
-        "This will delete attachments not referenced by saved notes. Attachment links in unsaved drafts may break. Continue?",
+        "Expand an attachment to see which notes reference it. Automatic maintenance cleans unreferenced files after the safety window and keeps recent uploads temporarily.",
       loadFailed: "Failed to read attachment statistics",
-      cleanupFailed: "Failed to clean attachments",
-      cleanupSuccess: "Cleaned {{count}} attachments and freed {{size}}",
-      cleanupSuccessWithKept:
-        "Cleaned {{count}} attachments and freed {{size}}. Kept {{kept}} recent unreferenced attachments.",
     },
   },
 };

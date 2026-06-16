@@ -775,6 +775,75 @@ async fn attachment_maintenance_reports_and_cleans_orphaned_uploads() {
 }
 
 #[tokio::test]
+async fn attachment_maintenance_lists_entries_referencing_each_upload() {
+    let dir = temp_app_dir("attachment-reference-list");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "meeting.png".to_string(),
+            bytes: vec![51, 52, 53],
+        })
+        .await
+        .unwrap();
+
+    let first = backend
+        .create_entry(CreateEntryInput {
+            content: format!("first upload note ![img]({})", stored.relative_path),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let second = backend
+        .create_entry(CreateEntryInput {
+            content: format!("second upload note [file]({})", stored.relative_path),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-13".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let summary = backend.attachment_maintenance_summary().await.unwrap();
+    let summary_json = serde_json::to_value(&summary).unwrap();
+    let upload = summary_json["uploads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|upload| upload["relative_path"] == stored.relative_path)
+        .unwrap();
+    let references = upload["references"]
+        .as_array()
+        .expect("upload references should be listed");
+    assert_eq!(references.len(), 2);
+    let ids: Vec<_> = references
+        .iter()
+        .filter_map(|reference| reference["entry_id"].as_str())
+        .collect();
+    assert!(ids.contains(&first.id.as_str()));
+    assert!(ids.contains(&second.id.as_str()));
+    let first_reference = references
+        .iter()
+        .find(|reference| reference["entry_id"] == first.id)
+        .unwrap();
+    assert_eq!(first_reference["target_date"], "2026-06-12");
+    assert_eq!(first_reference["entry_type"], "idea");
+    assert!(
+        first_reference["preview"]
+            .as_str()
+            .unwrap()
+            .contains("first upload note")
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn attachment_reference_scan_ignores_external_upload_urls() {
     let dir = temp_app_dir("attachment-external-reference");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
