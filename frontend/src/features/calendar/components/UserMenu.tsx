@@ -10,6 +10,7 @@ import {
   Info,
   Rss,
   RefreshCw,
+  Settings,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -47,6 +48,10 @@ export default function UserMenu() {
 
   const handleOpenAttachmentMaintenance = () => {
     uiEvents.emit("OPEN_ATTACHMENT_MAINTENANCE");
+  };
+
+  const handleOpenMarkdownSettings = () => {
+    uiEvents.emit("OPEN_MARKDOWN_SETTINGS");
   };
 
   const handleOpenArchive = () => {
@@ -138,6 +143,11 @@ export default function UserMenu() {
               t.attachmentMaintenance?.menuLabel || "Attachment Maintenance"
             }
             onClick={handleOpenAttachmentMaintenance}
+          />
+          <MenuItem
+            icon={Settings}
+            label={t.markdownSettings?.menuLabel || "Markdown Settings"}
+            onClick={handleOpenMarkdownSettings}
           />
           <MenuItem
             icon={RefreshCw}

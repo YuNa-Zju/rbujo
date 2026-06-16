@@ -732,13 +732,13 @@ async fn daily_markdown_file_is_synced_when_daily_entries_change() {
         .sync_daily_markdown_file("2026-06-16".to_string())
         .await
         .unwrap();
-    assert_eq!(file.relative_path, "journal/Daily/2026-06-16.md");
-    let markdown_path = dir.join(&file.relative_path);
+    assert_eq!(file.relative_path, "Daily/2026-06-16.md");
+    let markdown_path = dir.join("journal").join(&file.relative_path);
     let markdown = fs::read_to_string(&markdown_path).unwrap();
     assert!(markdown.starts_with("# 2026-06-16"));
-    assert!(markdown.contains("<!-- rbujo-entry"));
+    assert!(!markdown.contains("<!-- rbujo-entry"));
     assert!(markdown.contains("- [ ] write disk-backed note"));
-    assert!(markdown.contains("Tags: #disk"));
+    assert!(markdown.contains("#disk"));
     assert!(markdown.contains("- temporary idea"));
 
     backend
@@ -758,6 +758,497 @@ async fn daily_markdown_file_is_synced_when_daily_entries_change() {
     assert!(updated.contains("- [x] edited through app"));
     assert!(!updated.contains("temporary idea"));
 
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn daily_markdown_imports_external_edits_when_timestamp_changes() {
+    let dir = temp_app_dir("daily-markdown-import-edit");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "original body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["old".to_string()],
+        })
+        .await
+        .unwrap();
+    let file = backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+    let markdown_path = dir.join("journal").join(&file.relative_path);
+
+    fs::write(
+        &markdown_path,
+        "# 2026-06-16\n\n- [x] original body edited from markdown #external\n- o calendar review #event\n- new idea from markdown #idea\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+
+    let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    let edited = daily_entries
+        .iter()
+        .find(|item| item.id == entry.id)
+        .expect("existing entry should be updated from markdown");
+    assert_eq!(edited.content, "original body edited from markdown");
+    assert_eq!(edited.status, "completed");
+    assert_eq!(edited.entry_type, "task");
+    assert_eq!(edited.tags, vec!["external".to_string()]);
+    assert!(
+        daily_entries
+            .iter()
+            .any(|item| item.entry_type == "event" && item.content == "calendar review")
+    );
+    assert!(
+        daily_entries
+            .iter()
+            .any(|item| item.entry_type == "idea" && item.content == "new idea from markdown")
+    );
+    let normalized = fs::read_to_string(&markdown_path).unwrap();
+    assert!(!normalized.contains("<!-- rbujo-entry"));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_workspace_switch_overwrites_existing_folder_from_bujo() {
+    let dir = temp_app_dir("daily-markdown-workspace-overwrite");
+    let workspace = temp_app_dir("daily-markdown-workspace-existing");
+    fs::create_dir_all(workspace.join("Daily")).unwrap();
+    fs::write(
+        workspace.join("Daily/2026-06-16.md"),
+        "# 2026-06-16\n\n- [ ] stale folder content\n",
+    )
+    .unwrap();
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "current bujo content".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    backend
+        .set_markdown_workspace(workspace.clone())
+        .await
+        .unwrap();
+
+    let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    assert!(
+        daily_entries
+            .iter()
+            .any(|item| item.content == "current bujo content")
+    );
+    assert!(
+        daily_entries
+            .iter()
+            .all(|item| item.content != "stale folder content")
+    );
+    let markdown = fs::read_to_string(workspace.join("Daily/2026-06-16.md")).unwrap();
+    assert!(markdown.contains("current bujo content"));
+    assert!(!markdown.contains("stale folder content"));
+
+    fs::remove_dir_all(workspace).ok();
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn daily_markdown_inserted_line_does_not_repurpose_existing_entries() {
+    let dir = temp_app_dir("daily-markdown-insert-line");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let first = backend
+        .create_entry(CreateEntryInput {
+            content: "alpha body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let second = backend
+        .create_entry(CreateEntryInput {
+            content: "beta body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let file = backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+    let markdown_path = dir.join("journal").join(&file.relative_path);
+    fs::write(
+        &markdown_path,
+        "# 2026-06-16\n\n- [ ] inserted above\n- [ ] alpha body\n- [ ] beta body\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+
+    let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    assert_eq!(
+        daily_entries
+            .iter()
+            .find(|item| item.id == first.id)
+            .unwrap()
+            .content,
+        "alpha body"
+    );
+    assert_eq!(
+        daily_entries
+            .iter()
+            .find(|item| item.id == second.id)
+            .unwrap()
+            .content,
+        "beta body"
+    );
+    assert!(
+        daily_entries
+            .iter()
+            .any(|item| item.content == "inserted above")
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn daily_markdown_ambiguous_insert_and_edit_retains_existing_entry() {
+    let dir = temp_app_dir("daily-markdown-ambiguous-insert-edit");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "stable original body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let file = backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+    let markdown_path = dir.join("journal").join(&file.relative_path);
+    fs::write(
+        &markdown_path,
+        "# 2026-06-16\n\n- [ ] inserted unrelated item\n- [ ] completely rewritten text\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+
+    let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    assert_eq!(
+        daily_entries
+            .iter()
+            .find(|item| item.id == entry.id)
+            .unwrap()
+            .content,
+        "stable original body"
+    );
+    assert!(
+        daily_entries
+            .iter()
+            .any(|item| item.content == "inserted unrelated item" && item.id != entry.id)
+    );
+    assert!(
+        daily_entries
+            .iter()
+            .any(|item| item.content == "completely rewritten text" && item.id != entry.id)
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn app_create_imports_pending_markdown_before_writing() {
+    let dir = temp_app_dir("daily-markdown-app-create-import");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "before external edit".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let file = backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+    let markdown_path = dir.join("journal").join(&file.relative_path);
+    fs::write(
+        &markdown_path,
+        "# 2026-06-16\n\n- [x] edited before app create\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    let created = backend
+        .create_entry(CreateEntryInput {
+            content: "created in app after external edit".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    let edited = daily_entries
+        .iter()
+        .find(|item| item.id == entry.id)
+        .unwrap();
+    assert_eq!(edited.content, "edited before app create");
+    assert_eq!(edited.status, "completed");
+    assert!(daily_entries.iter().any(|item| item.id == created.id));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn daily_markdown_deleting_migrated_child_repairs_parent_chain() {
+    let dir = temp_app_dir("daily-markdown-delete-child-repair");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "source for child deletion".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .migrate_entry_to_date(entry.id.clone(), "2026-06-17".to_string())
+        .await
+        .unwrap();
+    let file = backend
+        .sync_daily_markdown_file("2026-06-17".to_string())
+        .await
+        .unwrap();
+    let markdown_path = dir.join("journal").join(&file.relative_path);
+    fs::write(&markdown_path, "# 2026-06-17\n\n").unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    backend
+        .sync_daily_markdown_file("2026-06-17".to_string())
+        .await
+        .unwrap();
+
+    let chain = backend.get_migration_chain(entry.id.clone()).await.unwrap();
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].id, entry.id);
+    assert_eq!(chain[0].status, "open");
+    assert!(chain[0].migrated_to_entry_id.is_none());
+    assert!(chain[0].migrated_to_date.is_none());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn daily_markdown_does_not_mutate_migration_pointer_into_normal_entry() {
+    let dir = temp_app_dir("daily-markdown-migration-pointer-edit");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "migration source body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let migration = backend
+        .migrate_entry_to_date(entry.id.clone(), "2026-06-17".to_string())
+        .await
+        .unwrap();
+    let file = backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+    let markdown_path = dir.join("journal").join(&file.relative_path);
+    fs::write(
+        &markdown_path,
+        "# 2026-06-16\n\n- [ ] ordinary replacement\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+
+    let chain = backend.get_migration_chain(entry.id.clone()).await.unwrap();
+    assert_eq!(chain[0].id, entry.id);
+    assert_eq!(chain[0].status, "forward");
+    assert_eq!(chain[1].id, migration.created_entry.id);
+    let source_day = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    assert!(
+        source_day
+            .iter()
+            .any(|item| item.content == "ordinary replacement")
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn daily_markdown_status_suffix_does_not_create_migration_state() {
+    let dir = temp_app_dir("daily-markdown-status-suffix");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "suffix body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let file = backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+    let markdown_path = dir.join("journal").join(&file.relative_path);
+    fs::write(
+        &markdown_path,
+        "# 2026-06-16\n\n- [ ] normal text (future)\n",
+    )
+    .unwrap();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&markdown_path)
+        .unwrap();
+    file.set_times(FileTimes::new().set_modified(SystemTime::now() + Duration::from_secs(60)))
+        .unwrap();
+
+    backend
+        .sync_daily_markdown_file("2026-06-16".to_string())
+        .await
+        .unwrap();
+
+    let daily_entries = backend.get_daily_log("2026-06-16", false).await.unwrap();
+    assert!(daily_entries.iter().any(|item| {
+        item.content == "normal text (future)"
+            && item.status == "open"
+            && item.migrated_to_entry_id.is_none()
+    }));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_workspace_can_move_to_user_selected_directory() {
+    let dir = temp_app_dir("daily-markdown-workspace");
+    let workspace = temp_app_dir("daily-markdown-workspace-target");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let default_workspace = backend.get_markdown_workspace().await.unwrap();
+    assert_eq!(
+        default_workspace.absolute_path,
+        dir.join("journal").to_string_lossy()
+    );
+    assert!(default_workspace.is_default);
+
+    let selected = backend
+        .set_markdown_workspace(workspace.clone())
+        .await
+        .unwrap();
+    assert_eq!(selected.absolute_path, workspace.to_string_lossy());
+    assert!(!selected.is_default);
+
+    backend
+        .create_entry(CreateEntryInput {
+            content: "stored in selected workspace".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-21".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    assert!(workspace.join("Daily/2026-06-21.md").exists());
+    assert!(!dir.join("journal/Daily/2026-06-21.md").exists());
+
+    let reopened = LocalBackend::open(dir.clone()).await.unwrap();
+    let persisted = reopened.get_markdown_workspace().await.unwrap();
+    assert_eq!(persisted.absolute_path, workspace.to_string_lossy());
+    assert!(!persisted.is_default);
+
+    fs::remove_dir_all(workspace).ok();
     fs::remove_dir_all(dir).ok();
 }
 

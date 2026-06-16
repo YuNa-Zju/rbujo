@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use rbullet_journal::local::{
     AttachmentCleanupResult, AttachmentMaintenanceSummary, CreateEntryInput, DailyMarkdownFile,
-    EntryPatch, FutureLogResponse, LocalBackend, MigrationResult, SearchOptions, SearchResult,
-    StoredUpload, UploadBackup, UploadInput,
+    EntryPatch, FutureLogResponse, LocalBackend, MarkdownWorkspace, MigrationResult, SearchOptions,
+    SearchResult, StoredUpload, UploadBackup, UploadInput,
 };
 use rbullet_journal::models::{
     EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
@@ -345,6 +345,46 @@ async fn open_daily_markdown(
 }
 
 #[tauri::command]
+async fn get_markdown_workspace(
+    state: State<'_, DesktopState>,
+) -> Result<MarkdownWorkspace, String> {
+    state
+        .backend
+        .get_markdown_workspace()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn choose_markdown_workspace(
+    app: AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<Option<MarkdownWorkspace>, String> {
+    let current = state
+        .backend
+        .get_markdown_workspace()
+        .await
+        .map_err(to_error)?;
+    let mut dialog = app.dialog().file();
+    let current_path = PathBuf::from(current.absolute_path);
+    if current_path.is_dir() {
+        dialog = dialog.set_directory(current_path);
+    }
+    let Some(folder_path) = dialog.blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = folder_path
+        .into_path()
+        .map_err(|_| "Selected markdown workspace is not a local folder".to_string())?;
+    state
+        .backend
+        .set_markdown_workspace(path)
+        .await
+        .map(Some)
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn attachment_maintenance_summary(
     state: State<'_, DesktopState>,
 ) -> Result<AttachmentMaintenanceSummary, String> {
@@ -585,6 +625,8 @@ pub fn run() {
             open_upload,
             sync_daily_markdown_file,
             open_daily_markdown,
+            get_markdown_workspace,
+            choose_markdown_workspace,
             attachment_maintenance_summary,
             cleanup_unused_uploads,
             cleanup_all_unused_uploads,

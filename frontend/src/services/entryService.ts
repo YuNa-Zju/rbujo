@@ -43,6 +43,12 @@ export interface StoredUpload {
 export interface DailyMarkdownFile {
   relative_path: string;
   absolute_path: string;
+  workspace_path: string;
+}
+
+export interface MarkdownWorkspace {
+  absolute_path: string;
+  is_default: boolean;
 }
 
 export interface UploadBackup {
@@ -365,6 +371,14 @@ export const entryService = {
 
   openDailyMarkdown: async (date: string) => {
     return invoke<DailyMarkdownFile>("open_daily_markdown", { date });
+  },
+
+  getMarkdownWorkspace: async () => {
+    return invoke<MarkdownWorkspace>("get_markdown_workspace");
+  },
+
+  chooseMarkdownWorkspace: async () => {
+    return invoke<MarkdownWorkspace | null>("choose_markdown_workspace");
   },
 
   getAttachmentMaintenanceSummary: async () => {

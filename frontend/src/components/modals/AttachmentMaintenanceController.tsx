@@ -8,7 +8,6 @@ import {
   FileText,
   HardDrive,
   Loader2,
-  RefreshCw,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -86,7 +85,6 @@ export default function AttachmentMaintenanceController() {
       error={error}
       labels={labels}
       onClose={close}
-      onRefresh={loadSummary}
     />
   );
 }
@@ -98,7 +96,6 @@ function AttachmentMaintenanceModal({
   error,
   labels,
   onClose,
-  onRefresh,
 }: {
   open: boolean;
   summary: AttachmentMaintenanceSummary | null;
@@ -106,7 +103,6 @@ function AttachmentMaintenanceModal({
   error: string | null;
   labels: AttachmentMaintenanceLabels;
   onClose: () => void;
-  onRefresh: () => void;
 }) {
   const { styles } = useAppTheme();
   const [expandedUploads, setExpandedUploads] = useState<Set<string>>(
@@ -313,23 +309,9 @@ function AttachmentMaintenanceModal({
                     )}
                   </div>
                 </div>
-                <div
-                  className={`mt-3 text-xs font-medium leading-relaxed ${styles.card.textSecondary}`}
-                >
-                  {labels.cleanupHint}
-                </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-base-content/10 px-6 py-4">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm rounded-full"
-                  onClick={onRefresh}
-                  disabled={loading}
-                >
-                  <RefreshCw size={15} />
-                  {labels.refresh}
-                </button>
+              <div className="flex justify-end border-t border-base-content/10 px-6 py-4">
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm rounded-full"

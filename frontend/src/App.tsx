@@ -11,6 +11,7 @@ import { Toaster } from "sonner";
 import UpdateCheckController from "./components/modals/UpdateCheckController";
 import VersionInfoController from "./components/modals/VersionInfoController";
 import AttachmentMaintenanceController from "./components/modals/AttachmentMaintenanceController";
+import MarkdownSettingsController from "./components/modals/MarkdownSettingsController";
 
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
           <UpdateCheckController />
           <VersionInfoController />
           <AttachmentMaintenanceController />
+          <MarkdownSettingsController />
           <Toaster
             position="bottom-center"
             expand={false}
