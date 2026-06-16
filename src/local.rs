@@ -1302,14 +1302,16 @@ impl LocalBackend {
     pub async fn export_markdown_archive(&self) -> AppResult<Vec<u8>> {
         let entries = self.get_all_entries_for_backup().await?;
         let uploads = self.list_uploads_for_backup().await?;
-        let markdown = entries_to_markdown_archive(&entries, &uploads);
+        let markdown_files = entries_to_obsidian_markdown_files(&entries, &uploads);
 
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default();
-        zip.start_file("entries.md", options)
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        zip.write_all(markdown.as_bytes())
-            .map_err(|error| AppError::Internal(error.to_string()))?;
+        for (path, markdown) in markdown_files {
+            zip.start_file(path, options)
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            zip.write_all(markdown.as_bytes())
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        }
         for upload in uploads {
             let filename = Path::new(&upload.relative_path)
                 .file_name()
@@ -2126,64 +2128,79 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn entries_to_markdown_archive(entries: &[EntryExportSchema], uploads: &[UploadBackup]) -> String {
-    let mut grouped: BTreeMap<String, Vec<&EntryExportSchema>> = BTreeMap::new();
+fn entries_to_obsidian_markdown_files(
+    entries: &[EntryExportSchema],
+    uploads: &[UploadBackup],
+) -> Vec<(String, String)> {
+    let mut grouped: BTreeMap<String, (String, Vec<&EntryExportSchema>)> = BTreeMap::new();
     for entry in entries {
-        let key = entry
-            .target_date
-            .clone()
-            .or_else(|| entry.target_month.clone())
-            .unwrap_or_else(|| {
-                if entry.is_future {
-                    "Future".to_string()
-                } else {
-                    "Undated".to_string()
-                }
-            });
-        grouped.entry(key).or_default().push(entry);
+        let (path, title) = obsidian_archive_file_for_entry(entry);
+        grouped
+            .entry(path)
+            .or_insert_with(|| (title, Vec::new()))
+            .1
+            .push(entry);
     }
 
     grouped
         .into_iter()
-        .map(|(key, items)| {
+        .map(|(path, (title, items))| {
             let body = items
                 .into_iter()
-                .map(|entry| {
-                    let marker = match entry.entry_type.as_str() {
-                        TYPE_TASK => "- [ ]",
-                        TYPE_EVENT => "- o",
-                        _ => "-",
-                    };
-                    let status = if entry.status == STATUS_OPEN {
-                        String::new()
-                    } else {
-                        format!(" ({})", entry.status)
-                    };
-                    let tags = if entry.tags.is_empty() {
-                        String::new()
-                    } else {
-                        format!(
-                            "\n  Tags: {}",
-                            entry
-                                .tags
-                                .iter()
-                                .map(|tag| format!("#{tag}"))
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        )
-                    };
-                    let content = rewrite_upload_links_for_archive(
-                        entry.content.as_deref().unwrap_or(""),
-                        uploads,
-                    );
-                    format!("{marker} {content}{status}{tags}")
-                })
+                .map(|entry| entry_to_markdown_archive_line(entry, uploads, &path))
                 .collect::<Vec<_>>()
                 .join("\n");
-            format!("## {key}\n\n{body}")
+            (path, format!("# {title}\n\n{body}\n"))
         })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        .collect()
+}
+
+fn obsidian_archive_file_for_entry(entry: &EntryExportSchema) -> (String, String) {
+    if let Some(target_date) = entry.target_date.clone() {
+        (format!("Daily/{target_date}.md"), target_date)
+    } else if let Some(target_month) = entry.target_month.clone() {
+        (format!("Monthly/{target_month}.md"), target_month)
+    } else if entry.is_future {
+        ("Future.md".to_string(), "Future".to_string())
+    } else {
+        ("Undated.md".to_string(), "Undated".to_string())
+    }
+}
+
+fn entry_to_markdown_archive_line(
+    entry: &EntryExportSchema,
+    uploads: &[UploadBackup],
+    archive_path: &str,
+) -> String {
+    let marker = match entry.entry_type.as_str() {
+        TYPE_TASK => "- [ ]",
+        TYPE_EVENT => "- o",
+        _ => "-",
+    };
+    let status = if entry.status == STATUS_OPEN {
+        String::new()
+    } else {
+        format!(" ({})", entry.status)
+    };
+    let tags = if entry.tags.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n  Tags: {}",
+            entry
+                .tags
+                .iter()
+                .map(|tag| format!("#{tag}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    };
+    let content = rewrite_upload_links_for_archive(
+        entry.content.as_deref().unwrap_or(""),
+        uploads,
+        archive_path,
+    );
+    format!("{marker} {content}{status}{tags}")
 }
 
 fn percent_encode_url_component(value: &str) -> String {
@@ -2268,8 +2285,17 @@ fn attachment_reference_preview(content: &str) -> String {
     preview
 }
 
-fn rewrite_upload_links_for_archive(content: &str, uploads: &[UploadBackup]) -> String {
+fn rewrite_upload_links_for_archive(
+    content: &str,
+    uploads: &[UploadBackup],
+    archive_path: &str,
+) -> String {
     let mut rewritten = content.to_string();
+    let attachment_prefix = if archive_path.contains('/') {
+        "../attachments"
+    } else {
+        "attachments"
+    };
     for upload in uploads {
         let Some(filename) = Path::new(&upload.relative_path)
             .file_name()
@@ -2277,7 +2303,7 @@ fn rewrite_upload_links_for_archive(content: &str, uploads: &[UploadBackup]) -> 
         else {
             continue;
         };
-        let target = format!("attachments/{filename}");
+        let target = format!("{attachment_prefix}/{filename}");
         let escaped_relative_path = regex::escape(&upload.relative_path);
         let escaped_encoded_relative_path =
             regex::escape(&percent_encode_url_component(&upload.relative_path));

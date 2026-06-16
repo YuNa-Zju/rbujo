@@ -97,6 +97,38 @@ test("release patch script is exposed from the frontend package", async () => {
   assert.match(releaseSource, /git push origin v\$\{nextVersion\}/);
 });
 
+test("markdown archive export uses native save dialog with downloads default", async () => {
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const cargoPath = path.resolve(import.meta.dirname, "../../src-tauri/Cargo.toml");
+  const capabilityPath = path.resolve(
+    import.meta.dirname,
+    "../../src-tauri/capabilities/default.json",
+  );
+  const entryServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/entryService.ts",
+  );
+  const backupPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/BackupModal.tsx",
+  );
+  const libSource = await readFile(libPath, "utf8");
+  const cargoSource = await readFile(cargoPath, "utf8");
+  const capability = JSON.parse(await readFile(capabilityPath, "utf8"));
+  const entryServiceSource = await readFile(entryServicePath, "utf8");
+  const backupSource = await readFile(backupPath, "utf8");
+
+  assert.match(cargoSource, /tauri-plugin-dialog/);
+  assert.match(libSource, /DialogExt/);
+  assert.match(libSource, /export_markdown_archive_to_file/);
+  assert.match(libSource, /blocking_save_file/);
+  assert.match(libSource, /download_dir/);
+  assert.ok(capability.permissions.includes("dialog:allow-save"));
+  assert.match(entryServiceSource, /export_markdown_archive_to_file/);
+  assert.doesNotMatch(entryServiceSource, /new Blob\(\[new Uint8Array\(bytes\)\]/);
+  assert.match(backupSource, /const exported = await entryService\.downloadBackup/);
+});
+
 test("desktop attachment commands are exposed for portable uploads", async () => {
   const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
   const configPath = path.resolve(

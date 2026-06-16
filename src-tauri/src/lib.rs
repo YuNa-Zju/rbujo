@@ -14,6 +14,7 @@ use tauri::{
     AppHandle, Emitter, Manager, State,
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
 };
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[derive(Clone)]
@@ -362,6 +363,36 @@ async fn export_markdown_archive(state: State<'_, DesktopState>) -> Result<Vec<u
 }
 
 #[tauri::command]
+async fn export_markdown_archive_to_file(
+    app: AppHandle,
+    state: State<'_, DesktopState>,
+    suggested_filename: String,
+) -> Result<Option<String>, String> {
+    let bytes = state
+        .backend
+        .export_markdown_archive()
+        .await
+        .map_err(to_error)?;
+    let suggested_filename = safe_export_archive_filename(&suggested_filename);
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_file_name(&suggested_filename)
+        .add_filter("ZIP Archive", &["zip"]);
+    if let Ok(download_dir) = app.path().download_dir() {
+        dialog = dialog.set_directory(download_dir);
+    }
+    let Some(file_path) = dialog.blocking_save_file() else {
+        return Ok(None);
+    };
+    let path = file_path
+        .into_path()
+        .map_err(|_| "Selected export path is not a local file".to_string())?;
+    tokio::fs::write(&path, bytes).await.map_err(to_error)?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 async fn get_all_entries_for_backup(
     state: State<'_, DesktopState>,
 ) -> Result<Vec<EntryExportSchema>, String> {
@@ -484,6 +515,7 @@ pub fn run() {
                 }
             }
         })
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -531,6 +563,7 @@ pub fn run() {
             cleanup_unused_uploads,
             cleanup_all_unused_uploads,
             export_markdown_archive,
+            export_markdown_archive_to_file,
             get_all_entries_for_backup,
             import_entries,
             batch_delete_entries
@@ -541,6 +574,18 @@ pub fn run() {
 
 fn to_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn safe_export_archive_filename(value: &str) -> String {
+    let mut filename = value.trim().replace(['/', '\\'], "_");
+    if filename.is_empty() {
+        filename = "bujo_obsidian_export.zip".to_string();
+    }
+    if filename.to_ascii_lowercase().ends_with(".zip") {
+        filename
+    } else {
+        format!("{filename}.zip")
+    }
 }
 
 #[cfg(test)]

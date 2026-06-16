@@ -980,11 +980,12 @@ async fn markdown_archive_rewrites_upload_links_and_includes_attachment_files() 
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
 
     let mut markdown = String::new();
-    zip.by_name("entries.md")
+    zip.by_name("Daily/2026-06-12.md")
         .unwrap()
         .read_to_string(&mut markdown)
         .unwrap();
-    assert!(markdown.contains("attachments/"));
+    assert!(zip.by_name("entries.md").is_err());
+    assert!(markdown.contains("../attachments/"));
     assert!(!markdown.contains("asset://localhost/%2FUsers%2F"));
 
     let attachment_name = format!(
@@ -1000,6 +1001,92 @@ async fn markdown_archive_rewrites_upload_links_and_includes_attachment_files() 
         .read_to_end(&mut attachment)
         .unwrap();
     assert_eq!(attachment, b"%PDF-test");
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_archive_groups_entries_into_obsidian_daily_monthly_and_future_files() {
+    let dir = temp_app_dir("markdown-archive-obsidian");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "daily one".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["daily".to_string()],
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "daily two".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-13".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "monthly plan".to_string(),
+            entry_type: "event".to_string(),
+            target_date: None,
+            target_month: Some("2026-07".to_string()),
+            is_future: true,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "someday plan".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: None,
+            target_month: None,
+            is_future: true,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let archive = backend.export_markdown_archive().await.unwrap();
+    let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
+
+    let mut first_daily = String::new();
+    zip.by_name("Daily/2026-06-12.md")
+        .unwrap()
+        .read_to_string(&mut first_daily)
+        .unwrap();
+    assert!(first_daily.starts_with("# 2026-06-12"));
+    assert!(first_daily.contains("- [ ] daily one"));
+    assert!(first_daily.contains("Tags: #daily"));
+
+    let mut second_daily = String::new();
+    zip.by_name("Daily/2026-06-13.md")
+        .unwrap()
+        .read_to_string(&mut second_daily)
+        .unwrap();
+    assert!(second_daily.contains("- daily two"));
+
+    let mut monthly = String::new();
+    zip.by_name("Monthly/2026-07.md")
+        .unwrap()
+        .read_to_string(&mut monthly)
+        .unwrap();
+    assert!(monthly.starts_with("# 2026-07"));
+    assert!(monthly.contains("- o monthly plan"));
+
+    let mut future = String::new();
+    zip.by_name("Future.md")
+        .unwrap()
+        .read_to_string(&mut future)
+        .unwrap();
+    assert!(future.contains("- someday plan"));
 
     fs::remove_dir_all(dir).ok();
 }
@@ -1037,12 +1124,12 @@ async fn markdown_archive_does_not_rewrite_external_upload_links() {
     let archive = backend.export_markdown_archive().await.unwrap();
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).unwrap();
     let mut markdown = String::new();
-    zip.by_name("entries.md")
+    zip.by_name("Daily/2026-06-12.md")
         .unwrap()
         .read_to_string(&mut markdown)
         .unwrap();
 
-    assert!(markdown.contains("[local](attachments/"));
+    assert!(markdown.contains("[local](../attachments/"));
     assert!(markdown.contains("https://example.com/uploads/"));
 
     fs::remove_dir_all(dir).ok();

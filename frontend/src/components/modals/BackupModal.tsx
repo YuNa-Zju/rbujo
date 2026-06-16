@@ -213,7 +213,11 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     setStatus("idle");
     setMessage(t.backup?.processing || "Zipping...");
     try {
-      await entryService.downloadBackup();
+      const exported = await entryService.downloadBackup();
+      if (!exported) {
+        setMessage("");
+        return;
+      }
       setStatus("success");
       setMessage(t.backup?.exportZipSuccess || "Archive downloaded (.zip)");
     } catch (e) {
