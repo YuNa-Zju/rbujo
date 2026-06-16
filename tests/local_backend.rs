@@ -793,6 +793,53 @@ async fn daily_markdown_renders_migration_sources_as_links_not_duplicate_content
 }
 
 #[tokio::test]
+async fn daily_markdown_resyncs_when_reopening_or_deleting_migrated_children() {
+    let dir = temp_app_dir("daily-markdown-reopen-chain");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "restore this migrated body".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-16".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    backend
+        .migrate_entry_to_date(entry.id.clone(), "2026-06-17".to_string())
+        .await
+        .unwrap();
+    backend.reopen_entry(entry.id.clone()).await.unwrap();
+
+    let reopened_source = fs::read_to_string(dir.join("journal/Daily/2026-06-16.md")).unwrap();
+    assert!(reopened_source.contains("restore this migrated body"));
+    assert!(!reopened_source.contains("Migrated to"));
+    let reopened_target = fs::read_to_string(dir.join("journal/Daily/2026-06-17.md")).unwrap();
+    assert!(!reopened_target.contains("restore this migrated body"));
+
+    let migration = backend
+        .migrate_entry_to_date(entry.id.clone(), "2026-06-18".to_string())
+        .await
+        .unwrap();
+    backend
+        .delete_entry(migration.created_entry.id)
+        .await
+        .unwrap();
+
+    let parent_after_child_delete =
+        fs::read_to_string(dir.join("journal/Daily/2026-06-16.md")).unwrap();
+    assert!(parent_after_child_delete.contains("restore this migrated body"));
+    assert!(!parent_after_child_delete.contains("Migrated to"));
+    let deleted_target = fs::read_to_string(dir.join("journal/Daily/2026-06-18.md")).unwrap();
+    assert!(!deleted_target.contains("restore this migrated body"));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn attachment_maintenance_reports_and_cleans_orphaned_uploads() {
     let dir = temp_app_dir("attachment-maintenance");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();

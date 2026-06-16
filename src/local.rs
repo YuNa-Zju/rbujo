@@ -411,7 +411,12 @@ impl LocalBackend {
 
     pub async fn delete_entry(&self, id: String) -> AppResult<()> {
         let entry = self.fetch_entry(&id).await?;
-        let sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
+        let mut sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
+        if let Some(parent_id) = entry.source_entry_id.as_deref() {
+            if let Ok(parent) = self.fetch_entry(parent_id).await {
+                sync_dates.push(parent.target_date);
+            }
+        }
         let removed_upload_refs = self.upload_references_for_entry_chain(&entry).await?;
         self.collect_and_delete_children(&id).await?;
         if let Some(parent_id) = entry.source_entry_id {
@@ -431,6 +436,7 @@ impl LocalBackend {
 
     pub async fn reopen_entry(&self, id: String) -> AppResult<ReopenResponse> {
         let mut entry = self.fetch_entry(&id).await?;
+        let mut sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
         let deleted_entries = self.collect_and_delete_children(&id).await?;
         entry.status = STATUS_OPEN.to_string();
         entry.migrated_to_date = None;
@@ -443,6 +449,8 @@ impl LocalBackend {
         let updated_entry = self
             .response_from_entry(self.fetch_entry(&id).await?)
             .await?;
+        sync_dates.push(updated_entry.target_date.clone());
+        self.sync_daily_markdown_for_date_values(sync_dates).await?;
         Ok(ReopenResponse {
             success: true,
             updated_entry,
