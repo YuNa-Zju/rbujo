@@ -231,11 +231,15 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(translationsSource, /维护附件/);
   assert.match(translationsSource, /展开引用/);
   assert.match(translationsSource, /引用此附件的日记/);
-  assert.match(translationsSource, /Attachment Maintenance/);
+  assert.match(translationsSource, /Attachments/);
+  assert.doesNotMatch(translationsSource, /Attachment Maintenance/);
   assert.match(translationsSource, /Show References/);
   assert.match(translationsSource, /Notes referencing this file/);
   assert.match(attachmentMaintenanceSource, /expandedUploads/);
   assert.match(attachmentMaintenanceSource, /referencesHeader/);
+  assert.doesNotMatch(attachmentMaintenanceSource, /cleanupHint/);
+  assert.doesNotMatch(attachmentMaintenanceSource, /RefreshCw/);
+  assert.doesNotMatch(attachmentMaintenanceSource, /labels\.refresh/);
   assert.doesNotMatch(attachmentMaintenanceSource, /cleanupAllUnusedUploads/);
   assert.doesNotMatch(attachmentMaintenanceSource, /window\.confirm/);
   assert.match(markdownViewerSource, /urlTransform=\{transformMarkdownUrl\}/);
