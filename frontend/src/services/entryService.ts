@@ -131,17 +131,6 @@ const normalizeMigrationResult = (result: any) => {
   };
 };
 
-const saveBlob = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-};
-
 export const entryService = {
   create: async (payload: CreateEntryPayload) => {
     const entry = await invoke<any>("create_entry", {
@@ -382,13 +371,10 @@ export const entryService = {
   },
 
   downloadBackup: async () => {
-    const bytes = await invoke<number[]>("export_markdown_archive");
     const dateStr = new Date().toISOString().split("T")[0];
-    saveBlob(
-      new Blob([new Uint8Array(bytes)], { type: "application/zip" }),
-      `bujo_archive_${dateStr}.zip`,
-    );
-    return true;
+    return invoke<string | null>("export_markdown_archive_to_file", {
+      suggestedFilename: `bujo_obsidian_${dateStr}.zip`,
+    });
   },
 
 };
