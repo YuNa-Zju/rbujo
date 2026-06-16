@@ -130,6 +130,37 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS ix_attachment_records_updated
             ON attachment_records(updated_at);
 
+        CREATE TABLE IF NOT EXISTS app_settings (
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(owner_id, key)
+        );
+
+        CREATE TABLE IF NOT EXISTS daily_markdown_sync_state (
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            date TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            absolute_path TEXT NOT NULL,
+            modified_ms INTEGER NOT NULL DEFAULT 0,
+            content_sha256 TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(owner_id, date)
+        );
+
+        CREATE TABLE IF NOT EXISTS daily_markdown_entry_sync_state (
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            date TEXT NOT NULL,
+            entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+            line_hash TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY(owner_id, date, entry_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_daily_markdown_entry_sync_hash
+            ON daily_markdown_entry_sync_state(owner_id, date, line_hash);
+
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
             name TEXT NOT NULL,

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,7 @@ const LOCAL_USERNAME: &str = "local";
 const LOCAL_PASSWORD_PLACEHOLDER: &str = "local_desktop_profile";
 const EMBEDDING_DIMS: usize = 256;
 const UPLOAD_ORPHAN_GRACE_SECONDS: u64 = 24 * 60 * 60;
+const MARKDOWN_WORKSPACE_SETTING_KEY: &str = "markdown_workspace_path";
 
 const ENTRY_SELECT: &str = r#"
     SELECT entries.id AS id, entries.content AS content, entries.entry_type AS entry_type,
@@ -139,6 +140,13 @@ pub struct StoredUpload {
 pub struct DailyMarkdownFile {
     pub relative_path: String,
     pub absolute_path: String,
+    pub workspace_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkdownWorkspace {
+    pub absolute_path: String,
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,6 +247,80 @@ impl LocalBackend {
         &self.app_dir
     }
 
+    fn default_markdown_workspace_path(&self) -> PathBuf {
+        self.app_dir.join("journal")
+    }
+
+    pub async fn get_markdown_workspace(&self) -> AppResult<MarkdownWorkspace> {
+        let default_path = self.default_markdown_workspace_path();
+        let configured = self
+            .get_setting(MARKDOWN_WORKSPACE_SETTING_KEY)
+            .await?
+            .map(PathBuf::from);
+        let path = configured.unwrap_or_else(|| default_path.clone());
+        Ok(MarkdownWorkspace {
+            absolute_path: path.to_string_lossy().to_string(),
+            is_default: path == default_path,
+        })
+    }
+
+    pub async fn set_markdown_workspace(&self, path: PathBuf) -> AppResult<MarkdownWorkspace> {
+        if path.as_os_str().is_empty() {
+            return Err(AppError::BadRequest(
+                "Markdown workspace path cannot be empty".to_string(),
+            ));
+        }
+        if let Ok(metadata) = tokio::fs::metadata(&path).await {
+            if !metadata.is_dir() {
+                return Err(AppError::BadRequest(
+                    "Markdown workspace path must be a directory".to_string(),
+                ));
+            }
+        } else {
+            tokio::fs::create_dir_all(&path)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        }
+        self.set_setting(MARKDOWN_WORKSPACE_SETTING_KEY, &path.to_string_lossy())
+            .await?;
+        self.clear_daily_markdown_sync_state().await?;
+        self.sync_all_daily_markdown_files().await;
+        self.get_markdown_workspace().await
+    }
+
+    async fn markdown_workspace_path(&self) -> AppResult<PathBuf> {
+        Ok(PathBuf::from(
+            self.get_markdown_workspace().await?.absolute_path,
+        ))
+    }
+
+    async fn get_setting(&self, key: &str) -> AppResult<Option<String>> {
+        sqlx::query_scalar("SELECT value FROM app_settings WHERE owner_id = ? AND key = ?")
+            .bind(self.owner_id)
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(AppError::from)
+    }
+
+    async fn set_setting(&self, key: &str, value: &str) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO app_settings(owner_id, key, value, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(owner_id, key)
+            DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(self.owner_id)
+        .bind(key)
+        .bind(value)
+        .bind(now_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     fn upload_file_path(&self, relative_path: &str) -> AppResult<PathBuf> {
         let relative = Path::new(relative_path);
         let mut components = relative.components();
@@ -303,6 +385,8 @@ impl LocalBackend {
             input.target_month.as_deref(),
             input.is_future,
         )?;
+        self.import_daily_markdown_for_date_values(vec![target_date.clone()])
+            .await;
         let id = Uuid::new_v4().to_string();
         sqlx::query(
             r#"
@@ -333,6 +417,14 @@ impl LocalBackend {
     }
 
     pub async fn update_entry(&self, id: String, patch: EntryPatch) -> AppResult<EntryResponse> {
+        let existing = self.fetch_entry(&id).await?;
+        let mut import_dates = vec![existing.target_date.clone()];
+        if let Some(target_date) = patch.target_date.as_deref() {
+            import_dates.push(Some(validate_date(target_date)?));
+        }
+        self.import_daily_markdown_for_date_values(import_dates)
+            .await;
+
         let mut entry = self.fetch_entry(&id).await?;
         let previous_target_date = entry.target_date.clone();
         let previous_upload_refs = patch
@@ -390,6 +482,9 @@ impl LocalBackend {
     }
 
     pub async fn archive_entry(&self, id: String) -> AppResult<EntryResponse> {
+        let entry = self.fetch_entry(&id).await?;
+        self.import_daily_markdown_for_date_values(vec![entry.target_date.clone()])
+            .await;
         let mut entry = self.fetch_entry(&id).await?;
         entry.archived_at = Some(now_string());
         self.save_entry(&entry).await?;
@@ -400,6 +495,9 @@ impl LocalBackend {
     }
 
     pub async fn unarchive_entry(&self, id: String) -> AppResult<EntryResponse> {
+        let entry = self.fetch_entry(&id).await?;
+        self.import_daily_markdown_for_date_values(vec![entry.target_date.clone()])
+            .await;
         let mut entry = self.fetch_entry(&id).await?;
         entry.archived_at = None;
         self.save_entry(&entry).await?;
@@ -410,6 +508,9 @@ impl LocalBackend {
     }
 
     pub async fn delete_entry(&self, id: String) -> AppResult<()> {
+        let entry = self.fetch_entry(&id).await?;
+        let sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
+        self.import_daily_markdown_for_date_values(sync_dates).await;
         let entry = self.fetch_entry(&id).await?;
         let mut sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
         if let Some(parent_id) = entry.source_entry_id.as_deref() {
@@ -435,6 +536,9 @@ impl LocalBackend {
     }
 
     pub async fn reopen_entry(&self, id: String) -> AppResult<ReopenResponse> {
+        let entry = self.fetch_entry(&id).await?;
+        let sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
+        self.import_daily_markdown_for_date_values(sync_dates).await;
         let mut entry = self.fetch_entry(&id).await?;
         let mut sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
         let deleted_entries = self.collect_and_delete_children(&id).await?;
@@ -463,6 +567,9 @@ impl LocalBackend {
         id: String,
         target_month: Option<String>,
     ) -> AppResult<EntryResponse> {
+        let entry = self.fetch_entry(&id).await?;
+        self.import_daily_markdown_for_date_values(vec![entry.target_date.clone()])
+            .await;
         let mut entry = self.fetch_entry(&id).await?;
         let previous_target_date = entry.target_date.clone();
         entry.target_month = target_month.as_deref().map(validate_month).transpose()?;
@@ -491,6 +598,17 @@ impl LocalBackend {
         include_archived: bool,
     ) -> AppResult<Vec<EntryResponse>> {
         let date = validate_date(date.as_ref())?;
+        if !include_archived && self.import_daily_markdown_if_changed(&date).await? {
+            self.write_daily_markdown_file(&date).await?;
+        }
+        self.daily_log_entries(&date, include_archived).await
+    }
+
+    async fn daily_log_entries(
+        &self,
+        date: &str,
+        include_archived: bool,
+    ) -> AppResult<Vec<EntryResponse>> {
         let archive_filter = if include_archived {
             ""
         } else {
@@ -594,6 +712,14 @@ impl LocalBackend {
 
     pub async fn reorder_entries(&self, entry_ids: Vec<String>) -> AppResult<()> {
         let mut sync_dates = Vec::new();
+        for entry_id in entry_ids.iter() {
+            if let Ok(entry) = self.fetch_entry(entry_id).await {
+                sync_dates.push(entry.target_date);
+            }
+        }
+        self.import_daily_markdown_for_date_values(sync_dates.clone())
+            .await;
+        sync_dates.clear();
         for (index, entry_id) in entry_ids.iter().enumerate() {
             if let Ok(entry) = self.fetch_entry(entry_id).await {
                 sync_dates.push(entry.target_date);
@@ -615,6 +741,12 @@ impl LocalBackend {
         target_date: String,
     ) -> AppResult<MigrationResult> {
         let target_date = validate_date(&target_date)?;
+        let source = self.fetch_entry(&id).await?;
+        self.import_daily_markdown_for_date_values(vec![
+            source.target_date.clone(),
+            Some(target_date.clone()),
+        ])
+        .await;
         let mut source = self.fetch_entry(&id).await?;
         let previous_target_date = source.target_date.clone();
         let created = self
@@ -648,6 +780,9 @@ impl LocalBackend {
         target_month: Option<String>,
     ) -> AppResult<MigrationResult> {
         let target_month = target_month.as_deref().map(validate_month).transpose()?;
+        let source = self.fetch_entry(&id).await?;
+        self.import_daily_markdown_for_date_values(vec![source.target_date.clone()])
+            .await;
         let mut source = self.fetch_entry(&id).await?;
         let previous_target_date = source.target_date.clone();
         let created = self
@@ -1193,12 +1328,379 @@ impl LocalBackend {
     }
 
     async fn sync_daily_markdown_for_date_values(&self, dates: Vec<Option<String>>) {
+        self.write_daily_markdown_for_date_values(dates).await;
+    }
+
+    async fn write_daily_markdown_for_date_values(&self, dates: Vec<Option<String>>) {
         let mut seen = HashSet::new();
         for date in dates.into_iter().flatten() {
             if seen.insert(date.clone()) {
-                let _ = self.sync_daily_markdown_file(date).await;
+                let _ = self.write_daily_markdown_file(&date).await;
             }
         }
+    }
+
+    async fn import_daily_markdown_for_date_values(&self, dates: Vec<Option<String>>) {
+        let mut seen = HashSet::new();
+        for date in dates.into_iter().flatten() {
+            if seen.insert(date.clone()) {
+                let _ = self.import_daily_markdown_if_changed(&date).await;
+            }
+        }
+    }
+
+    async fn sync_all_daily_markdown_files(&self) {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT target_date
+            FROM entries
+            WHERE owner_id = ?
+              AND target_date IS NOT NULL
+            ORDER BY target_date ASC
+            "#,
+        )
+        .bind(self.owner_id)
+        .fetch_all(&self.pool)
+        .await;
+        if let Ok(rows) = rows {
+            for row in rows {
+                if let Ok(date) = row.try_get::<String, _>("target_date") {
+                    let _ = self.write_daily_markdown_file(&date).await;
+                }
+            }
+        }
+    }
+
+    async fn clear_daily_markdown_sync_state(&self) -> AppResult<()> {
+        sqlx::query("DELETE FROM daily_markdown_sync_state WHERE owner_id = ?")
+            .bind(self.owner_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM daily_markdown_entry_sync_state WHERE owner_id = ?")
+            .bind(self.owner_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn daily_markdown_absolute_path(&self, date: &str) -> AppResult<(String, PathBuf)> {
+        let relative_path = daily_markdown_relative_path(date);
+        let absolute_path = self.markdown_workspace_path().await?.join(&relative_path);
+        Ok((relative_path, absolute_path))
+    }
+
+    async fn import_daily_markdown_if_changed(&self, date: &str) -> AppResult<bool> {
+        let (_, absolute_path) = self.daily_markdown_absolute_path(date).await?;
+        let bytes = match tokio::fs::read(&absolute_path).await {
+            Ok(bytes) => bytes,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(AppError::Internal(error.to_string())),
+        };
+        let content_sha256 = sha256_hex(&bytes);
+        let modified_ms = file_modified_millis(&absolute_path).await?;
+        let state = self.daily_markdown_file_state(date).await?;
+        if state
+            .as_ref()
+            .is_some_and(|(state_modified_ms, state_sha256)| {
+                *state_modified_ms == modified_ms && state_sha256 == &content_sha256
+            })
+        {
+            return Ok(false);
+        }
+
+        let markdown = String::from_utf8_lossy(&bytes).to_string();
+        let parsed = parse_daily_markdown_file(&markdown);
+        let sync_dates = self.apply_parsed_daily_markdown(date, parsed).await?;
+        for sync_date in sync_dates.into_iter().flatten() {
+            if sync_date != date {
+                let _ = self.write_daily_markdown_file(&sync_date).await;
+            }
+        }
+        Ok(true)
+    }
+
+    async fn daily_markdown_file_state(&self, date: &str) -> AppResult<Option<(i64, String)>> {
+        let row = sqlx::query(
+            r#"
+            SELECT modified_ms, content_sha256
+            FROM daily_markdown_sync_state
+            WHERE owner_id = ? AND date = ?
+            "#,
+        )
+        .bind(self.owner_id)
+        .bind(date)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| {
+            Ok((
+                row.try_get::<i64, _>("modified_ms")?,
+                row.try_get::<String, _>("content_sha256")?,
+            ))
+        })
+        .transpose()
+    }
+
+    async fn apply_parsed_daily_markdown(
+        &self,
+        date: &str,
+        parsed_entries: Vec<ParsedDailyMarkdownEntry>,
+    ) -> AppResult<Vec<Option<String>>> {
+        let existing = self.daily_log_entries(date, false).await?;
+        let existing_by_id: HashMap<String, EntryResponse> = existing
+            .iter()
+            .cloned()
+            .map(|entry| (entry.id.clone(), entry))
+            .collect();
+        let sync_rows = self.daily_markdown_entry_states(date).await?;
+        let match_result =
+            match_daily_markdown_entries(&sync_rows, &parsed_entries, &existing_by_id);
+
+        let mut seen_ids = HashSet::new();
+        let mut sync_dates = Vec::new();
+        for (position_index, parsed) in parsed_entries.iter().enumerate() {
+            let position = position_index as i64;
+            let target_id = match_result
+                .matched_ids
+                .get(position_index)
+                .cloned()
+                .flatten();
+
+            if parsed.is_migration_pointer {
+                if let Some(id) = target_id {
+                    seen_ids.insert(id);
+                }
+                continue;
+            }
+
+            if let Some(id) = target_id {
+                if existing_by_id.get(&id).is_some_and(|entry| {
+                    matches!(
+                        entry.status.as_str(),
+                        STATUS_MIGRATED_FORWARD | STATUS_MIGRATED_FUTURE
+                    )
+                }) {
+                    let id = self
+                        .create_daily_markdown_entry_from_parsed(date, parsed, position)
+                        .await?;
+                    seen_ids.insert(id);
+                    continue;
+                }
+                let mut entry = self.fetch_entry(&id).await?;
+                entry.content = parsed.content.clone();
+                entry.entry_type = parsed.entry_type.clone();
+                entry.status = parsed.status.clone();
+                entry.target_date = Some(date.to_string());
+                entry.target_month = None;
+                entry.is_future = 0;
+                entry.position = position;
+                entry.migrated_to_date = None;
+                entry.migrated_to_month = None;
+                entry.migrated_to_entry_id = None;
+                normalize_entry_state(&mut entry);
+                self.save_entry(&entry).await?;
+                self.set_entry_tags(&id, parsed.tags.clone()).await?;
+                self.index_entry(&entry).await?;
+                seen_ids.insert(id);
+            } else {
+                let id = self
+                    .create_daily_markdown_entry_from_parsed(date, parsed, position)
+                    .await?;
+                seen_ids.insert(id);
+            }
+        }
+
+        for entry in existing {
+            if !seen_ids.contains(&entry.id)
+                && !match_result.retained_ids.contains(&entry.id)
+                && !matches!(
+                    entry.status.as_str(),
+                    STATUS_MIGRATED_FORWARD | STATUS_MIGRATED_FUTURE
+                )
+            {
+                sync_dates.extend(self.delete_entry_from_markdown_import(&entry.id).await?);
+            }
+        }
+
+        Ok(sync_dates)
+    }
+
+    async fn delete_entry_from_markdown_import(&self, id: &str) -> AppResult<Vec<Option<String>>> {
+        let entry = self.fetch_entry(id).await?;
+        let mut sync_dates = self.daily_dates_for_entry_chain(&entry).await?;
+        if let Some(parent_id) = entry.source_entry_id.as_deref()
+            && let Ok(parent) = self.fetch_entry(parent_id).await
+        {
+            sync_dates.push(parent.target_date);
+        }
+        let removed_upload_refs = self.upload_references_for_entry_chain(&entry).await?;
+        self.collect_and_delete_children(id).await?;
+        if let Some(parent_id) = entry.source_entry_id {
+            self.restore_parent_after_child_removal(&parent_id, id)
+                .await?;
+        }
+        sqlx::query("DELETE FROM entries WHERE id = ? AND owner_id = ?")
+            .bind(id)
+            .bind(self.owner_id)
+            .execute(&self.pool)
+            .await?;
+        self.cleanup_upload_references_if_unused(removed_upload_refs)
+            .await?;
+        Ok(sync_dates)
+    }
+
+    async fn create_daily_markdown_entry_from_parsed(
+        &self,
+        date: &str,
+        parsed: &ParsedDailyMarkdownEntry,
+        position: i64,
+    ) -> AppResult<String> {
+        let id = Uuid::new_v4().to_string();
+        let entry = Entry {
+            id: id.clone(),
+            content: parsed.content.clone(),
+            entry_type: parsed.entry_type.clone(),
+            status: parsed.status.clone(),
+            created_at: now_string(),
+            target_date: Some(date.to_string()),
+            target_month: None,
+            is_future: 0,
+            source_entry_id: None,
+            owner_id: self.owner_id,
+            position,
+            from_date: None,
+            migrated_to_date: None,
+            migrated_to_month: None,
+            archived_at: None,
+            chain_root_id: None,
+            migrated_to_entry_id: None,
+        };
+        self.insert_entry(&entry).await?;
+        self.set_entry_tags(&id, parsed.tags.clone()).await?;
+        self.index_entry(&entry).await?;
+        Ok(id)
+    }
+
+    async fn daily_markdown_entry_states(
+        &self,
+        date: &str,
+    ) -> AppResult<Vec<DailyMarkdownEntryState>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT entry_id, line_hash, position
+            FROM daily_markdown_entry_sync_state
+            WHERE owner_id = ? AND date = ?
+            ORDER BY position ASC
+            "#,
+        )
+        .bind(self.owner_id)
+        .bind(date)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(DailyMarkdownEntryState {
+                    entry_id: row.try_get("entry_id")?,
+                    line_hash: row.try_get("line_hash")?,
+                    position: row.try_get("position")?,
+                })
+            })
+            .collect()
+    }
+
+    async fn write_daily_markdown_file(&self, date: &str) -> AppResult<DailyMarkdownFile> {
+        let (relative_path, absolute_path) = self.daily_markdown_absolute_path(date).await?;
+        if let Some(parent) = absolute_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        }
+        let entries = self.daily_log_entries(date, false).await?;
+        let rendered = render_daily_markdown_file(date, &entries);
+        tokio::fs::write(&absolute_path, &rendered.markdown)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        self.record_daily_markdown_sync_state(
+            date,
+            &relative_path,
+            &absolute_path,
+            &rendered.markdown,
+            &rendered.entry_lines,
+        )
+        .await?;
+        Ok(DailyMarkdownFile {
+            relative_path,
+            absolute_path: absolute_path.to_string_lossy().to_string(),
+            workspace_path: self
+                .markdown_workspace_path()
+                .await?
+                .to_string_lossy()
+                .to_string(),
+        })
+    }
+
+    async fn record_daily_markdown_sync_state(
+        &self,
+        date: &str,
+        relative_path: &str,
+        absolute_path: &Path,
+        markdown: &str,
+        entry_lines: &[RenderedDailyMarkdownLine],
+    ) -> AppResult<()> {
+        let modified_ms = file_modified_millis(absolute_path).await?;
+        let content_sha256 = sha256_hex(markdown.as_bytes());
+        sqlx::query(
+            r#"
+            INSERT INTO daily_markdown_sync_state(
+                owner_id, date, relative_path, absolute_path, modified_ms, content_sha256, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(owner_id, date)
+            DO UPDATE SET
+                relative_path = excluded.relative_path,
+                absolute_path = excluded.absolute_path,
+                modified_ms = excluded.modified_ms,
+                content_sha256 = excluded.content_sha256,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(self.owner_id)
+        .bind(date)
+        .bind(relative_path)
+        .bind(absolute_path.to_string_lossy().to_string())
+        .bind(modified_ms)
+        .bind(content_sha256)
+        .bind(now_string())
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("DELETE FROM daily_markdown_entry_sync_state WHERE owner_id = ? AND date = ?")
+            .bind(self.owner_id)
+            .bind(date)
+            .execute(&self.pool)
+            .await?;
+        for line in entry_lines {
+            sqlx::query(
+                r#"
+                INSERT INTO daily_markdown_entry_sync_state(
+                    owner_id, date, entry_id, line_hash, position
+                ) VALUES (?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(self.owner_id)
+            .bind(date)
+            .bind(&line.entry_id)
+            .bind(&line.line_hash)
+            .bind(line.position)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
     }
 
     async fn cleanup_upload_references_if_unused(
@@ -1401,22 +1903,8 @@ impl LocalBackend {
 
     pub async fn sync_daily_markdown_file(&self, date: String) -> AppResult<DailyMarkdownFile> {
         let date = validate_date(&date)?;
-        let relative_path = daily_markdown_relative_path(&date);
-        let absolute_path = self.app_dir.join(&relative_path);
-        if let Some(parent) = absolute_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|error| AppError::Internal(error.to_string()))?;
-        }
-        let entries = self.get_daily_log(&date, false).await?;
-        let markdown = render_daily_markdown_file(&date, &entries)?;
-        tokio::fs::write(&absolute_path, markdown)
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        Ok(DailyMarkdownFile {
-            relative_path,
-            absolute_path: absolute_path.to_string_lossy().to_string(),
-        })
+        self.import_daily_markdown_if_changed(&date).await?;
+        self.write_daily_markdown_file(&date).await
     }
 
     pub async fn open_daily_markdown(&self, date: String) -> AppResult<DailyMarkdownFile> {
@@ -2255,36 +2743,70 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn daily_markdown_relative_path(date: &str) -> String {
-    format!("journal/Daily/{date}.md")
+    format!("Daily/{date}.md")
 }
 
-fn render_daily_markdown_file(date: &str, entries: &[EntryResponse]) -> AppResult<String> {
+#[derive(Debug, Clone)]
+struct RenderedDailyMarkdown {
+    markdown: String,
+    entry_lines: Vec<RenderedDailyMarkdownLine>,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedDailyMarkdownLine {
+    entry_id: String,
+    line_hash: String,
+    position: i64,
+}
+
+#[derive(Debug, Clone)]
+struct DailyMarkdownEntryState {
+    entry_id: String,
+    line_hash: String,
+    position: i64,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedDailyMarkdownEntry {
+    content: String,
+    entry_type: String,
+    status: String,
+    tags: Vec<String>,
+    line_hash: String,
+    is_migration_pointer: bool,
+}
+
+#[derive(Debug, Clone)]
+struct DailyMarkdownMatchResult {
+    matched_ids: Vec<Option<String>>,
+    retained_ids: HashSet<String>,
+}
+
+fn render_daily_markdown_file(date: &str, entries: &[EntryResponse]) -> RenderedDailyMarkdown {
     let mut markdown = format!("# {date}\n\n");
-    for entry in entries {
-        markdown.push_str(&render_daily_markdown_entry(entry)?);
+    let mut entry_lines = Vec::new();
+    for (position, entry) in entries.iter().enumerate() {
+        let line = render_daily_markdown_entry(entry);
+        entry_lines.push(RenderedDailyMarkdownLine {
+            entry_id: entry.id.clone(),
+            line_hash: daily_markdown_entry_hash_from_response(entry),
+            position: position as i64,
+        });
+        markdown.push_str(&line);
         markdown.push('\n');
     }
-    Ok(markdown)
+    RenderedDailyMarkdown {
+        markdown,
+        entry_lines,
+    }
 }
 
-fn render_daily_markdown_entry(entry: &EntryResponse) -> AppResult<String> {
-    let metadata = serde_json::to_string(&serde_json::json!({
-        "id": entry.id,
-        "entry_type": entry.entry_type,
-        "status": entry.status,
-        "tags": entry.tags,
-        "position": entry.position,
-        "created_at": entry.created_at,
-    }))
-    .map_err(|error| AppError::Internal(error.to_string()))?;
+fn render_daily_markdown_entry(entry: &EntryResponse) -> String {
     if matches!(
         entry.status.as_str(),
         STATUS_MIGRATED_FORWARD | STATUS_MIGRATED_FUTURE
     ) {
-        return Ok(format!(
-            "<!-- rbujo-entry {metadata} -->\n- {}\n<!-- /rbujo-entry -->\n",
-            daily_markdown_migration_target(entry)
-        ));
+        return format!("- {}\n", daily_markdown_migration_target(entry));
     }
     let marker = match entry.entry_type.as_str() {
         TYPE_TASK if entry.status == STATUS_COMPLETED => "- [x]",
@@ -2310,10 +2832,350 @@ fn render_daily_markdown_entry(entry: &EntryResponse) -> AppResult<String> {
                 .join(" ")
         )
     };
-    let content = entry.content.trim_end();
-    Ok(format!(
-        "<!-- rbujo-entry {metadata} -->\n{marker} {content}{status}{tags}\n<!-- /rbujo-entry -->\n"
-    ))
+    let content = format_multiline_daily_content(&entry.content);
+    format!("{marker} {content}{status}{tags}\n")
+}
+
+fn daily_markdown_entry_hash_from_response(entry: &EntryResponse) -> String {
+    if matches!(
+        entry.status.as_str(),
+        STATUS_MIGRATED_FORWARD | STATUS_MIGRATED_FUTURE
+    ) {
+        return daily_markdown_entry_fingerprint(
+            "migration",
+            entry.status.as_str(),
+            &daily_markdown_migration_target(entry),
+            &[],
+            true,
+        );
+    }
+    daily_markdown_entry_fingerprint(
+        entry.entry_type.as_str(),
+        entry.status.as_str(),
+        &entry.content,
+        &entry.tags,
+        false,
+    )
+}
+
+fn daily_markdown_entry_fingerprint(
+    entry_type: &str,
+    status: &str,
+    content: &str,
+    tags: &[String],
+    is_migration_pointer: bool,
+) -> String {
+    let normalized_entry_type = if is_migration_pointer {
+        "migration"
+    } else {
+        entry_type
+    };
+    let normalized_status = if is_migration_pointer {
+        daily_markdown_migration_pointer_status(content).unwrap_or(status)
+    } else {
+        status
+    };
+    let normalized_content = normalize_daily_markdown_content_for_hash(content);
+    let normalized_tags = normalize_tags(tags.to_vec()).join(",");
+    sha256_hex(
+        format!(
+            "{normalized_entry_type}\n{normalized_status}\n{is_migration_pointer}\n{normalized_content}\n{normalized_tags}"
+        )
+        .as_bytes(),
+    )
+}
+
+fn normalize_daily_markdown_content_for_hash(content: &str) -> String {
+    content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+fn daily_markdown_migration_pointer_status(content: &str) -> Option<&'static str> {
+    let content = content.trim();
+    if content.starts_with("Migrated to [[Daily/") {
+        Some(STATUS_MIGRATED_FORWARD)
+    } else if content.starts_with("Migrated to [[Monthly/") || content == "Migrated to Future Log" {
+        Some(STATUS_MIGRATED_FUTURE)
+    } else {
+        None
+    }
+}
+
+fn match_daily_markdown_entries(
+    sync_rows: &[DailyMarkdownEntryState],
+    parsed_entries: &[ParsedDailyMarkdownEntry],
+    existing_by_id: &HashMap<String, EntryResponse>,
+) -> DailyMarkdownMatchResult {
+    let mut old_rows = sync_rows
+        .iter()
+        .filter(|row| existing_by_id.contains_key(&row.entry_id))
+        .collect::<Vec<_>>();
+    old_rows.sort_by_key(|row| row.position);
+    let mut matches = vec![None; parsed_entries.len()];
+    let mut retained_ids = HashSet::new();
+    if old_rows.is_empty() || parsed_entries.is_empty() {
+        return DailyMarkdownMatchResult {
+            matched_ids: matches,
+            retained_ids,
+        };
+    }
+
+    let mut old_used = vec![false; old_rows.len()];
+    let mut new_used = vec![false; parsed_entries.len()];
+    let mut old_counts: HashMap<String, usize> = HashMap::new();
+    let mut new_counts: HashMap<String, usize> = HashMap::new();
+    let mut old_unique_index: HashMap<String, usize> = HashMap::new();
+
+    for (index, row) in old_rows.iter().enumerate() {
+        *old_counts.entry(row.line_hash.clone()).or_default() += 1;
+        old_unique_index.insert(row.line_hash.clone(), index);
+    }
+    for parsed in parsed_entries {
+        *new_counts.entry(parsed.line_hash.clone()).or_default() += 1;
+    }
+
+    let mut assigned_pairs = Vec::new();
+    for (new_index, parsed) in parsed_entries.iter().enumerate() {
+        if old_counts.get(&parsed.line_hash) == Some(&1)
+            && new_counts.get(&parsed.line_hash) == Some(&1)
+            && let Some(old_index) = old_unique_index.get(&parsed.line_hash).copied()
+        {
+            matches[new_index] = Some(old_rows[old_index].entry_id.clone());
+            old_used[old_index] = true;
+            new_used[new_index] = true;
+            assigned_pairs.push((old_index, new_index));
+        }
+    }
+
+    let lcs_pairs = lcs_daily_markdown_hash_pairs(&old_rows, parsed_entries, &old_used, &new_used);
+    for (old_index, new_index) in lcs_pairs {
+        if old_used[old_index] || new_used[new_index] {
+            continue;
+        }
+        matches[new_index] = Some(old_rows[old_index].entry_id.clone());
+        old_used[old_index] = true;
+        new_used[new_index] = true;
+        assigned_pairs.push((old_index, new_index));
+    }
+
+    assigned_pairs.sort_by_key(|(old_index, _)| *old_index);
+    let mut anchors = Vec::new();
+    let mut last_new_index = None;
+    for pair @ (_, new_index) in assigned_pairs {
+        if last_new_index.is_none_or(|last| new_index > last) {
+            anchors.push(pair);
+            last_new_index = Some(new_index);
+        }
+    }
+    anchors.push((old_rows.len(), parsed_entries.len()));
+
+    let mut previous_old = 0usize;
+    let mut previous_new = 0usize;
+    for (anchor_old, anchor_new) in anchors {
+        let old_segment = (previous_old..anchor_old)
+            .filter(|old_index| !old_used[*old_index])
+            .collect::<Vec<_>>();
+        let new_segment = (previous_new..anchor_new)
+            .filter(|new_index| !new_used[*new_index])
+            .collect::<Vec<_>>();
+        if old_segment.len() == new_segment.len() {
+            for (old_index, new_index) in old_segment.into_iter().zip(new_segment) {
+                matches[new_index] = Some(old_rows[old_index].entry_id.clone());
+                old_used[old_index] = true;
+                new_used[new_index] = true;
+            }
+        } else {
+            let segment_pairs = match_changed_daily_markdown_segment(
+                &old_rows,
+                parsed_entries,
+                existing_by_id,
+                &old_segment,
+                &new_segment,
+            );
+            for (old_index, new_index) in segment_pairs {
+                if old_used[old_index] || new_used[new_index] {
+                    continue;
+                }
+                matches[new_index] = Some(old_rows[old_index].entry_id.clone());
+                old_used[old_index] = true;
+                new_used[new_index] = true;
+            }
+            if !new_segment.is_empty() {
+                for old_index in old_segment {
+                    if !old_used[old_index] {
+                        retained_ids.insert(old_rows[old_index].entry_id.clone());
+                    }
+                }
+            }
+        }
+        previous_old = anchor_old.saturating_add(1);
+        previous_new = anchor_new.saturating_add(1);
+    }
+
+    DailyMarkdownMatchResult {
+        matched_ids: matches,
+        retained_ids,
+    }
+}
+
+fn match_changed_daily_markdown_segment(
+    old_rows: &[&DailyMarkdownEntryState],
+    parsed_entries: &[ParsedDailyMarkdownEntry],
+    existing_by_id: &HashMap<String, EntryResponse>,
+    old_segment: &[usize],
+    new_segment: &[usize],
+) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let mut used_new = HashSet::new();
+    for old_index in old_segment {
+        let Some(old_entry) = existing_by_id.get(&old_rows[*old_index].entry_id) else {
+            continue;
+        };
+        let mut best_match = None;
+        for new_index in new_segment {
+            if used_new.contains(new_index) {
+                continue;
+            }
+            let score = daily_markdown_entry_match_score(
+                old_entry,
+                &parsed_entries[*new_index],
+                *old_index,
+                *new_index,
+            );
+            if best_match.is_none_or(|(_, best_score)| score > best_score) {
+                best_match = Some((*new_index, score));
+            }
+        }
+        if let Some((new_index, score)) = best_match
+            && score >= 6
+        {
+            used_new.insert(new_index);
+            pairs.push((*old_index, new_index));
+        }
+    }
+    pairs
+}
+
+fn daily_markdown_entry_match_score(
+    old_entry: &EntryResponse,
+    parsed: &ParsedDailyMarkdownEntry,
+    old_position: usize,
+    new_position: usize,
+) -> i64 {
+    if parsed.is_migration_pointer
+        || matches!(
+            old_entry.status.as_str(),
+            STATUS_MIGRATED_FORWARD | STATUS_MIGRATED_FUTURE
+        )
+        || old_entry.entry_type != parsed.entry_type
+    {
+        return 0;
+    }
+
+    let exact_content_match = old_entry.content.trim() == parsed.content.trim();
+    let content_overlap_score =
+        daily_markdown_content_overlap_score(&old_entry.content, &parsed.content);
+    let old_tags = normalize_tags(old_entry.tags.clone());
+    let parsed_tags = normalize_tags(parsed.tags.clone());
+    let tag_match = old_tags
+        .iter()
+        .any(|tag| parsed_tags.iter().any(|parsed_tag| parsed_tag == tag));
+
+    if !exact_content_match && content_overlap_score == 0 && !tag_match {
+        return 0;
+    }
+
+    let mut score = 4;
+    if old_entry.status == parsed.status {
+        score += 2;
+    } else if old_entry.entry_type == TYPE_TASK
+        && matches!(old_entry.status.as_str(), STATUS_OPEN | STATUS_COMPLETED)
+        && matches!(parsed.status.as_str(), STATUS_OPEN | STATUS_COMPLETED)
+    {
+        score += 1;
+    }
+    if old_position == new_position {
+        score += 1;
+    }
+    if exact_content_match {
+        score += 4;
+    } else {
+        score += content_overlap_score;
+    }
+
+    if tag_match {
+        score += 1;
+    }
+
+    score
+}
+
+fn daily_markdown_content_overlap_score(old_content: &str, new_content: &str) -> i64 {
+    let old_words = old_content
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| word.len() > 2)
+        .map(|word| word.to_lowercase())
+        .collect::<HashSet<_>>();
+    if old_words.is_empty() {
+        return 0;
+    }
+    let overlap = new_content
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| word.len() > 2)
+        .map(|word| word.to_lowercase())
+        .filter(|word| old_words.contains(word))
+        .count();
+    overlap.min(3) as i64
+}
+
+fn lcs_daily_markdown_hash_pairs(
+    old_rows: &[&DailyMarkdownEntryState],
+    parsed_entries: &[ParsedDailyMarkdownEntry],
+    old_used: &[bool],
+    new_used: &[bool],
+) -> Vec<(usize, usize)> {
+    let old_len = old_rows.len();
+    let new_len = parsed_entries.len();
+    let mut dp = vec![vec![0usize; new_len + 1]; old_len + 1];
+    for old_index in (0..old_len).rev() {
+        for new_index in (0..new_len).rev() {
+            if !old_used[old_index]
+                && !new_used[new_index]
+                && old_rows[old_index].line_hash == parsed_entries[new_index].line_hash
+            {
+                dp[old_index][new_index] = dp[old_index + 1][new_index + 1] + 1;
+            } else {
+                dp[old_index][new_index] =
+                    dp[old_index + 1][new_index].max(dp[old_index][new_index + 1]);
+            }
+        }
+    }
+
+    let mut pairs = Vec::new();
+    let mut old_index = 0usize;
+    let mut new_index = 0usize;
+    while old_index < old_len && new_index < new_len {
+        if !old_used[old_index]
+            && !new_used[new_index]
+            && old_rows[old_index].line_hash == parsed_entries[new_index].line_hash
+        {
+            pairs.push((old_index, new_index));
+            old_index += 1;
+            new_index += 1;
+        } else if dp[old_index + 1][new_index] >= dp[old_index][new_index + 1] {
+            old_index += 1;
+        } else {
+            new_index += 1;
+        }
+    }
+    pairs
 }
 
 fn daily_markdown_migration_target(entry: &EntryResponse) -> String {
@@ -2324,6 +3186,177 @@ fn daily_markdown_migration_target(entry: &EntryResponse) -> String {
     } else {
         "Migrated to Future Log".to_string()
     }
+}
+
+fn format_multiline_daily_content(content: &str) -> String {
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let mut lines = normalized.trim_end().lines();
+    let Some(first) = lines.next() else {
+        return String::new();
+    };
+    let mut rendered = first.trim_end().to_string();
+    for line in lines {
+        rendered.push('\n');
+        rendered.push_str("  ");
+        rendered.push_str(line.trim_end());
+    }
+    rendered
+}
+
+fn parse_daily_markdown_file(markdown: &str) -> Vec<ParsedDailyMarkdownEntry> {
+    let mut entries = Vec::new();
+    let mut current: Option<(String, String)> = None;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.trim().is_empty() || trimmed.trim_start().starts_with('#') {
+            continue;
+        }
+        if trimmed.trim_start().starts_with("<!--") {
+            continue;
+        }
+        if trimmed
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("tags:")
+        {
+            if let Some((_, content)) = current.as_mut() {
+                let tags = trimmed
+                    .trim_start()
+                    .split_once(':')
+                    .map(|(_, tags)| tags.trim())
+                    .unwrap_or_default();
+                if !tags.is_empty() {
+                    content.push(' ');
+                    content.push_str(tags);
+                }
+            }
+            continue;
+        }
+        if trimmed.starts_with("  ") || trimmed.starts_with('\t') {
+            if let Some((_, content)) = current.as_mut() {
+                content.push('\n');
+                content.push_str(trimmed.trim());
+            }
+            continue;
+        }
+        if let Some((source, content)) = current.take() {
+            if let Some(entry) = parse_daily_markdown_entry_line(&source, &content) {
+                entries.push(entry);
+            }
+        }
+        if let Some(content) = daily_markdown_line_content(trimmed) {
+            current = Some((trimmed.to_string(), content.to_string()));
+        }
+    }
+
+    if let Some((source, content)) = current.take() {
+        if let Some(entry) = parse_daily_markdown_entry_line(&source, &content) {
+            entries.push(entry);
+        }
+    }
+
+    entries
+}
+
+fn daily_markdown_line_content(line: &str) -> Option<&str> {
+    let line = line.trim_start();
+    if line.starts_with("- [x] ") || line.starts_with("- [X] ") {
+        Some(&line[6..])
+    } else if let Some(rest) = line.strip_prefix("- [ ] ") {
+        Some(rest)
+    } else if let Some(rest) = line.strip_prefix("- o ") {
+        Some(rest)
+    } else {
+        line.strip_prefix("- ")
+    }
+}
+
+fn parse_daily_markdown_entry_line(
+    source_line: &str,
+    raw_content: &str,
+) -> Option<ParsedDailyMarkdownEntry> {
+    let line = source_line.trim_start();
+    let (entry_type, status) = if line.starts_with("- [x] ") || line.starts_with("- [X] ") {
+        (TYPE_TASK.to_string(), STATUS_COMPLETED.to_string())
+    } else if line.starts_with("- [ ] ") {
+        (TYPE_TASK.to_string(), STATUS_OPEN.to_string())
+    } else if line.starts_with("- o ") {
+        (TYPE_EVENT.to_string(), STATUS_OPEN.to_string())
+    } else if line.starts_with("- ") {
+        (TYPE_IDEA.to_string(), STATUS_OPEN.to_string())
+    } else {
+        return None;
+    };
+    let is_migration_pointer = raw_content.trim_start().starts_with("Migrated to [[")
+        || raw_content.trim_start() == "Migrated to Future Log";
+    let (content, tags) = split_markdown_content_tags(raw_content);
+    let (content, status) = if is_migration_pointer {
+        let status = daily_markdown_migration_pointer_status(&content)
+            .unwrap_or(status.as_str())
+            .to_string();
+        (content, status)
+    } else {
+        split_markdown_status_suffix(content, status)
+    };
+    let line_hash = daily_markdown_entry_fingerprint(
+        &entry_type,
+        &status,
+        &content,
+        &tags,
+        is_migration_pointer,
+    );
+    Some(ParsedDailyMarkdownEntry {
+        content,
+        entry_type,
+        status,
+        tags,
+        line_hash,
+        is_migration_pointer,
+    })
+}
+
+fn split_markdown_status_suffix(content: String, default_status: String) -> (String, String) {
+    for (suffix, status) in [(" (cancelled)", STATUS_CANCELLED)] {
+        if let Some(content) = content.strip_suffix(suffix) {
+            return (content.trim_end().to_string(), status.to_string());
+        }
+    }
+    (content, default_status)
+}
+
+fn split_markdown_content_tags(content: &str) -> (String, Vec<String>) {
+    let tag_re = Regex::new(r"(^|\s)#([\p{L}\p{N}_-]+)").expect("valid tag regex");
+    let mut tags = Vec::new();
+    for capture in tag_re.captures_iter(content) {
+        if let Some(tag) = capture.get(2) {
+            tags.push(tag.as_str().to_string());
+        }
+    }
+    let content = tag_re
+        .replace_all(content, "$1")
+        .trim()
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    (content, normalize_tags(tags))
+}
+
+async fn file_modified_millis(path: &Path) -> AppResult<i64> {
+    let modified = tokio::fs::metadata(path)
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))?
+        .modified()
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    Ok(system_time_millis(modified))
+}
+
+fn system_time_millis(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(i64::MAX as u128) as i64
 }
 
 fn entries_to_obsidian_markdown_files(

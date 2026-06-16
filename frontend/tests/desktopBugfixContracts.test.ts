@@ -116,6 +116,55 @@ test("daily page can open the disk-backed markdown file in the system editor", a
   assert.match(translationsSource, /Open Markdown in default editor/);
 });
 
+test("markdown workspace settings are exposed from the user menu", async () => {
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const capabilityPath = path.resolve(
+    import.meta.dirname,
+    "../../src-tauri/capabilities/default.json",
+  );
+  const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const entryServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/entryService.ts",
+  );
+  const menuPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/components/UserMenu.tsx",
+  );
+  const uiEventsPath = path.resolve(import.meta.dirname, "../src/lib/uiEvents.ts");
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const settingsPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/MarkdownSettingsController.tsx",
+  );
+  const libSource = await readFile(libPath, "utf8");
+  const capability = JSON.parse(await readFile(capabilityPath, "utf8"));
+  const appSource = await readFile(appPath, "utf8");
+  const entryServiceSource = await readFile(entryServicePath, "utf8");
+  const menuSource = await readFile(menuPath, "utf8");
+  const uiEventsSource = await readFile(uiEventsPath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+  const settingsSource = await readFile(settingsPath, "utf8");
+
+  assert.match(libSource, /get_markdown_workspace/);
+  assert.match(libSource, /choose_markdown_workspace/);
+  assert.match(libSource, /blocking_pick_folder/);
+  assert.ok(capability.permissions.includes("dialog:allow-open"));
+  assert.match(entryServiceSource, /getMarkdownWorkspace/);
+  assert.match(entryServiceSource, /chooseMarkdownWorkspace/);
+  assert.match(uiEventsSource, /OPEN_MARKDOWN_SETTINGS/);
+  assert.match(menuSource, /OPEN_MARKDOWN_SETTINGS/);
+  assert.match(menuSource, /t\.markdownSettings/);
+  assert.match(appSource, /MarkdownSettingsController/);
+  assert.match(settingsSource, /chooseMarkdownWorkspace/);
+  assert.match(settingsSource, /OPEN_MARKDOWN_SETTINGS/);
+  assert.match(translationsSource, /Markdown 设置/);
+  assert.match(translationsSource, /Project Folder/);
+});
+
 test("release patch script is exposed from the frontend package", async () => {
   const packagePath = path.resolve(import.meta.dirname, "../package.json");
   const releasePath = path.resolve(import.meta.dirname, "../scripts/release.mjs");
