@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   bumpVersion,
+  extractChangelogSection,
+  requireChangelogSection,
   updatePackageLockVersion,
   updatePackageVersion,
   updateTauriVersion,
@@ -52,4 +54,33 @@ test("release utils update json manifests without changing unrelated fields", ()
       },
     },
   });
+});
+
+test("release utils extract the exact changelog section for a version", () => {
+  const changelog = `# Changelog
+
+## v0.4.8 - 2026-06-17
+
+- 发布更新日志。
+- 重写 README。
+
+## v0.4.7 - 2026-06-17
+
+- 修复菜单。
+`;
+
+  assert.equal(
+    extractChangelogSection(changelog, "0.4.8"),
+    `## v0.4.8 - 2026-06-17
+
+- 发布更新日志。
+- 重写 README。`,
+  );
+});
+
+test("release utils reject releases without changelog notes", () => {
+  assert.throws(
+    () => requireChangelogSection("# Changelog\n\n## v0.4.7\n\n- 修复菜单。", "0.4.8"),
+    /Missing changelog section for v0\.4\.8/,
+  );
 });

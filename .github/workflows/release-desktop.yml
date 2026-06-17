@@ -64,11 +64,8 @@ jobs:
             capture { print }
           ' CHANGELOG.md > "$BODY_FILE"
           if [ ! -s "$BODY_FILE" ]; then
-            {
-              echo "## v$VERSION"
-              echo
-              echo "- 这次更新没有提供更新日志。"
-            } > "$BODY_FILE"
+            echo "Missing changelog section for v$VERSION in CHANGELOG.md." >&2
+            exit 1
           fi
           {
             echo "body<<EOF"

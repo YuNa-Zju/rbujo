@@ -1,72 +1,67 @@
-# BuJo
+# 子弹笔记 BuJo
 
-BuJo 是一个本地优先的子弹笔记桌面应用。桌面端基于 Tauri 2，前端在 `frontend/`，本地数据、Markdown 磁盘化、附件和备份逻辑在 Rust 侧。
+BuJo 是一个本地优先的子弹笔记应用，用来记录每天的待办、想法、事件、未来计划和附件资料。它的目标是把纸质 Bullet Journal 的轻量感搬到桌面端：打开就能写，任务可以迁移，资料可以跟着笔记保存，重要数据也能导出备份。
 
-## 功能
+应用默认把数据保存在本机，不需要登录账号，也不会把笔记上传到云端。
 
-- Daily Log：按天记录 task / idea / event。
-- Future Log：Planning / Completed 双 tab，并支持拖动调整月份。
-- Markdown 磁盘化：Daily、Future 和 attachments 放在用户选择的项目文件夹中。
-- 附件管理：拖拽上传、引用统计、未引用附件清理。
-- BJK 备份：`.bjk` 是带 `manifest.json` 的可移植备份包，支持双击导入确认。
-- 更新检查：显示当前版本、更新日志和下载进度。
+## 主要功能
 
-## 开发
+- **Daily Log**：按日期记录当天的任务、想法和事件。
+- **Future Log**：把未来要做的事情先放进计划池，再按月份整理；已完成事项会单独归到 Completed。
+- **任务状态**：任务可以完成、迁移、归档或恢复，适合持续整理未完成事项。
+- **Markdown 磁盘化**：Daily 和 Future 内容可以同步到你选择的项目文件夹，方便用其他 Markdown 编辑器查看和修改。
+- **附件管理**：支持拖拽图片、PDF 等文件到笔记中，附件会跟随项目文件夹保存，并能清理未引用文件。
+- **归档**：已归档内容按时间整理，必要时可以恢复或彻底删除。
+- **备份与导入**：`.bjk` 备份包会包含笔记、附件和必要元数据，双击或从应用内都可以导入。
+- **版本更新**：应用内可以检查新版本，更新弹窗会显示当前版本、最新版本、更新日志和下载进度。
 
-安装依赖：
+## 基本用法
 
-```bash
-npm --prefix frontend ci
+1. 打开应用后，在首页选择日期，直接记录当天内容。
+2. 新建条目时选择类型：任务、想法或事件。
+3. 未完成的任务可以保留在当天，也可以迁移到其他日期或 Future Log。
+4. 在 Future Log 中整理未来事项，把它们放到待定列表或具体月份。
+5. 需要保存资料时，把文件拖进输入框；图片会生成预览链接，PDF 等文件可以用系统默认方式打开。
+6. 右上角菜单可以进入归档、数据与备份、存储管理、检查更新和版本信息。
+7. 需要迁移设备或留存数据时，从“数据与备份”导出 `.bjk` 文件。
+
+## 文件与数据
+
+BuJo 会使用一个项目文件夹保存可读写的 Markdown 和附件。你可以在“存储管理”里更改这个文件夹。
+
+典型结构如下：
+
+```text
+你的项目文件夹/
+  Daily/
+    2026/
+      06/
+        2026-06-17.md
+  Future/
+    Future.md
+    2026/
+      06.md
+  attachments/
+    ...
 ```
 
-启动桌面开发模式：
+说明：
 
-```bash
-npm --prefix frontend run tauri:dev
-```
+- `Daily/` 保存每天的 Markdown 笔记。
+- `Future/` 保存 Future Log。
+- `attachments/` 保存拖入笔记的附件。
+- `.bjk` 备份会把笔记和附件一起打包，适合迁移、归档或之后做多端同步。
 
-只构建前端：
+## 安装与更新
 
-```bash
-npm --prefix frontend run build
-```
+macOS 用户可以安装 DMG，Windows 用户可以安装 exe 或 msi。发布包在 GitHub Releases 中提供。
 
-运行桌面打包：
-
-```bash
-npm --prefix frontend run tauri:build
-```
-
-## 验证
-
-合并前至少运行：
-
-```bash
-npm --prefix frontend run test:frontend
-npm --prefix frontend run build
-cargo test
-git diff --check
-```
-
-说明：当前 `npm --prefix frontend run lint` 会被既有 lint debt 拦住，不作为发布门禁。
-
-## 发布
-
-补丁版本在干净的 `master` 上运行：
-
-```bash
-npm --prefix frontend run release:patch
-```
-
-该脚本会 bump 版本、提交 `Release vX.Y.Z`、推送 `master` 和 `vX.Y.Z` tag，从而触发 GitHub Actions 构建 macOS / Windows 安装包。
+应用启动时会自动检查更新，也可以从右上角菜单手动检查。发现新版本后，弹窗会显示版本号、更新日志和下载进度。
 
 ## macOS 文件夹权限
 
-如果 Markdown 项目文件夹放在 `Documents` 等受保护目录，macOS 可能会提示授权。当前应用保存的是普通项目路径；后续要彻底减少重复授权，需要为用户选择的项目文件夹保存 security-scoped bookmark，并在访问 Daily / Future / attachments 前恢复该授权。
+如果项目文件夹放在“文稿”等受保护目录，macOS 可能会弹出访问授权。选择允许后，BuJo 才能读写对应目录中的 Markdown 和附件。
 
-## 代码结构
+## 适合的使用方式
 
-- `frontend/src/services/entryService.ts`：前端到 Tauri command 的数据服务。
-- `src-tauri/src/lib.rs`：Tauri command、原生菜单、窗口和更新入口。
-- `src/local.rs`：本地 SQLite、Markdown、附件和备份逻辑。
-- `docs/`：API、迁移、测试、发布和后续实现计划。
+BuJo 更适合做个人任务和日记整理，而不是多人协作工具。它不会强制你使用复杂流程，你可以只把它当作每日待办，也可以逐步使用 Future Log、归档、Markdown 文件夹和 `.bjk` 备份。

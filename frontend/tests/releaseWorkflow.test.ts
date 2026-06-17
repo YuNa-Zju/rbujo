@@ -29,7 +29,10 @@ test("release workflow publishes changelog section as release body", async () =>
   assert.match(workflow, /release_body\.md/);
   assert.match(workflow, /src-tauri\/tauri\.conf\.json/);
   assert.match(workflow, /index\(\$0,\s*heading\)\s*==\s*1/);
+  assert.match(workflow, /Missing changelog section/);
+  assert.match(workflow, /exit 1/);
   assert.match(workflow, /releaseBody:\s*\$\{\{\s*steps\.release_notes\.outputs\.body\s*\}\}/);
+  assert.doesNotMatch(workflow, /这次更新没有提供更新日志/);
   assert.doesNotMatch(workflow, /软件名称统一为 BuJo/);
 });
 

@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   bumpVersion,
+  requireChangelogSection,
   updatePackageLockVersion,
   updatePackageVersion,
   updateTauriVersion,
@@ -13,6 +14,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const tauriConfigPath = resolve(repoRoot, "src-tauri/tauri.conf.json");
 const packagePath = resolve(repoRoot, "frontend/package.json");
 const lockPath = resolve(repoRoot, "frontend/package-lock.json");
+const changelogPath = resolve(repoRoot, "CHANGELOG.md");
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -50,6 +52,7 @@ if (pendingChanges) {
 
 const tauriConfig = readJson(tauriConfigPath);
 const nextVersion = bumpVersion(tauriConfig.version, bumpLevel);
+requireChangelogSection(readFileSync(changelogPath, "utf8"), nextVersion);
 
 writeJson(tauriConfigPath, updateTauriVersion(tauriConfig, nextVersion));
 writeJson(packagePath, updatePackageVersion(readJson(packagePath), nextVersion));

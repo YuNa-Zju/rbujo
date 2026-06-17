@@ -32,3 +32,32 @@ export function updatePackageLockVersion(lockJson, nextVersion) {
     },
   };
 }
+
+export function extractChangelogSection(changelog, version) {
+  const headingPattern = new RegExp(
+    `^## v${version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$).*`,
+    "m",
+  );
+  const headingMatch = changelog.match(headingPattern);
+  if (!headingMatch || headingMatch.index === undefined) {
+    return "";
+  }
+
+  const sectionStart = headingMatch.index;
+  const nextHeadingMatch = changelog
+    .slice(sectionStart + headingMatch[0].length)
+    .match(/\n## v/m);
+  const sectionEnd =
+    nextHeadingMatch?.index === undefined
+      ? changelog.length
+      : sectionStart + headingMatch[0].length + nextHeadingMatch.index;
+  return changelog.slice(sectionStart, sectionEnd).trim();
+}
+
+export function requireChangelogSection(changelog, version) {
+  const section = extractChangelogSection(changelog, version);
+  if (!section) {
+    throw new Error(`Missing changelog section for v${version}. Add it to CHANGELOG.md before releasing.`);
+  }
+  return section;
+}
