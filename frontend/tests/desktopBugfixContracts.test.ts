@@ -72,6 +72,15 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
   assert.match(controllerSource, /takePendingBjkImport/);
   assert.match(controllerSource, /readBjkImportFile/);
   assert.match(controllerSource, /clearPendingBjkImport/);
+  assert.match(controllerSource, /const checkPendingImport = useCallback/);
+  assert.match(
+    controllerSource,
+    /unlisten = await listen<PendingBjkImport>\("file:open-bjk"[\s\S]*await checkPendingImport\(\)/,
+  );
+  assert.doesNotMatch(
+    controllerSource,
+    /useEffect\(\(\) => \{\s*entryService\s*\.\s*takePendingBjkImport\(\)/,
+  );
   assert.match(controllerSource, /statusRef/);
   assert.match(controllerSource, /statusRef\.current === "loading"/);
   assert.match(controllerSource, /dataBackupService\.importBjkArchive/);
@@ -93,6 +102,9 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
   assert.match(libSource, /read_bjk_import_file/);
   assert.match(libSource, /Url::parse/);
   assert.match(libSource, /bjk_path_from_args/);
+  assert.match(libSource, /pending_bjk_import_from_url/);
+  assert.match(libSource, /handle_bjk_import_request/);
+  assert.match(libSource, /tauri::RunEvent::Opened/);
   assert.match(libSource, /tauri_plugin_single_instance::init\(\|app, argv/);
 });
 
@@ -343,8 +355,14 @@ test("image preview pans on wheel and reserves ctrl wheel for zoom gestures", as
   );
   const source = await readFile(previewPath, "utf8");
 
-  assert.match(source, /wheel=\{\{ step: 0\.2, wheelDisabled: true \}\}/);
+  assert.match(
+    source,
+    /wheel=\{\{ step: 0\.35, smoothStep: 0\.006, wheelDisabled: true \}\}/,
+  );
+  assert.match(source, /pinch=\{\{ step: 8 \}\}/);
   assert.match(source, /panning=\{\{ wheelPanning: true \}\}/);
+  assert.match(source, /zoomOut\(0\.75, 120\)/);
+  assert.match(source, /zoomIn\(0\.75, 120\)/);
   assert.match(source, /activePointers/);
   assert.match(source, /gestureInProgress/);
   assert.match(source, /touchAction: "none"/);

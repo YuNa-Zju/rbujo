@@ -710,6 +710,21 @@ fn pending_bjk_import_from_args(
     bjk_path_from_args(args).map(pending_bjk_import_from_path)
 }
 
+fn pending_bjk_import_from_url(url: &Url) -> Option<PendingBjkImport> {
+    url.to_file_path()
+        .ok()
+        .filter(|path| is_bjk_path(path))
+        .map(pending_bjk_import_from_path)
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 fn remember_pending_bjk_import(app: &AppHandle, pending: PendingBjkImport) -> bool {
     let Some(state) = app.try_state::<PendingBjkImportState>() else {
         return false;
@@ -733,19 +748,35 @@ fn emit_bjk_import_request(app: &AppHandle, pending: PendingBjkImport) {
     }
 }
 
+fn handle_bjk_import_request(app: &AppHandle, pending: PendingBjkImport) {
+    show_main_window(app);
+    if remember_pending_bjk_import(app, pending.clone()) {
+        emit_bjk_import_request(app, pending);
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Opened { urls } = event {
+        if let Some(pending) = urls.iter().find_map(pending_bjk_import_from_url) {
+            handle_bjk_import_request(app, pending);
+        } else {
+            show_main_window(app);
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+fn handle_run_event(_app: &AppHandle, _event: tauri::RunEvent) {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
             if let Some(pending) = pending_bjk_import_from_args(argv) {
-                if remember_pending_bjk_import(app, pending.clone()) {
-                    emit_bjk_import_request(app, pending);
-                }
+                handle_bjk_import_request(app, pending);
+            } else {
+                show_main_window(app);
             }
         }))
         .menu(|app| {
@@ -916,8 +947,9 @@ pub fn run() {
             import_entries,
             batch_delete_entries
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running rbujo desktop application");
+        .build(tauri::generate_context!())
+        .expect("error while building rbujo desktop application")
+        .run(handle_run_event);
 }
 
 fn to_error(error: impl std::fmt::Display) -> String {
@@ -940,8 +972,10 @@ fn safe_export_archive_filename(value: &str) -> String {
 mod tests {
     use super::{
         bjk_path_from_arg, bjk_path_from_args, menu_event_name, pending_bjk_import_from_path,
+        pending_bjk_import_from_url,
     };
     use std::path::PathBuf;
+    use url::Url;
 
     #[test]
     fn maps_native_menu_ids_to_frontend_events() {
@@ -986,6 +1020,17 @@ mod tests {
         let path = bjk_path_from_arg("file:///Users/test/My%20Backup.bjk");
 
         assert_eq!(path, Some(PathBuf::from("/Users/test/My Backup.bjk")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn decodes_file_url_bjk_open_events() {
+        let url = Url::parse("file:///Users/test/My%20Backup.bjk").unwrap();
+        let pending = pending_bjk_import_from_url(&url).unwrap();
+
+        assert_eq!(pending.filename, "My Backup.bjk");
+        assert_eq!(pending.path, "/Users/test/My Backup.bjk");
+        assert!(!pending.token.is_empty());
     }
 
     #[test]

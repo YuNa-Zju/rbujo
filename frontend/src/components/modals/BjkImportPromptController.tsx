@@ -58,8 +58,8 @@ export default function BjkImportPromptController() {
     }
   }, [pending, setImportStatus]);
 
-  useEffect(() => {
-    entryService
+  const checkPendingImport = useCallback(() => {
+    return entryService
       .takePendingBjkImport()
       .then(openPrompt)
       .catch((error) => {
@@ -78,12 +78,18 @@ export default function BjkImportPromptController() {
         });
       } catch (error) {
         console.warn("BJK file-open listener registration failed", error);
+        if (!disposed) {
+          await checkPendingImport();
+        }
         return;
       }
 
       if (disposed && unlisten) {
         unlisten();
+        return;
       }
+
+      await checkPendingImport();
     };
 
     register();
@@ -91,7 +97,7 @@ export default function BjkImportPromptController() {
       disposed = true;
       unlisten?.();
     };
-  }, [openPrompt]);
+  }, [checkPendingImport, openPrompt]);
 
   const confirmImport = async () => {
     if (!pending) return;

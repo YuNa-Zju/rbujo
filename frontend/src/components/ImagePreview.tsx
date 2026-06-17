@@ -142,7 +142,8 @@ export default function ImagePreview({ src, alt, onClose }: Props) {
         minScale={0.5}
         maxScale={4}
         smooth={true}
-        wheel={{ step: 0.2, wheelDisabled: true }}
+        wheel={{ step: 0.35, smoothStep: 0.006, wheelDisabled: true }}
+        pinch={{ step: 8 }}
         panning={{ wheelPanning: true }}
         alignmentAnimation={{ sizeX: 0, sizeY: 0 }}
       >
@@ -160,13 +161,13 @@ export default function ImagePreview({ src, alt, onClose }: Props) {
                 <RefreshCcw size={18} />
               </button>
               <button
-                onClick={() => zoomOut()}
+                onClick={() => zoomOut(0.75, 120)}
                 className="btn btn-circle btn-sm btn-ghost text-white/90 hover:bg-white/20"
               >
                 <ZoomOut size={20} />
               </button>
               <button
-                onClick={() => zoomIn()}
+                onClick={() => zoomIn(0.75, 120)}
                 className="btn btn-circle btn-sm btn-ghost text-white/90 hover:bg-white/20"
               >
                 <ZoomIn size={20} />
