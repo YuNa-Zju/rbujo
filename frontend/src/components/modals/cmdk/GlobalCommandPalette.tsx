@@ -19,7 +19,6 @@ import {
   Link as LinkIcon,
   CheckSquare,
   Archive,
-  RefreshCw,
   LayoutGrid,
   Delete,
   Circle,
@@ -526,14 +525,6 @@ export default function GlobalCommandPalette() {
                 heading={t.command?.tools || "Tools"}
                 className="space-y-2"
               >
-                <Item
-                  icon={<RefreshCw />}
-                  label={t.command?.calendarSync || "Calendar Sync"}
-                  value={`${t.command?.calendarSync} sync calendar google`}
-                  onSelect={() =>
-                    run(() => uiEvents.emit("OPEN_CALENDAR_SYNC"))
-                  }
-                />
                 <Item
                   icon={<Archive />}
                   label={t.backup?.title || "Backup & Restore"}

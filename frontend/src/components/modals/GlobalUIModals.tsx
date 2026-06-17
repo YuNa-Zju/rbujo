@@ -11,9 +11,6 @@ import FutureLogModal from "./FutureLogModal";
 import TimelineModal, { type TimelineModalRef } from "./TimelineModal";
 
 // 3. 设置/系统类弹窗
-import CalendarSyncModal, {
-  type CalendarSyncModalRef,
-} from "./CalendarSyncModal";
 import BackupModal from "./BackupModal";
 
 export default function GlobalUIModals() {
@@ -29,13 +26,11 @@ export default function GlobalUIModals() {
     addEntryRequest,
     entryActionRequest,
     timelineRequestId,
-    calendarSyncRequestId,
   } = useModalController();
 
   // --- Ref 管理 ---
   const addEntryRef = useRef<AddEntryModalRef>(null);
   const timelineRef = useRef<TimelineModalRef>(null);
-  const syncRef = useRef<CalendarSyncModalRef>(null);
 
   useEffect(() => {
     if (addEntryRequest) {
@@ -52,10 +47,6 @@ export default function GlobalUIModals() {
   useEffect(() => {
     if (timelineRequestId > 0) timelineRef.current?.open();
   }, [timelineRequestId]);
-
-  useEffect(() => {
-    if (calendarSyncRequestId > 0) syncRef.current?.open();
-  }, [calendarSyncRequestId]);
 
   return (
     <>
@@ -80,8 +71,6 @@ export default function GlobalUIModals() {
           onClose={closeTagSearch}
         />
       )}
-
-      <CalendarSyncModal ref={syncRef} />
       <BackupModal open={backupOpen} onClose={closeBackup} />
     </>
   );

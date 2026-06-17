@@ -37,7 +37,6 @@ interface ModalControllerValue {
   addEntryRequest: AddEntryRequest | null;
   entryActionRequest: EntryActionRequest | null;
   timelineRequestId: number;
-  calendarSyncRequestId: number;
   openSearch: (query?: string | null) => void;
   closeSearch: () => void;
   openTagSearch: (tag?: string | null) => void;
@@ -52,7 +51,6 @@ interface ModalControllerValue {
   openEntryAction: (kind: EntryActionKind, payload: EntryActionPayload) => void;
   clearEntryAction: () => void;
   openTimeline: () => void;
-  openCalendarSync: () => void;
 }
 
 const ModalControllerContext = createContext<ModalControllerValue | null>(null);
@@ -76,7 +74,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
   const [entryActionRequest, setEntryActionRequest] =
     useState<EntryActionRequest | null>(null);
   const [timelineRequestId, setTimelineRequestId] = useState(0);
-  const [calendarSyncRequestId, setCalendarSyncRequestId] = useState(0);
 
   const nextRequestId = useCallback(() => {
     requestSeq.current += 1;
@@ -146,10 +143,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     setTimelineRequestId((current) => current + 1);
   }, []);
 
-  const openCalendarSync = useCallback(() => {
-    setCalendarSyncRequestId((current) => current + 1);
-  }, []);
-
   useEffect(() => {
     const add = (payload: AddEntryPayload) => openAddEntry(payload || {});
     const edit = (payload: EntryActionPayload) => openEntryAction("edit", payload);
@@ -170,7 +163,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     uiEvents.on("OPEN_CMD_PALETTE", openCommandPalette);
     uiEvents.on("OPEN_FUTURE_LOG", openFutureLog);
     uiEvents.on("OPEN_TIMELINE", openTimeline);
-    uiEvents.on("OPEN_CALENDAR_SYNC", openCalendarSync);
     uiEvents.on("OPEN_BACKUP", openBackup);
 
     return () => {
@@ -184,13 +176,11 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       uiEvents.off("OPEN_CMD_PALETTE", openCommandPalette);
       uiEvents.off("OPEN_FUTURE_LOG", openFutureLog);
       uiEvents.off("OPEN_TIMELINE", openTimeline);
-      uiEvents.off("OPEN_CALENDAR_SYNC", openCalendarSync);
       uiEvents.off("OPEN_BACKUP", openBackup);
     };
   }, [
     openAddEntry,
     openBackup,
-    openCalendarSync,
     openCommandPalette,
     openEntryAction,
     openFutureLog,
@@ -236,7 +226,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       addEntryRequest,
       entryActionRequest,
       timelineRequestId,
-      calendarSyncRequestId,
       openSearch,
       closeSearch,
       openTagSearch,
@@ -251,12 +240,10 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       openEntryAction,
       clearEntryAction,
       openTimeline,
-      openCalendarSync,
     }),
     [
       addEntryRequest,
       backupOpen,
-      calendarSyncRequestId,
       clearEntryAction,
       closeBackup,
       closeCommandPalette,
@@ -269,7 +256,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       futureLogOpen,
       openAddEntry,
       openBackup,
-      openCalendarSync,
       openCommandPalette,
       openEntryAction,
       openFutureLog,

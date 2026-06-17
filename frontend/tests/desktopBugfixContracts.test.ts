@@ -197,6 +197,103 @@ test("storage panel focuses attachments and navigates attachment references", as
   assert.match(source, /labels\.openReference/);
 });
 
+test("calendar subscription sync feature is removed from global UI", async () => {
+  const uiEventsPath = path.resolve(import.meta.dirname, "../src/lib/uiEvents.ts");
+  const modalControllerPath = path.resolve(
+    import.meta.dirname,
+    "../src/context/ModalControllerContext.tsx",
+  );
+  const globalModalsPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/GlobalUIModals.tsx",
+  );
+  const userMenuPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/components/UserMenu.tsx",
+  );
+  const commandPalettePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/cmdk/GlobalCommandPalette.tsx",
+  );
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+
+  const uiEventsSource = await readFile(uiEventsPath, "utf8");
+  const modalControllerSource = await readFile(modalControllerPath, "utf8");
+  const globalModalsSource = await readFile(globalModalsPath, "utf8");
+  const userMenuSource = await readFile(userMenuPath, "utf8");
+  const commandPaletteSource = await readFile(commandPalettePath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+
+  assert.doesNotMatch(uiEventsSource, /OPEN_CALENDAR_SYNC/);
+  assert.doesNotMatch(modalControllerSource, /calendarSync/i);
+  assert.doesNotMatch(globalModalsSource, /CalendarSyncModal/);
+  assert.doesNotMatch(userMenuSource, /Calendar Sync|日历订阅同步|t\.ics/);
+  assert.doesNotMatch(commandPaletteSource, /OPEN_CALENDAR_SYNC|calendarSync/);
+  assert.doesNotMatch(translationsSource, /\bics:/);
+  assert.doesNotMatch(translationsSource, /calendarSync/);
+});
+
+test("future log modal supports dragging entries between month drawers", async () => {
+  const futureLogPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/FutureLogModal.tsx",
+  );
+  const source = await readFile(futureLogPath, "utf8");
+
+  assert.match(source, /DndContext/);
+  assert.match(source, /useDraggable/);
+  assert.match(source, /useDroppable/);
+  assert.match(source, /getFutureDropTargetMonth/);
+  assert.match(source, /entryService\.moveFutureEntry/);
+  assert.match(source, /entryEventBus\.emit\("entry:update"/);
+  assert.match(source, /futureMonthDropId/);
+  assert.match(source, /FUTURE_DROP_SOMEDAY_ID/);
+});
+
+test("future log month dragging uses the daily-style arrange mode", async () => {
+  const futureLogPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/FutureLogModal.tsx",
+  );
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const source = await readFile(futureLogPath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+
+  assert.match(source, /isMonthDragMode/);
+  assert.match(source, /setIsMonthDragMode/);
+  assert.match(
+    source,
+    /const isFutureArrangeMode =\s*futureLogMode === "planning" && isMonthDragMode/,
+  );
+  assert.match(source, /const canDragFutureEntries = isFutureArrangeMode/);
+  assert.match(source, /ArrowDownUp/);
+  assert.match(source, /activeDragWidth/);
+  assert.match(source, /getBoundingClientRect\(\)\.width/);
+  assert.doesNotMatch(source, /FutureCompactEntryCard/);
+  assert.doesNotMatch(source, /getSmartSummary/);
+  assert.match(source, /dragHandleProps=\{\{ \.\.\.attributes, \.\.\.listeners \}\}/);
+  assert.match(source, /forceCollapse=\{true\}/);
+  assert.match(source, /readOnly=\{true\}/);
+  assert.match(source, /touchAction: "pan-y"/);
+  assert.match(source, /dragMode\s*\?\s*"bg-base-100 border-base-200 shadow-sm"/);
+  assert.match(source, /dragMode\s*\?\s*"border-base-200 bg-base-100"/);
+  assert.match(source, /btn btn-sm btn-circle border shadow-sm/);
+  assert.match(source, /btn-primary text-primary-content border-primary/);
+  assert.doesNotMatch(source, /bg-stone-900 text-white/);
+  assert.doesNotMatch(source, /bg-white text-stone-950/);
+  assert.match(source, /dragMode/);
+  assert.match(source, /t\.futureLog\.arrangeMonths/);
+  assert.match(source, /t\.futureLog\.finishArrange/);
+  assert.match(translationsSource, /调整月份/);
+  assert.match(translationsSource, /Finish Arrange/);
+});
+
 test("future log refreshes disk-backed markdown when app regains focus", async () => {
   const futureLogPath = path.resolve(
     import.meta.dirname,

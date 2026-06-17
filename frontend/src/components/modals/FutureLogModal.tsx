@@ -1,4 +1,11 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   X,
   CalendarCheck,
@@ -6,12 +13,28 @@ import {
   CalendarDays,
   Clock,
   ListTodo,
+  ArrowDownUp,
+  Check,
 } from "lucide-react";
+import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "../../hooks/useTranslation";
 import { format } from "date-fns";
 import { entryService } from "../../services/entryService";
 import { zhCN, enUS } from "date-fns/locale";
-import DraggableEntryCard from "../DraggableEntryCard";
+import { EntryCard } from "../DraggableEntryCard";
 
 import {
   entryEventBus,
@@ -23,6 +46,13 @@ import {
   isCompletedFutureStatus,
   isExpiredFutureEntry,
 } from "../../features/futureLog/futureLogClassification";
+import {
+  FUTURE_DROP_SOMEDAY_ID,
+  futureEntryDragId,
+  futureMonthDropId,
+  getFutureDropTargetMonth,
+  isSameFutureDropTarget,
+} from "../../features/futureLog/futureLogDrag";
 
 type YearGroup = Record<string, any[]>;
 type FutureLayout = {
@@ -34,6 +64,16 @@ type FutureLogTab = "planning" | "completed";
 interface Props {
   onClose: () => void;
 }
+
+const futureCardClass = (isDark: boolean) => `
+  !backdrop-blur-none
+  ${
+    isDark
+      ? "!bg-[#2a2725]/80 !border-white/5 !text-stone-200 hover:!bg-[#35312e]"
+      : "!bg-white/90 !border-orange-100/50 !text-stone-700 hover:!border-orange-200"
+  }
+  !shadow-sm
+`;
 
 // ✅ 1. 核心 Hook：监听 <head> 标签上的 data-theme
 const useHeadTheme = () => {
@@ -70,6 +110,65 @@ const useHeadTheme = () => {
   return theme;
 };
 
+const FutureLogEntryCard = ({
+  entry,
+  isDark,
+  canDrag,
+  isMoving,
+  dragMode,
+}: {
+  entry: any;
+  isDark: boolean;
+  canDrag: boolean;
+  isMoving: boolean;
+  dragMode: boolean;
+}) => {
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({
+      id: futureEntryDragId(entry.id),
+      data: { entryId: entry.id },
+      disabled: !canDrag || isMoving,
+    });
+
+  const style: CSSProperties = {
+    transform: isDragging ? undefined : CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.35 : 1,
+    touchAction: "pan-y",
+  };
+
+  return (
+    <div
+      id={futureEntryDragId(entry.id)}
+      ref={setNodeRef}
+      style={style}
+      className={`rounded-2xl transition-opacity ${
+        isMoving ? "pointer-events-none opacity-50" : ""
+      }`}
+    >
+      {dragMode ? (
+        <EntryCard
+          entry={entry}
+          refresh={() => {}}
+          isDragEnabled={canDrag}
+          forceCollapse={true}
+          disableOverflowCheck={true}
+          readOnly={true}
+          dragHandleProps={{ ...attributes, ...listeners }}
+        />
+      ) : (
+        <EntryCard
+          entry={entry}
+          refresh={() => {}}
+          isDragEnabled={canDrag}
+          forceCollapse={isDragging}
+          disableOverflowCheck={isDragging}
+          className={futureCardClass(isDark)}
+        />
+      )}
+    </div>
+  );
+};
+
 // ✅ FutureLogSection: 极致的毛玻璃卡片
 const FutureLogSection = ({
   title,
@@ -80,45 +179,94 @@ const FutureLogSection = ({
   emptyText,
   isSpecial = false,
   isDark, // 传入主题状态
+  dropId,
+  canDragEntries,
+  movingEntryIds,
+  dragMode,
 }: any) => {
   const years = Object.keys(yearGroups || {}).sort();
+  const { isOver, setNodeRef } = useDroppable({ id: dropId });
 
-  // --- 样式逻辑 (Glassmorphism) ---
-
-  // 容器：极高的透明度 + 强模糊
-  const glassContainer = isDark
-    ? "bg-[#202020]/40 border-white/5 shadow-inner shadow-white/5" // 暗色玻璃
-    : "bg-white/60 border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)]"; // 亮色玻璃
+  const sectionClassName = dragMode ? "" : className;
+  const sectionSurfaceClass = dragMode
+    ? "bg-base-100 border-base-200 shadow-sm"
+    : isDark
+      ? "bg-[#202020]/40 border-white/5 shadow-inner shadow-white/5"
+      : "bg-white/60 border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)]";
+  const dropTargetClass =
+    isOver && canDragEntries
+      ? dragMode
+        ? "ring-2 ring-primary/35 border-primary/40"
+        : isDark
+          ? "ring-2 ring-orange-400/60 border-orange-400/50"
+          : "ring-2 ring-orange-300/70 border-orange-300/80"
+      : "";
 
   const containerBase = `
-    relative flex flex-col h-full rounded-[1.5rem] transition-all duration-300
-    border backdrop-blur-xl
-    ${glassContainer}
+    relative flex flex-col h-full transition-all duration-300
+    ${dragMode ? "rounded-2xl border" : "rounded-[1.5rem] border backdrop-blur-xl"}
+    ${sectionSurfaceClass}
+    ${dropTargetClass}
   `;
 
-  // 头部：更加通透
+  const headerSurfaceClass = dragMode
+    ? "border-base-200 bg-base-100"
+    : isDark
+      ? "border-white/5 bg-white/5"
+      : "border-orange-100/30 bg-white/40";
   const headerBase = `
     p-4 flex justify-between items-center
-    border-b ${isDark ? "border-white/5 bg-white/5" : "border-orange-100/30 bg-white/40"}
-    rounded-t-[1.5rem]
+    border-b ${headerSurfaceClass}
+    ${dragMode ? "rounded-t-2xl" : "rounded-t-[1.5rem]"}
   `;
 
-  // 图标颜色
-  const iconBoxClass = isSpecial
-    ? isDark
-      ? "bg-amber-500/20 text-amber-400"
-      : "bg-amber-100 text-amber-600"
-    : isDark
-      ? "bg-orange-500/20 text-orange-400"
-      : "bg-orange-50 text-orange-400";
+  const iconBoxClass = dragMode
+    ? "bg-base-200 text-primary"
+    : isSpecial
+      ? isDark
+        ? "bg-amber-500/20 text-amber-400"
+        : "bg-amber-100 text-amber-600"
+      : isDark
+        ? "bg-orange-500/20 text-orange-400"
+        : "bg-orange-50 text-orange-400";
 
-  const titleClass = isDark ? "text-stone-200" : "text-stone-600";
+  const titleClass = dragMode
+    ? "text-base-content"
+    : isDark
+      ? "text-stone-200"
+      : "text-stone-600";
+  const countClass = dragMode
+    ? "bg-base-100 text-base-content/70 border-base-200"
+    : isDark
+      ? "bg-white/10 text-orange-200 border-white/5"
+      : "bg-orange-100/50 text-orange-600 border-orange-100";
+  const emptyIconClass = dragMode
+    ? "bg-base-200/60 text-base-content/20"
+    : isDark
+      ? "bg-white/5 text-white/20"
+      : "bg-orange-50/50 text-orange-200";
+  const emptyTextClass = dragMode
+    ? "text-base-content/40"
+    : isDark
+      ? "text-white/30"
+      : "text-stone-400";
+  const yearPillClass = dragMode
+    ? "bg-base-200 text-base-content/40"
+    : isDark
+      ? "bg-white/10 text-white/50"
+      : "bg-stone-100 text-stone-400";
+  const yearLineClass = dragMode
+    ? "bg-base-200"
+    : isDark
+      ? "bg-white/10"
+      : "bg-orange-100/50";
 
   // 空状态
   if (flatCount === 0) {
     return (
       <div
-        className={`${containerBase} ${className} opacity-60 hover:opacity-100`}
+        ref={setNodeRef}
+        className={`${containerBase} ${sectionClassName} opacity-60 hover:opacity-100`}
       >
         <div className={headerBase}>
           <div className="flex items-center gap-2.5">
@@ -133,14 +281,18 @@ const FutureLogSection = ({
           </div>
         </div>
 
-        <div className="flex-1 min-h-[120px] flex flex-col items-center justify-center p-4 gap-3 select-none">
+        <div
+          className={`flex flex-1 flex-col items-center justify-center gap-3 select-none ${
+            dragMode ? "min-h-[88px] p-3" : "min-h-[120px] p-4"
+          }`}
+        >
           <div
-            className={`w-12 h-12 rounded-full flex items-center justify-center ${isDark ? "bg-white/5 text-white/20" : "bg-orange-50/50 text-orange-200"}`}
+            className={`w-12 h-12 rounded-full flex items-center justify-center ${emptyIconClass}`}
           >
             <Icon size={20} />
           </div>
           <span
-            className={`text-xs font-medium tracking-wide font-lxgw ${isDark ? "text-white/30" : "text-stone-400"}`}
+            className={`text-xs font-medium tracking-wide font-lxgw ${emptyTextClass}`}
           >
             {emptyText}
           </span>
@@ -151,7 +303,7 @@ const FutureLogSection = ({
 
   // 有数据状态
   return (
-    <div className={`${containerBase} ${className}`}>
+    <div ref={setNodeRef} className={`${containerBase} ${sectionClassName}`}>
       {/* Header */}
       <div className={headerBase}>
         <div className="flex items-center gap-2.5">
@@ -165,53 +317,40 @@ const FutureLogSection = ({
           </span>
         </div>
         <span
-          className={`px-2.5 py-0.5 rounded-full font-mono text-[11px] font-bold border
-          ${
-            isDark
-              ? "bg-white/10 text-orange-200 border-white/5"
-              : "bg-orange-100/50 text-orange-600 border-orange-100"
-          }`}
+          className={`px-2.5 py-0.5 rounded-full font-mono text-[11px] font-bold border ${countClass}`}
         >
           {flatCount}
         </span>
       </div>
 
       {/* Body */}
-      <div className="p-3 flex-1 min-h-[100px] overflow-y-auto max-h-[400px] overscroll-contain custom-scrollbar">
-        <div className="flex flex-col gap-5">
+      <div
+        className={`flex-1 overflow-y-auto overscroll-contain custom-scrollbar ${
+          dragMode ? "min-h-[80px] max-h-[260px] p-2" : "min-h-[100px] max-h-[400px] p-3"
+        }`}
+      >
+        <div className={`flex flex-col ${dragMode ? "gap-3" : "gap-5"}`}>
           {years.map((year) => (
             <div key={year} className="flex flex-col gap-2">
               {year !== "undefined" && (
                 <div className="flex items-center gap-3 px-1 pt-2 pb-1">
                   <div
-                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold
-                    ${isDark ? "bg-white/10 text-white/50" : "bg-stone-100 text-stone-400"}
-                  `}
+                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold ${yearPillClass}`}
                   >
                     <Clock size={10} />
                     {year}
                   </div>
-                  <div
-                    className={`h-px flex-1 ${isDark ? "bg-white/10" : "bg-orange-100/50"}`}
-                  ></div>
+                  <div className={`h-px flex-1 ${yearLineClass}`}></div>
                 </div>
               )}
               {yearGroups[year].map((i: any) => (
-                <DraggableEntryCard
+                <FutureLogEntryCard
                   key={i.id}
                   entry={i}
-                  refresh={() => {}}
-                  isDragEnabled={false}
-                  // ✅ 卡片样式：适配玻璃背景
-                  className={`
-                    !backdrop-blur-none
-                    ${
-                      isDark
-                        ? "!bg-[#2a2725]/80 !border-white/5 !text-stone-200 hover:!bg-[#35312e]"
-                        : "!bg-white/90 !border-orange-100/50 !text-stone-700 hover:!border-orange-200"
-                    }
-                    !shadow-sm
-                  `}
+                  isDark={isDark}
+                  canDrag={Boolean(canDragEntries)}
+                  isMoving={Boolean(movingEntryIds?.has(i.id))}
+                  dragMode={Boolean(dragMode)}
                 />
               ))}
             </div>
@@ -239,6 +378,20 @@ const FutureLogModal = ({ onClose }: Props) => {
   const [futureLogMode, setFutureLogMode] = useState<FutureLogTab>("planning");
   const monthIndexes = useMemo(() => Array.from({ length: 12 }, (_, i) => i), []);
   const currentYear = new Date().getFullYear();
+  const [activeDragEntry, setActiveDragEntry] = useState<any | null>(null);
+  const [activeDragWidth, setActiveDragWidth] = useState<number | null>(null);
+  const [isMonthDragMode, setIsMonthDragMode] = useState(false);
+  const [movingEntryIds, setMovingEntryIds] = useState<Set<string>>(new Set());
+  const isFutureArrangeMode =
+    futureLogMode === "planning" && isMonthDragMode;
+  const canDragFutureEntries = isFutureArrangeMode;
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 180, tolerance: 8 },
+    }),
+  );
 
   const handleClose = useCallback(() => {
     setIsActive(false);
@@ -296,6 +449,27 @@ const FutureLogModal = ({ onClose }: Props) => {
     } catch (e) {
       console.error("Error parsing target_month", entry);
     }
+  };
+
+  const findEntryInLayout = (targetLayout: FutureLayout, id: string) => {
+    const someday = targetLayout.undetermined.find((entry) => entry.id === id);
+    if (someday) return someday;
+
+    for (const group of Object.values(targetLayout.months)) {
+      for (const entries of Object.values(group || {})) {
+        const found = entries.find((entry: any) => entry.id === id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const updateEntryInLayout = (entry: any) => {
+    setLayout((prev) => {
+      const next = removeEntryFromLayout(prev, entry.id);
+      addToLayoutStruct(next, entry);
+      return next;
+    });
   };
 
   const fetchFutureLog = useCallback(async () => {
@@ -392,6 +566,10 @@ const FutureLogModal = ({ onClose }: Props) => {
     return () => window.removeEventListener("keydown", handleEsc);
   }, [handleClose]);
 
+  useEffect(() => {
+    if (futureLogMode !== "planning") setIsMonthDragMode(false);
+  }, [futureLogMode]);
+
   const filterEntries = (entries: any[]) => {
     return entries.filter((entry) => {
       if (isExpiredFutureEntry(entry, currentYear)) return false;
@@ -408,8 +586,52 @@ const FutureLogModal = ({ onClose }: Props) => {
     return newGroup;
   };
 
+  const handleFutureDragStart = (event: DragStartEvent) => {
+    const entryId = event.active.data.current?.entryId;
+    if (typeof entryId !== "string") return;
+    setActiveDragEntry(findEntryInLayout(layout, entryId));
+    const element = document.getElementById(futureEntryDragId(entryId));
+    setActiveDragWidth(element?.getBoundingClientRect().width || null);
+  };
+
+  const handleFutureDragEnd = async (event: DragEndEvent) => {
+    const entryId = event.active.data.current?.entryId;
+    const targetMonth = getFutureDropTargetMonth(event.over?.id, currentYear);
+    setActiveDragEntry(null);
+    setActiveDragWidth(null);
+
+    if (typeof entryId !== "string" || targetMonth === undefined) return;
+
+    const entry = findEntryInLayout(layout, entryId);
+    if (!entry || isSameFutureDropTarget(entry.target_month, targetMonth)) {
+      return;
+    }
+
+    const optimisticEntry = { ...entry, target_month: targetMonth };
+    updateEntryInLayout(optimisticEntry);
+    setMovingEntryIds((current) => new Set(current).add(entryId));
+
+    try {
+      const updated = await entryService.moveFutureEntry(entryId, targetMonth);
+      updateEntryInLayout(updated);
+      entryEventBus.emit("entry:update", updated);
+    } catch (error) {
+      console.error("Failed to move future entry", error);
+      void fetchFutureLog();
+    } finally {
+      setMovingEntryIds((current) => {
+        const next = new Set(current);
+        next.delete(entryId);
+        return next;
+      });
+    }
+  };
+
   const filteredUndetermined = filterEntries(layout.undetermined);
   const undeterminedCount = filteredUndetermined.length;
+  const gridClassName = isFutureArrangeMode
+    ? "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 pb-10"
+    : "grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 pb-10";
 
   return (
     <div
@@ -478,6 +700,34 @@ const FutureLogModal = ({ onClose }: Props) => {
 
           {/* Actions */}
           <div className="flex gap-3 items-center">
+            {futureLogMode === "planning" && (
+              <button
+                type="button"
+                className={`btn btn-sm btn-circle border shadow-sm transition-all duration-300 ${
+                  isFutureArrangeMode
+                    ? "btn-primary text-primary-content border-primary"
+                    : "bg-base-100 text-base-content/70 border-base-200 hover:bg-base-200"
+                }`}
+                onClick={() => setIsMonthDragMode((current) => !current)}
+                title={
+                  isFutureArrangeMode
+                    ? t.futureLog.finishArrange
+                    : t.futureLog.arrangeMonths
+                }
+                aria-label={
+                  isFutureArrangeMode
+                    ? t.futureLog.finishArrange
+                    : t.futureLog.arrangeMonths
+                }
+              >
+                {isFutureArrangeMode ? (
+                  <Check size={16} strokeWidth={3} />
+                ) : (
+                  <ArrowDownUp size={16} strokeWidth={2.5} />
+                )}
+              </button>
+            )}
+
             <button
               className={`btn btn-sm h-10 px-5 rounded-full border-0 shadow-lg gap-2 transition-transform active:scale-95
                 ${isDark ? "bg-orange-600 hover:bg-orange-500 text-white shadow-orange-500/10" : "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-500/20"}
@@ -562,50 +812,114 @@ const FutureLogModal = ({ onClose }: Props) => {
           }}
         >
           {/* ✅ 布局修改：大屏限制为两列 (lg:grid-cols-2) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 pb-10">
-            {/* Someday / Undetermined Box - Full Width */}
-            <div className="col-span-1 md:col-span-2">
-              <FutureLogSection
-                // 传入主题状态
-                isDark={isDark}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={pointerWithin}
+            onDragStart={handleFutureDragStart}
+            onDragEnd={handleFutureDragEnd}
+            onDragCancel={() => {
+              setActiveDragEntry(null);
+              setActiveDragWidth(null);
+            }}
+          >
+            <div className={gridClassName}>
+              {/* Someday / Undetermined Box - Full Width */}
+              <div
                 className={
-                  isDark
-                    ? "bg-amber-900/10 border-dashed border-amber-500/20"
-                    : "bg-amber-50/40 border-dashed border-amber-200"
+                  isFutureArrangeMode
+                    ? "col-span-1"
+                    : "col-span-1 md:col-span-2"
                 }
-                title={t.futureLog.undetermined}
-                yearGroups={{ undefined: filteredUndetermined }}
-                flatCount={undeterminedCount}
-                icon={ListTodo}
-                isSpecial={true}
-                emptyText={t.futureLog.emptySomeday}
-              />
+              >
+                <FutureLogSection
+                  // 传入主题状态
+                  isDark={isDark}
+                  className={
+                    isDark
+                      ? "bg-amber-900/10 border-dashed border-amber-500/20"
+                      : "bg-amber-50/40 border-dashed border-amber-200"
+                  }
+                  title={t.futureLog.undetermined}
+                  yearGroups={{ undefined: filteredUndetermined }}
+                  flatCount={undeterminedCount}
+                  icon={ListTodo}
+                  isSpecial={true}
+                  emptyText={t.futureLog.emptySomeday}
+                  dropId={FUTURE_DROP_SOMEDAY_ID}
+                  canDragEntries={canDragFutureEntries}
+                  movingEntryIds={movingEntryIds}
+                  dragMode={isFutureArrangeMode}
+                />
+              </div>
+
+              {/* Monthly Grid */}
+              {monthIndexes.map((idx) => {
+                const dummyDate = new Date(new Date().getFullYear(), idx, 1);
+                const title = format(dummyDate, "MMMM", { locale: dateLocale });
+                const filteredYearGroups = filterYearGroup(
+                  layout.months[idx] || {},
+                );
+                const totalCount = Object.values(filteredYearGroups).reduce(
+                  (acc, curr) => acc + curr.length,
+                  0,
+                );
+                return (
+                  <FutureLogSection
+                    key={idx}
+                    isDark={isDark} // 传入主题状态
+                    title={title}
+                    yearGroups={filteredYearGroups}
+                    flatCount={totalCount}
+                    icon={CalendarDays}
+                    emptyText={t.futureLog.emptyMonth}
+                    dropId={futureMonthDropId(idx)}
+                    canDragEntries={canDragFutureEntries}
+                    movingEntryIds={movingEntryIds}
+                    dragMode={isFutureArrangeMode}
+                  />
+                );
+              })}
             </div>
 
-            {/* Monthly Grid */}
-            {monthIndexes.map((idx) => {
-              const dummyDate = new Date(new Date().getFullYear(), idx, 1);
-              const title = format(dummyDate, "MMMM", { locale: dateLocale });
-              const filteredYearGroups = filterYearGroup(
-                layout.months[idx] || {},
-              );
-              const totalCount = Object.values(filteredYearGroups).reduce(
-                (acc, curr) => acc + curr.length,
-                0,
-              );
-              return (
-                <FutureLogSection
-                  key={idx}
-                  isDark={isDark} // 传入主题状态
-                  title={title}
-                  yearGroups={filteredYearGroups}
-                  flatCount={totalCount}
-                  icon={CalendarDays}
-                  emptyText={t.futureLog.emptyMonth}
-                />
-              );
-            })}
-          </div>
+            {createPortal(
+              <DragOverlay zIndex={6000}>
+                {activeDragEntry && (
+                  <div
+                    className="cursor-grabbing"
+                    style={{
+                      width:
+                        activeDragWidth !== null
+                          ? activeDragWidth
+                          : undefined,
+                    }}
+                  >
+                    {isFutureArrangeMode ? (
+                      <EntryCard
+                        entry={activeDragEntry}
+                        isOverlay={true}
+                        isDragEnabled={true}
+                        refresh={() => {}}
+                        forceCollapse={true}
+                        disableOverflowCheck={true}
+                        readOnly={true}
+                      />
+                    ) : (
+                      <EntryCard
+                        entry={activeDragEntry}
+                        refresh={() => {}}
+                        isOverlay={true}
+                        isDragEnabled={true}
+                        forceCollapse={true}
+                        disableOverflowCheck={true}
+                        className={futureCardClass(isDark)}
+                      />
+                    )}
+                  </div>
+                )}
+              </DragOverlay>,
+              document.body,
+            )}
+          </DndContext>
         </div>
       </div>
     </div>
