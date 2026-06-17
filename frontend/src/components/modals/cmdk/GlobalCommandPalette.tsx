@@ -39,6 +39,7 @@ import {
   HardDrive,
   RefreshCw,
   Info,
+  Settings,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -292,6 +293,8 @@ export default function GlobalCommandPalette() {
 
       <Command
         label="Global Command Menu"
+        loop={false}
+        disablePointerSelection
         onKeyDown={handleKeyDown}
         className={`
           relative w-full max-w-2xl bg-base-100/95 backdrop-blur-2xl shadow-2xl border border-base-content/10 overflow-hidden
@@ -427,7 +430,14 @@ export default function GlobalCommandPalette() {
                         <Command.Item
                           key={entry.id}
                           onSelect={() => openEntryActions(entry)}
-                          value={`${text} ${entryTags} ${entry.entry_type} ${entry.status} ${entry.id}`}
+                          value={`entry:${entry.id}`}
+                          keywords={[
+                            text,
+                            entryTags,
+                            entry.entry_type,
+                            entry.status,
+                            entry.id,
+                          ]}
                           className="relative flex items-center gap-4 px-5 py-4 rounded-2xl text-base font-medium transition-all duration-200 cursor-pointer group font-lxgw
                                      border border-transparent bg-base-100 shadow-sm
                                      data-[selected=true]:bg-primary/5 data-[selected=true]:border-primary/20 data-[selected=true]:shadow-md data-[selected=true]:scale-[1.01]"
@@ -475,7 +485,8 @@ export default function GlobalCommandPalette() {
                     icon={<PenLine />}
                     label={t.command?.newDaily}
                     subLabel={t.command.subtitle}
-                    value={`${t.command?.newDaily} new daily create n`}
+                    value="command:new-daily"
+                    keywords={["new", "daily", "create", "n", "新建", "日记"]}
                     shortcut="N"
                     onSelect={() =>
                       run(() =>
@@ -490,7 +501,8 @@ export default function GlobalCommandPalette() {
                     icon={<ArrowRight />}
                     label={t.command?.newFuture}
                     subLabel={t.command.futsubtitle}
-                    value={`${t.command?.newFuture} new future log f`}
+                    value="command:new-future"
+                    keywords={["new", "future", "log", "f", "新建", "未来日志"]}
                     onSelect={() =>
                       run(() =>
                         uiEvents.emit("OPEN_ADD_ENTRY", { mode: "future" }),
@@ -508,19 +520,22 @@ export default function GlobalCommandPalette() {
                 <Item
                   icon={<Clock />}
                   label={t.command?.timeline}
-                  value={`${t.command?.timeline} timeline time t view`}
+                  value="command:timeline"
+                  keywords={["timeline", "time", "view", "时间线"]}
                   onSelect={() => run(() => uiEvents.emit("OPEN_TIMELINE"))}
                 />
                 <Item
                   icon={<CalendarCheck />}
                   label={t.command?.futureLog}
-                  value={`${t.command?.futureLog} future log plan calendar`}
+                  value="command:future-log"
+                  keywords={["future", "log", "plan", "calendar", "未来日志"]}
                   onSelect={() => run(() => uiEvents.emit("OPEN_FUTURE_LOG"))}
                 />
                 <Item
                   icon={<Search />}
                   label={t.command?.openSearch}
-                  value={`${t.command?.openSearch} search find s`}
+                  value="command:open-search"
+                  keywords={["search", "find", "s", "搜索"]}
                   shortcut="S"
                   onSelect={() => run(() => uiEvents.emit("OPEN_SEARCH", null))}
                 />
@@ -534,14 +549,16 @@ export default function GlobalCommandPalette() {
                 <Item
                   icon={<Archive />}
                   label={t.common?.archive || "Archive"}
-                  value={`${t.common?.archive} archive archived entries`}
+                  value="command:archive"
+                  keywords={["archive", "archived", "entries", "归档"]}
                   onSelect={() => run(() => navigate("/archive"))}
                 />
                 <Item
                   icon={<FileArchive />}
                   label={t.backup?.title || "Backup & Restore"}
                   subLabel=".BJK / Markdown"
-                  value={`${t.backup?.title} backup export download restore`}
+                  value="command:backup"
+                  keywords={["backup", "export", "download", "restore", "bjk", "markdown", "备份", "导入"]}
                   onSelect={() => run(() => uiEvents.emit("OPEN_BACKUP"))}
                 />
                 <Item
@@ -552,7 +569,8 @@ export default function GlobalCommandPalette() {
                     "Storage"
                   }
                   subLabel={t.attachmentMaintenance?.dailyFolder || "Markdown Folder"}
-                  value={`${t.command?.storage} storage attachments markdown folder`}
+                  value="command:storage"
+                  keywords={["storage", "attachments", "markdown", "folder", "存储", "附件"]}
                   onSelect={() =>
                     run(() => uiEvents.emit("OPEN_ATTACHMENT_MAINTENANCE"))
                   }
@@ -569,7 +587,8 @@ export default function GlobalCommandPalette() {
                       key={tag}
                       icon={<Hash />}
                       label={`#${tag}`}
-                      value={`tag filter hashtag ${tag}`}
+                      value={`tag:${tag}`}
+                      keywords={["tag", "filter", "hashtag", tag]}
                       subLabel={t.command?.filterTag}
                       onSelect={() =>
                         run(() => uiEvents.emit("OPEN_TAG_SEARCH", tag))
@@ -585,13 +604,21 @@ export default function GlobalCommandPalette() {
                 className="space-y-2"
               >
                 <Item
+                  icon={<Settings />}
+                  label={t.command?.settings || "Settings"}
+                  value="command:settings"
+                  keywords={["settings", "preferences", "app", "设置"]}
+                  onSelect={() => run(() => uiEvents.emit("OPEN_SETTINGS"))}
+                />
+                <Item
                   icon={<RefreshCw />}
                   label={
                     t.command?.checkUpdate ||
                     t.common?.checkUpdate ||
                     "Check for Updates"
                   }
-                  value={`${t.command?.checkUpdate} update check version upgrade`}
+                  value="command:check-update"
+                  keywords={["update", "check", "version", "upgrade", "检查更新"]}
                   onSelect={() => run(() => uiEvents.emit("OPEN_CHECK_UPDATE"))}
                 />
                 <Item
@@ -601,7 +628,8 @@ export default function GlobalCommandPalette() {
                     t.common?.versionInfo ||
                     "Version Info"
                   }
-                  value={`${t.command?.versionInfo} version info changelog release`}
+                  value="command:version-info"
+                  keywords={["version", "info", "changelog", "release", "版本信息", "更新日志"]}
                   onSelect={() => run(() => uiEvents.emit("OPEN_VERSION_INFO"))}
                 />
                 <Item
@@ -609,7 +637,8 @@ export default function GlobalCommandPalette() {
                   label={t.command?.theme || "Switch Theme"}
                   subLabel={getThemeLabel()}
                   // ✅ 关键词：包含 system/dark/light 方便搜索
-                  value="switch theme 切换主题 mode dark light system color"
+                  value="command:switch-theme"
+                  keywords={["switch", "theme", "mode", "dark", "light", "system", "color", "切换主题"]}
                   // ⚡️ 修复：直接调用，不传参，不 preventDefault
                   onSelect={() => cycleTheme()}
                 />
@@ -618,7 +647,8 @@ export default function GlobalCommandPalette() {
                   label={t.command?.language || "Switch Language"}
                   subLabel={lang === "zh" ? "中文" : "English"}
                   // ✅ 关键词
-                  value="switch language 切换语言 lang chinese english"
+                  value="command:switch-language"
+                  keywords={["switch", "language", "lang", "chinese", "english", "切换语言"]}
                   // ⚡️ 修复：直接调用
                   onSelect={() => toggleLang()}
                 />

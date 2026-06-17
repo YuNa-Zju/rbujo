@@ -1,71 +1,72 @@
-# Digital Bullet Journal
+# BuJo
 
-Rust/Axum backend plus Vite/React frontend for the Bullet Journal app. Python backend and repair scripts have been replaced by one Rust binary that serves REST API, database migration tools, uploads, calendar feed, backups, and the built frontend.
+BuJo 是一个本地优先的子弹笔记桌面应用。桌面端基于 Tauri 2，前端在 `frontend/`，本地数据、Markdown 磁盘化、附件和备份逻辑在 Rust 侧。
 
-## Quick Start
+## 功能
 
-Migrate the old SQLite database first:
+- Daily Log：按天记录 task / idea / event。
+- Future Log：Planning / Completed 双 tab，并支持拖动调整月份。
+- Markdown 磁盘化：Daily、Future 和 attachments 放在用户选择的项目文件夹中。
+- 附件管理：拖拽上传、引用统计、未引用附件清理。
+- BJK 备份：`.bjk` 是带 `manifest.json` 的可移植备份包，支持双击导入确认。
+- 更新检查：显示当前版本、更新日志和下载进度。
 
-```bash
-cargo run -- migrate-db --source bullet_journal.db --target bullet_journal_v2.db --dry-run
-cargo run -- migrate-db --source bullet_journal.db --target bullet_journal_v2.db --force
-```
+## 开发
 
-Build the frontend:
-
-```bash
-cd frontend
-npm ci
-npm run build
-cd ..
-```
-
-Run the Rust service on port `10001`:
+安装依赖：
 
 ```bash
-cargo run -- serve
-# or, after building release:
-./rbullet-journal serve
+npm --prefix frontend ci
 ```
 
-Default service URL: `http://localhost:10001`.
-
-- Frontend: `/`
-- REST API: `/api/*`
-- Uploads: `/static/uploads/*`
-
-## Documentation
-
-- [Current API](docs/api.md)
-- [Frontend](docs/frontend.md)
-- [Database migration and Future Log logic](docs/migration.md)
-- [Testing](docs/testing.md)
-- [Operations](docs/operations.md)
-
-## Stack
-
-- Backend: Rust, Axum, SQLx
-- Frontend: React, Vite, TypeScript, Tailwind CSS, DaisyUI
-- Database: SQLite
-- Auth: bcrypt password hashes, HS256 JWT access/refresh/calendar tokens
-
-## CLI
+启动桌面开发模式：
 
 ```bash
-cargo run -- users list
-cargo run -- users passwd <username> <new_password>
-cargo run -- users delete <username>
+npm --prefix frontend run tauri:dev
 ```
 
-## Environment
+只构建前端：
 
-The service reads `.env` when present.
+```bash
+npm --prefix frontend run build
+```
 
-- `DATABASE_URL`: default `sqlite://bullet_journal_v2.db`
-- `BIND_ADDR`: default `0.0.0.0:10001`
-- `SECRET_KEY`: JWT and recovery-key secret
-- `API_BASE_URL`: public origin used for upload URLs and calendar feed URLs, default `http://localhost:10001`
-- `UPLOAD_DIR`: default `uploads`
-- `FRONTEND_DIST`: default `frontend/dist`
+运行桌面打包：
 
-`API_BASE_URL` should not include `/api`.
+```bash
+npm --prefix frontend run tauri:build
+```
+
+## 验证
+
+合并前至少运行：
+
+```bash
+npm --prefix frontend run test:frontend
+npm --prefix frontend run build
+cargo test
+git diff --check
+```
+
+说明：当前 `npm --prefix frontend run lint` 会被既有 lint debt 拦住，不作为发布门禁。
+
+## 发布
+
+补丁版本在干净的 `master` 上运行：
+
+```bash
+npm --prefix frontend run release:patch
+```
+
+该脚本会 bump 版本、提交 `Release vX.Y.Z`、推送 `master` 和 `vX.Y.Z` tag，从而触发 GitHub Actions 构建 macOS / Windows 安装包。
+
+## macOS 文件夹权限
+
+如果 Markdown 项目文件夹放在 `Documents` 等受保护目录，macOS 可能会提示授权。当前应用保存的是普通项目路径；后续要彻底减少重复授权，需要为用户选择的项目文件夹保存 security-scoped bookmark，并在访问 Daily / Future / attachments 前恢复该授权。
+
+## 代码结构
+
+- `frontend/src/services/entryService.ts`：前端到 Tauri command 的数据服务。
+- `src-tauri/src/lib.rs`：Tauri command、原生菜单、窗口和更新入口。
+- `src/local.rs`：本地 SQLite、Markdown、附件和备份逻辑。
+- `docs/`：API、迁移、测试、发布和后续实现计划。

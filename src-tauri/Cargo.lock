@@ -3530,6 +3530,7 @@ dependencies = [
  "chrono",
  "clap",
  "dotenvy",
+ "flate2",
  "form_urlencoded",
  "hmac",
  "jsonwebtoken",

@@ -31,6 +31,7 @@ struct DesktopState {
 struct PendingUpdate(Mutex<Option<Update>>);
 
 const BJK_OPEN_EVENT: &str = "file:open-bjk";
+const MAIN_WINDOW_LABEL: &str = "main";
 const MAX_BJK_IMPORT_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Serialize)]
@@ -734,10 +735,16 @@ fn menu_event_name(menu_id: &str) -> Option<&'static str> {
         "archive" => Some("menu:archive"),
         "backup" => Some("menu:backup"),
         "attachment_maintenance" => Some("menu:attachment-maintenance"),
+        "settings" => Some("menu:settings"),
         "check_update" => Some("menu:check-update"),
         "version_info" => Some("menu:version-info"),
         _ => None,
     }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn native_menu_enabled() -> bool {
+    cfg!(target_os = "macos")
 }
 
 fn filename_for_path(path: &Path) -> String {
@@ -797,11 +804,24 @@ fn pending_bjk_import_from_url(url: &Url) -> Option<PendingBjkImport> {
 }
 
 fn show_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+fn emit_to_main_window(app: &AppHandle, event_name: &str) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.emit(event_name, ());
+    } else {
+        let _ = app.emit(event_name, ());
+    }
+}
+
+fn open_main_and_emit(app: &AppHandle, event_name: &str) {
+    show_main_window(app);
+    emit_to_main_window(app, event_name);
 }
 
 fn remember_pending_bjk_import(app: &AppHandle, pending: PendingBjkImport) -> bool {
@@ -820,7 +840,7 @@ fn remember_pending_bjk_import(app: &AppHandle, pending: PendingBjkImport) -> bo
 }
 
 fn emit_bjk_import_request(app: &AppHandle, pending: PendingBjkImport) {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = window.emit(BJK_OPEN_EVENT, pending);
     } else {
         let _ = app.emit(BJK_OPEN_EVENT, pending);
@@ -834,135 +854,138 @@ fn handle_bjk_import_request(app: &AppHandle, pending: PendingBjkImport) {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(target_os = "macos")]
+fn build_native_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let app_menu = Submenu::with_items(
+        app,
+        "BuJo",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, Some("关于 BuJo"), None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "settings", "设置", true, Some("CmdOrCtrl+,"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, Some("隐藏 BuJo"))?,
+            &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
+            &PredefinedMenuItem::show_all(app, Some("全部显示"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, Some("退出 BuJo"))?,
+        ],
+    )?;
+    let file_menu = Submenu::with_items(
+        app,
+        "文件",
+        true,
+        &[
+            &MenuItem::with_id(app, "new_entry", "新建条目", true, Some("CmdOrCtrl+N"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, Some("关闭窗口"))?,
+        ],
+    )?;
+    let edit_menu = Submenu::with_items(
+        app,
+        "编辑",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, Some("撤销"))?,
+            &PredefinedMenuItem::redo(app, Some("重做"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, Some("剪切"))?,
+            &PredefinedMenuItem::copy(app, Some("复制"))?,
+            &PredefinedMenuItem::paste(app, Some("粘贴"))?,
+            &PredefinedMenuItem::select_all(app, Some("全选"))?,
+        ],
+    )?;
+    let view_menu = Submenu::with_items(
+        app,
+        "视图",
+        true,
+        &[
+            &MenuItem::with_id(app, "search", "搜索", true, Some("CmdOrCtrl+F"))?,
+            &MenuItem::with_id(app, "future_log", "未来日志", true, Some("CmdOrCtrl+L"))?,
+        ],
+    )?;
+    let data_menu = Submenu::with_items(
+        app,
+        "数据",
+        true,
+        &[
+            &MenuItem::with_id(app, "archive", "归档", true, Some("CmdOrCtrl+Shift+A"))?,
+            &MenuItem::with_id(app, "backup", "备份与导入", true, Some("CmdOrCtrl+Shift+B"))?,
+            &MenuItem::with_id(
+                app,
+                "attachment_maintenance",
+                "存储管理",
+                true,
+                Some("CmdOrCtrl+Shift+M"),
+            )?,
+        ],
+    )?;
+    let help_menu = Submenu::with_items(
+        app,
+        "帮助",
+        true,
+        &[
+            &MenuItem::with_id(
+                app,
+                "check_update",
+                "检查更新...",
+                true,
+                Some("CmdOrCtrl+Shift+U"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "version_info",
+                "版本信息",
+                true,
+                Some("CmdOrCtrl+Shift+I"),
+            )?,
+        ],
+    )?;
+    Menu::with_items(
+        app,
+        &[
+            &app_menu, &file_menu, &edit_menu, &view_menu, &data_menu, &help_menu,
+        ],
+    )
+}
+
 fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
-    if let tauri::RunEvent::Opened { urls } = event {
-        if let Some(pending) = urls.iter().find_map(pending_bjk_import_from_url) {
-            handle_bjk_import_request(app, pending);
-        } else {
+    match event {
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+        tauri::RunEvent::Opened { urls } => {
+            if let Some(pending) = urls.iter().find_map(pending_bjk_import_from_url) {
+                handle_bjk_import_request(app, pending);
+            } else {
+                show_main_window(app);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => {
             show_main_window(app);
         }
+        _ => {}
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
-fn handle_run_event(_app: &AppHandle, _event: tauri::RunEvent) {}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+    let builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(pending) = pending_bjk_import_from_args(argv) {
                 handle_bjk_import_request(app, pending);
             } else {
                 show_main_window(app);
             }
-        }))
-        .menu(|app| {
-            let app_menu = Submenu::with_items(
-                app,
-                "BuJo",
-                true,
-                &[
-                    &PredefinedMenuItem::about(app, Some("关于 BuJo"), None)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::hide(app, Some("隐藏 BuJo"))?,
-                    &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
-                    &PredefinedMenuItem::show_all(app, Some("全部显示"))?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::quit(app, Some("退出 BuJo"))?,
-                ],
-            )?;
-            let file_menu = Submenu::with_items(
-                app,
-                "文件",
-                true,
-                &[
-                    &MenuItem::with_id(app, "new_entry", "新建条目", true, Some("CmdOrCtrl+N"))?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::close_window(app, Some("关闭窗口"))?,
-                ],
-            )?;
-            let edit_menu = Submenu::with_items(
-                app,
-                "编辑",
-                true,
-                &[
-                    &PredefinedMenuItem::undo(app, Some("撤销"))?,
-                    &PredefinedMenuItem::redo(app, Some("重做"))?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::cut(app, Some("剪切"))?,
-                    &PredefinedMenuItem::copy(app, Some("复制"))?,
-                    &PredefinedMenuItem::paste(app, Some("粘贴"))?,
-                    &PredefinedMenuItem::select_all(app, Some("全选"))?,
-                ],
-            )?;
-            let view_menu = Submenu::with_items(
-                app,
-                "视图",
-                true,
-                &[
-                    &MenuItem::with_id(app, "search", "搜索", true, Some("CmdOrCtrl+F"))?,
-                    &MenuItem::with_id(app, "future_log", "未来日志", true, Some("CmdOrCtrl+L"))?,
-                ],
-            )?;
-            let data_menu = Submenu::with_items(
-                app,
-                "数据",
-                true,
-                &[
-                    &MenuItem::with_id(app, "archive", "归档", true, Some("CmdOrCtrl+Shift+A"))?,
-                    &MenuItem::with_id(
-                        app,
-                        "backup",
-                        "备份与导入",
-                        true,
-                        Some("CmdOrCtrl+Shift+B"),
-                    )?,
-                    &MenuItem::with_id(
-                        app,
-                        "attachment_maintenance",
-                        "存储管理",
-                        true,
-                        Some("CmdOrCtrl+Shift+M"),
-                    )?,
-                ],
-            )?;
-            let help_menu = Submenu::with_items(
-                app,
-                "帮助",
-                true,
-                &[
-                    &MenuItem::with_id(
-                        app,
-                        "check_update",
-                        "检查更新...",
-                        true,
-                        Some("CmdOrCtrl+Shift+U"),
-                    )?,
-                    &MenuItem::with_id(
-                        app,
-                        "version_info",
-                        "版本信息",
-                        true,
-                        Some("CmdOrCtrl+Shift+I"),
-                    )?,
-                ],
-            )?;
-            Menu::with_items(
-                app,
-                &[
-                    &app_menu, &file_menu, &edit_menu, &view_menu, &data_menu, &help_menu,
-                ],
-            )
-        })
+        }));
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(build_native_menu);
+
+    builder
         .on_menu_event(|app, event| {
             if let Some(event_name) = menu_event_name(event.id().as_ref()) {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.emit(event_name, ());
-                } else {
-                    let _ = app.emit(event_name, ());
-                }
+                open_main_and_emit(app, event_name);
             }
         })
         .plugin(tauri_plugin_dialog::init())
@@ -1052,8 +1075,8 @@ fn safe_export_archive_filename(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        bjk_path_from_arg, bjk_path_from_args, menu_event_name, pending_bjk_import_from_path,
-        pending_bjk_import_from_url,
+        bjk_path_from_arg, bjk_path_from_args, menu_event_name, native_menu_enabled,
+        pending_bjk_import_from_path, pending_bjk_import_from_url,
     };
     use std::path::PathBuf;
     use url::Url;
@@ -1069,9 +1092,15 @@ mod tests {
             menu_event_name("attachment_maintenance"),
             Some("menu:attachment-maintenance")
         );
+        assert_eq!(menu_event_name("settings"), Some("menu:settings"));
         assert_eq!(menu_event_name("check_update"), Some("menu:check-update"));
         assert_eq!(menu_event_name("version_info"), Some("menu:version-info"));
         assert_eq!(menu_event_name("unknown"), None);
+    }
+
+    #[test]
+    fn native_menu_is_macos_only() {
+        assert_eq!(native_menu_enabled(), cfg!(target_os = "macos"));
     }
 
     #[test]
