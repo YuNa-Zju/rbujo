@@ -600,9 +600,11 @@ async fn choose_markdown_workspace(
     let path = folder_path
         .into_path()
         .map_err(|_| "Selected markdown workspace is not a local folder".to_string())?;
+    let bookmark =
+        rbullet_journal::macos_security_scope::create_bookmark(&path).map_err(to_error)?;
     state
         .backend
-        .set_markdown_workspace(path)
+        .set_markdown_workspace_authorization(path, bookmark)
         .await
         .map(Some)
         .map_err(to_error)

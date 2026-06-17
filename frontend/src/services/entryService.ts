@@ -54,6 +54,7 @@ export interface DailyMarkdownFile {
 export interface MarkdownWorkspace {
   absolute_path: string;
   is_default: boolean;
+  has_persisted_access: boolean;
 }
 
 export interface PendingBjkImport {

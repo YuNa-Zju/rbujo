@@ -25,6 +25,7 @@ const LOCAL_USERNAME: &str = "local";
 const LOCAL_PASSWORD_PLACEHOLDER: &str = "local_desktop_profile";
 const EMBEDDING_DIMS: usize = 256;
 const MARKDOWN_WORKSPACE_SETTING_KEY: &str = "markdown_workspace_path";
+const MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY: &str = "markdown_workspace_bookmark";
 const ATTACHMENT_DIR: &str = "attachments";
 const LEGACY_UPLOAD_DIR: &str = "uploads";
 const FUTURE_MARKDOWN_SOMEDAY_KEY: &str = "future:someday";
@@ -168,6 +169,7 @@ pub struct DailyMarkdownFile {
 pub struct MarkdownWorkspace {
     pub absolute_path: String,
     pub is_default: bool,
+    pub has_persisted_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -483,26 +485,55 @@ impl LocalBackend {
             .await?
             .map(PathBuf::from);
         let path = configured.unwrap_or_else(|| default_path.clone());
+        let bookmark = self
+            .get_setting(MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY)
+            .await?;
+        if let Some(bookmark) = bookmark.as_deref() {
+            let _ = crate::macos_security_scope::restore_access(bookmark);
+        }
         Ok(MarkdownWorkspace {
             absolute_path: path.to_string_lossy().to_string(),
             is_default: path == default_path,
+            has_persisted_access: bookmark.is_some(),
         })
     }
 
     pub async fn set_markdown_workspace(&self, path: PathBuf) -> AppResult<MarkdownWorkspace> {
+        self.set_markdown_workspace_authorization(path, None).await
+    }
+
+    pub async fn set_markdown_workspace_authorization(
+        &self,
+        path: PathBuf,
+        bookmark: Option<String>,
+    ) -> AppResult<MarkdownWorkspace> {
         if path.as_os_str().is_empty() {
             return Err(AppError::BadRequest(
                 "Markdown workspace path cannot be empty".to_string(),
             ));
         }
 
+        let bookmark = bookmark.filter(|bookmark| !bookmark.trim().is_empty());
         let current_path = self.markdown_workspace_path().await?;
+        if let Some(bookmark) = bookmark.as_deref() {
+            let _ = crate::macos_security_scope::restore_access(bookmark);
+        }
         if !same_path(&current_path, &path) {
             self.move_markdown_workspace(&current_path, &path).await?;
         }
 
         self.set_setting(MARKDOWN_WORKSPACE_SETTING_KEY, &path.to_string_lossy())
             .await?;
+        match bookmark {
+            Some(bookmark) => {
+                self.set_setting(MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY, &bookmark)
+                    .await?;
+            }
+            _ => {
+                self.delete_setting(MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY)
+                    .await?;
+            }
+        }
         tokio::fs::create_dir_all(path.join(ATTACHMENT_DIR))
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
@@ -555,6 +586,15 @@ impl LocalBackend {
         .bind(now_string())
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    async fn delete_setting(&self, key: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM app_settings WHERE owner_id = ? AND key = ?")
+            .bind(self.owner_id)
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

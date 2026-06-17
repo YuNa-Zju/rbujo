@@ -833,6 +833,64 @@ async fn markdown_workspace_switch_moves_attachments_with_project_folder() {
 }
 
 #[tokio::test]
+async fn markdown_workspace_persists_selected_folder_authorization() {
+    let dir = temp_app_dir("workspace-bookmark");
+    let workspace = temp_app_dir("workspace-bookmark-target");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+
+    let selected = backend
+        .set_markdown_workspace_authorization(
+            workspace.clone(),
+            Some("bookmark-data-for-selected-folder".to_string()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(selected.absolute_path, workspace.to_string_lossy());
+    assert!(selected.has_persisted_access);
+
+    let reopened = LocalBackend::open(dir.clone()).await.unwrap();
+    let persisted = reopened.get_markdown_workspace().await.unwrap();
+    assert_eq!(persisted.absolute_path, workspace.to_string_lossy());
+    assert!(persisted.has_persisted_access);
+
+    fs::remove_dir_all(workspace).ok();
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_workspace_clears_authorization_when_no_bookmark_is_saved() {
+    let dir = temp_app_dir("workspace-bookmark-clear");
+    let first_workspace = temp_app_dir("workspace-bookmark-clear-first");
+    let second_workspace = temp_app_dir("workspace-bookmark-clear-second");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+
+    backend
+        .set_markdown_workspace_authorization(
+            first_workspace.clone(),
+            Some("old-bookmark".to_string()),
+        )
+        .await
+        .unwrap();
+    let updated = backend
+        .set_markdown_workspace_authorization(second_workspace.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(updated.absolute_path, second_workspace.to_string_lossy());
+    assert!(!updated.has_persisted_access);
+
+    let reopened = LocalBackend::open(dir.clone()).await.unwrap();
+    let persisted = reopened.get_markdown_workspace().await.unwrap();
+    assert_eq!(persisted.absolute_path, second_workspace.to_string_lossy());
+    assert!(!persisted.has_persisted_access);
+
+    fs::remove_dir_all(first_workspace).ok();
+    fs::remove_dir_all(second_workspace).ok();
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn batch_delete_entries_ignores_missing_ids_for_import_undo() {
     let dir = temp_app_dir("batch-delete-missing-ids");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
