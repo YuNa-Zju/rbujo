@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import test from "node:test";
+import pako from "pako";
 
 import {
   buildBackupObject,
+  buildBjkArchive,
   importBackupObject,
+  parseBjkArchive,
 } from "../src/services/dataBackupService.ts";
 
 const sha256For123 =
@@ -132,4 +136,48 @@ test("backup import rejects attachments with mismatched hashes", async () => {
       ),
     /Attachment hash mismatch/,
   );
+});
+
+test("bjk export is a zip container with manifest and gzip payload", () => {
+  const backup = buildBackupObject(
+    [
+      {
+        id: "entry-1",
+        content: "future sync seed",
+      },
+    ],
+    [],
+    123,
+  );
+
+  const archive = buildBjkArchive(backup, new Date("2026-06-17T00:00:00.000Z"));
+  assert.deepEqual(Array.from(archive.slice(0, 4)), [0x50, 0x4b, 0x03, 0x04]);
+
+  const parsed = parseBjkArchive(archive);
+  assert.equal(parsed.manifest?.format, "fun.yunazju.rbujo.bjk");
+  assert.equal(parsed.manifest?.container_version, 1);
+  assert.equal(parsed.manifest?.backup.count, 1);
+  assert.equal(parsed.manifest?.payload.path, "data/backup.json.gz");
+  assert.equal(parsed.backupObject.header, "BUJO_SECURE_BACKUP_V1");
+  assert.equal(parsed.backupObject.data[0].content, "future sync seed");
+});
+
+test("bjk import accepts legacy base64 gzip payloads", () => {
+  const backup = buildBackupObject(
+    [
+      {
+        id: "entry-legacy",
+        content: "legacy payload",
+      },
+    ],
+    [],
+    456,
+  );
+  const compressed = pako.gzip(JSON.stringify(backup));
+  const legacyText = Buffer.from(compressed).toString("base64");
+
+  const parsed = parseBjkArchive(new TextEncoder().encode(legacyText));
+  assert.equal(parsed.manifest, null);
+  assert.equal(parsed.backupObject.header, "BUJO_SECURE_BACKUP_V1");
+  assert.equal(parsed.backupObject.data[0].content, "legacy payload");
 });

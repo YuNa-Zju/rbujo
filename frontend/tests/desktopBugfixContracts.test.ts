@@ -24,6 +24,27 @@ test("desktop app uses BuJo as its ASCII bundle brand without changing updater i
   assert.match(menuSource, /退出 BuJo/);
 });
 
+test("desktop bundle registers bjk backup file association", async () => {
+  const configPath = path.resolve(
+    import.meta.dirname,
+    "../../src-tauri/tauri.conf.json",
+  );
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  const bjkAssociation = config.bundle.fileAssociations?.find((association: any) =>
+    association.ext?.includes("bjk"),
+  );
+
+  assert.ok(bjkAssociation);
+  assert.equal(bjkAssociation.name, "Bullet Journal Backup");
+  assert.equal(bjkAssociation.description, "子弹笔记备份文件");
+  assert.equal(bjkAssociation.role, "Editor");
+  assert.equal(bjkAssociation.mimeType, "application/vnd.yunazju.rbujo.backup");
+  assert.deepEqual(bjkAssociation.exportedType, {
+    identifier: "fun.yunazju.rbujo.bjk",
+    conformsTo: ["public.zip-archive"],
+  });
+});
+
 test("windows release binary uses gui subsystem instead of console subsystem", async () => {
   const mainPath = path.resolve(import.meta.dirname, "../../src-tauri/src/main.rs");
   const source = await readFile(mainPath, "utf8");

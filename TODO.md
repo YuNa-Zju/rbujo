@@ -13,4 +13,23 @@
 - [x]Daily/文件夹中按年份-月份分类
 - [x] 之后附件也放在此
 - [x] 更新日志现在是release body，请你也需要同步修改
+
+- [x]在bjk中打包进入manifest.json记录数据，并且伪装成压缩包
+  在系统中注册bjk的默认打开方式
+
+```json
+"tauri": {
+  "bundle": {
+    "fileAssociations": [
+      {
+        "ext": "bjk",
+        "name": "Bullet Journal Backup",
+        "description": "子弹笔记备份文件",
+        "role": "Editor"
+      }
+    ]
+  }
+}
+```
+
 - [ ]请你每个功能分别开发，分别建立分支，最后合并到master

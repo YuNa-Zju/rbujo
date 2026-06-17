@@ -7,6 +7,13 @@ import {
 
 // 文件头标识
 const BACKUP_HEADER = "BUJO_SECURE_BACKUP_V1";
+const BJK_FORMAT = "fun.yunazju.rbujo.bjk";
+const BJK_CONTAINER_VERSION = 1;
+const BJK_MANIFEST_PATH = "manifest.json";
+const BJK_PAYLOAD_PATH = "data/backup.json.gz";
+const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
+const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 
 interface PortableAttachment {
   relative_path: string;
@@ -24,6 +31,36 @@ interface BackupObject {
   attachments?: PortableAttachment[];
 }
 
+export interface BjkManifest {
+  format: typeof BJK_FORMAT;
+  container_version: typeof BJK_CONTAINER_VERSION;
+  created_at: string;
+  app: {
+    name: "BuJo";
+    identifier: "fun.yunazju.rbujo";
+  };
+  backup: {
+    header: typeof BACKUP_HEADER;
+    version: BackupObject["version"];
+    timestamp: number;
+    count: number;
+    attachments_count: number;
+  };
+  payload: {
+    path: typeof BJK_PAYLOAD_PATH;
+    media_type: "application/json";
+    compression: "gzip";
+  };
+  compatibility: {
+    legacy_base64_gzip_import: true;
+  };
+}
+
+interface ParsedBjkArchive {
+  manifest: BjkManifest | null;
+  backupObject: BackupObject;
+}
+
 interface BackupImportServices {
   restoreUpload: (upload: {
     filename: string;
@@ -37,7 +74,274 @@ const filenameFromPath = (relativePath: string) =>
 
 const loadEntryService = async () => (await import("./entryService")).entryService;
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 const sha256Pattern = /^[a-f0-9]{64}$/i;
+
+const crc32Table = new Uint32Array(256);
+for (let i = 0; i < crc32Table.length; i += 1) {
+  let value = i;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  crc32Table[i] = value >>> 0;
+}
+
+const crc32 = (bytes: Uint8Array) => {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value = crc32Table[(value ^ byte) & 0xff] ^ (value >>> 8);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+};
+
+const concatBytes = (chunks: Uint8Array[]) => {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+};
+
+const toUint8Array = (input: ArrayBuffer | Uint8Array | string) => {
+  if (typeof input === "string") return textEncoder.encode(input);
+  if (input instanceof Uint8Array) return input;
+  return new Uint8Array(input);
+};
+
+const writeStoredZip = (entries: Array<{ name: string; data: Uint8Array }>) => {
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    if (entry.data.byteLength > 0xffffffff) {
+      throw new Error(`BJK entry is too large: ${entry.name}`);
+    }
+    const nameBytes = textEncoder.encode(entry.name);
+    const checksum = crc32(entry.data);
+    const localHeader = new Uint8Array(30 + nameBytes.byteLength);
+    const localView = new DataView(localHeader.buffer);
+    localView.setUint32(0, ZIP_LOCAL_FILE_HEADER_SIGNATURE, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(6, 0, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint16(10, 0, true);
+    localView.setUint16(12, 0, true);
+    localView.setUint32(14, checksum, true);
+    localView.setUint32(18, entry.data.byteLength, true);
+    localView.setUint32(22, entry.data.byteLength, true);
+    localView.setUint16(26, nameBytes.byteLength, true);
+    localView.setUint16(28, 0, true);
+    localHeader.set(nameBytes, 30);
+    localParts.push(localHeader, entry.data);
+
+    const centralHeader = new Uint8Array(46 + nameBytes.byteLength);
+    const centralView = new DataView(centralHeader.buffer);
+    centralView.setUint32(0, ZIP_CENTRAL_DIRECTORY_SIGNATURE, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0, true);
+    centralView.setUint16(10, 0, true);
+    centralView.setUint16(12, 0, true);
+    centralView.setUint16(14, 0, true);
+    centralView.setUint32(16, checksum, true);
+    centralView.setUint32(20, entry.data.byteLength, true);
+    centralView.setUint32(24, entry.data.byteLength, true);
+    centralView.setUint16(28, nameBytes.byteLength, true);
+    centralView.setUint16(30, 0, true);
+    centralView.setUint16(32, 0, true);
+    centralView.setUint16(34, 0, true);
+    centralView.setUint16(36, 0, true);
+    centralView.setUint32(38, 0, true);
+    centralView.setUint32(42, offset, true);
+    centralHeader.set(nameBytes, 46);
+    centralParts.push(centralHeader);
+
+    offset += localHeader.byteLength + entry.data.byteLength;
+  }
+
+  const centralDirectory = concatBytes(centralParts);
+  const endRecord = new Uint8Array(22);
+  const endView = new DataView(endRecord.buffer);
+  endView.setUint32(0, ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE, true);
+  endView.setUint16(4, 0, true);
+  endView.setUint16(6, 0, true);
+  endView.setUint16(8, entries.length, true);
+  endView.setUint16(10, entries.length, true);
+  endView.setUint32(12, centralDirectory.byteLength, true);
+  endView.setUint32(16, offset, true);
+  endView.setUint16(20, 0, true);
+
+  return concatBytes([...localParts, centralDirectory, endRecord]);
+};
+
+const readZipEntries = (bytes: Uint8Array) => {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const entries = new Map<string, Uint8Array>();
+  let offset = 0;
+
+  while (offset + 4 <= bytes.byteLength) {
+    const signature = view.getUint32(offset, true);
+    if (
+      signature === ZIP_CENTRAL_DIRECTORY_SIGNATURE ||
+      signature === ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE
+    ) {
+      break;
+    }
+    if (signature !== ZIP_LOCAL_FILE_HEADER_SIGNATURE) {
+      throw new Error("Invalid BJK zip container");
+    }
+
+    const flags = view.getUint16(offset + 6, true);
+    const method = view.getUint16(offset + 8, true);
+    const checksum = view.getUint32(offset + 14, true);
+    const compressedSize = view.getUint32(offset + 18, true);
+    const uncompressedSize = view.getUint32(offset + 22, true);
+    const nameLength = view.getUint16(offset + 26, true);
+    const extraLength = view.getUint16(offset + 28, true);
+    if (flags & 0x08) {
+      throw new Error("Unsupported BJK zip data descriptor");
+    }
+
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > bytes.byteLength) {
+      throw new Error("Truncated BJK zip entry");
+    }
+
+    const name = textDecoder.decode(bytes.slice(nameStart, nameStart + nameLength));
+    const compressed = bytes.slice(dataStart, dataEnd);
+    const data =
+      method === 0
+        ? compressed
+        : method === 8
+          ? pako.inflateRaw(compressed)
+          : null;
+    if (!data) throw new Error(`Unsupported BJK zip compression method: ${method}`);
+    if (data.byteLength !== uncompressedSize) {
+      throw new Error(`Invalid BJK zip size for ${name}`);
+    }
+    if (crc32(data) !== checksum) {
+      throw new Error(`Invalid BJK zip checksum for ${name}`);
+    }
+    entries.set(name, data);
+    offset = dataEnd;
+  }
+
+  if (entries.size === 0) {
+    throw new Error("Empty BJK zip container");
+  }
+  return entries;
+};
+
+const isZipContainer = (bytes: Uint8Array) =>
+  bytes.length >= 4 &&
+  bytes[0] === 0x50 &&
+  bytes[1] === 0x4b &&
+  bytes[2] === 0x03 &&
+  bytes[3] === 0x04;
+
+const buildBjkManifest = (
+  backupObject: BackupObject,
+  createdAt: Date,
+): BjkManifest => ({
+  format: BJK_FORMAT,
+  container_version: BJK_CONTAINER_VERSION,
+  created_at: createdAt.toISOString(),
+  app: {
+    name: "BuJo",
+    identifier: "fun.yunazju.rbujo",
+  },
+  backup: {
+    header: backupObject.header,
+    version: backupObject.version,
+    timestamp: backupObject.timestamp,
+    count: backupObject.count,
+    attachments_count: backupObject.attachments?.length ?? 0,
+  },
+  payload: {
+    path: BJK_PAYLOAD_PATH,
+    media_type: "application/json",
+    compression: "gzip",
+  },
+  compatibility: {
+    legacy_base64_gzip_import: true,
+  },
+});
+
+const gzipBackupObject = (backupObject: BackupObject) =>
+  pako.gzip(JSON.stringify(backupObject));
+
+export const buildBjkArchive = (
+  backupObject: BackupObject,
+  createdAt = new Date(),
+) => {
+  const manifest = buildBjkManifest(backupObject, createdAt);
+  const manifestBytes = textEncoder.encode(
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+  const payloadBytes = gzipBackupObject(backupObject);
+
+  return writeStoredZip([
+    { name: BJK_MANIFEST_PATH, data: manifestBytes },
+    { name: BJK_PAYLOAD_PATH, data: payloadBytes },
+  ]);
+};
+
+const parseGzippedBackupObject = (bytes: Uint8Array): BackupObject =>
+  JSON.parse(pako.ungzip(bytes, { to: "string" }));
+
+const parseLegacyBackupText = (text: string): BackupObject => {
+  const binaryString = atob(text.trim());
+  const compressed = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
+  return parseGzippedBackupObject(compressed);
+};
+
+export const parseBjkArchive = (
+  input: ArrayBuffer | Uint8Array | string,
+): ParsedBjkArchive => {
+  const bytes = toUint8Array(input);
+
+  if (!isZipContainer(bytes)) {
+    return {
+      manifest: null,
+      backupObject: parseLegacyBackupText(textDecoder.decode(bytes)),
+    };
+  }
+
+  const entries = readZipEntries(bytes);
+  const manifestBytes = entries.get(BJK_MANIFEST_PATH);
+  if (!manifestBytes) {
+    throw new Error("Invalid BJK package: missing manifest.json");
+  }
+
+  const manifest = JSON.parse(textDecoder.decode(manifestBytes)) as BjkManifest;
+  if (manifest.format !== BJK_FORMAT) {
+    throw new Error("Invalid BJK package format");
+  }
+  if (manifest.container_version !== BJK_CONTAINER_VERSION) {
+    throw new Error(
+      `Unsupported BJK container version: ${manifest.container_version}`,
+    );
+  }
+
+  const payloadPath = manifest.payload?.path || BJK_PAYLOAD_PATH;
+  const payloadBytes = entries.get(payloadPath);
+  if (!payloadBytes) {
+    throw new Error(`Invalid BJK package: missing ${payloadPath}`);
+  }
+
+  return {
+    manifest,
+    backupObject: parseGzippedBackupObject(payloadBytes),
+  };
+};
 
 const sha256Hex = async (bytes: Uint8Array) => {
   if (!globalThis.crypto?.subtle) {
@@ -138,16 +442,8 @@ export const dataBackupService = {
       const entries = await entryService.getAllForBackup();
       const uploads = await entryService.listUploads();
       const backupObj = buildBackupObject(entries, uploads);
-
-      const jsonStr = JSON.stringify(backupObj);
-      const compressed = pako.gzip(jsonStr);
-
-      // 转 Base64
-      const base64 = btoa(
-        Array.from(compressed, (byte) => String.fromCharCode(byte)).join(""),
-      );
-
-      const blob = new Blob([base64], { type: "application/octet-stream" });
+      const archive = buildBjkArchive(backupObj);
+      const blob = new Blob([archive], { type: "application/zip" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -181,16 +477,9 @@ export const dataBackupService = {
 
       reader.onload = async (event) => {
         try {
-          const base64Content = event.target?.result as string;
-          if (!base64Content) throw new Error("File is empty");
-
-          // 1. 解压
-          const binaryString = atob(base64Content);
-          const charData = Uint8Array.from(binaryString, (c) =>
-            c.charCodeAt(0),
-          );
-          const decompressedStr = pako.ungzip(charData, { to: "string" });
-          const backupObject = JSON.parse(decompressedStr);
+          const fileContent = event.target?.result;
+          if (!fileContent) throw new Error("File is empty");
+          const { backupObject } = parseBjkArchive(fileContent as ArrayBuffer);
 
           // 2. 校验 + 恢复附件 + 导入条目
           const response: ImportResponse = await importBackupObject(backupObject);
@@ -211,7 +500,7 @@ export const dataBackupService = {
       };
 
       reader.onerror = (e) => reject(e);
-      reader.readAsText(file);
+      reader.readAsArrayBuffer(file);
     });
   },
 
