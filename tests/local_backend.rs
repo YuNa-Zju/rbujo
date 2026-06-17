@@ -19,12 +19,12 @@ fn sqlite_url(dir: &std::path::Path) -> String {
     format!("sqlite://{}", dir.join("rbujo.sqlite3").display())
 }
 
-fn age_file_past_upload_grace(path: &Path) {
-    let file = fs::OpenOptions::new().write(true).open(path).unwrap();
-    file.set_times(
-        FileTimes::new().set_modified(SystemTime::now() - Duration::from_secs(24 * 60 * 60 + 60)),
-    )
-    .unwrap();
+fn default_workspace_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("journal")
+}
+
+fn attachment_path(dir: &std::path::Path, relative_path: &str) -> std::path::PathBuf {
+    default_workspace_path(dir).join(relative_path)
 }
 
 #[tokio::test]
@@ -752,6 +752,46 @@ async fn markdown_workspace_switch_writes_future_markdown_files() {
 }
 
 #[tokio::test]
+async fn markdown_workspace_switch_moves_attachments_with_project_folder() {
+    let dir = temp_app_dir("workspace-move-attachments");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "workspace.pdf".to_string(),
+            bytes: b"workspace-attachment".to_vec(),
+        })
+        .await
+        .unwrap();
+    let old_path = attachment_path(&dir, &stored.relative_path);
+    assert!(old_path.is_file());
+
+    let workspace = temp_app_dir("workspace-move-target");
+    backend
+        .set_markdown_workspace(workspace.clone())
+        .await
+        .unwrap();
+
+    let moved_path = workspace.join(&stored.relative_path);
+    assert!(moved_path.is_file());
+    assert!(!old_path.exists());
+
+    let resolved = backend
+        .resolve_uploads(vec![stored.relative_path.clone()])
+        .await
+        .unwrap();
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(
+        Path::new(&resolved[0].absolute_path)
+            .canonicalize()
+            .unwrap(),
+        moved_path.canonicalize().unwrap()
+    );
+
+    fs::remove_dir_all(workspace).ok();
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn future_entry_writes_import_dirty_markdown_before_appending() {
     let dir = temp_app_dir("future-markdown-dirty-before-write");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -818,7 +858,7 @@ async fn future_entry_writes_import_dirty_markdown_before_appending() {
 async fn default_markdown_workspace_is_created_before_opening() {
     let dir = temp_app_dir("default-markdown-open");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
-    assert!(!dir.join("journal").exists());
+    assert!(dir.join("journal/attachments").is_dir());
 
     let result = backend.open_markdown_workspace().await;
 
@@ -838,8 +878,8 @@ async fn migrated_legacy_upload_links_remain_openable() {
 
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
 
-    assert!(dir.join("attachments/legacy.png").is_file());
-    assert!(dir.join("uploads/legacy.png").is_file());
+    assert!(dir.join("journal/attachments/legacy.png").is_file());
+    assert!(!dir.join("uploads/legacy.png").exists());
     assert!(
         backend
             .open_upload("uploads/legacy.png".to_string())
@@ -870,6 +910,55 @@ async fn legacy_upload_path_falls_back_to_attachment_file() {
             .await
             .is_ok()
     );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn legacy_upload_migration_preserves_same_filename_conflicts() {
+    let dir = temp_app_dir("legacy-upload-conflict");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let workspace_conflict = dir.join("journal/attachments/conflict.png");
+    fs::create_dir_all(workspace_conflict.parent().unwrap()).unwrap();
+    fs::write(&workspace_conflict, b"new-workspace-file").unwrap();
+    fs::create_dir_all(dir.join("uploads")).unwrap();
+    fs::write(dir.join("uploads/conflict.png"), b"legacy-file").unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "[legacy](uploads/conflict.png)".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    backend
+        .set_markdown_workspace(dir.join("journal"))
+        .await
+        .unwrap();
+
+    let updated = backend
+        .get_daily_log("2026-06-12", false)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|item| item.id == entry.id)
+        .unwrap();
+    assert_ne!(updated.content, "[legacy](attachments/conflict.png)");
+    assert!(updated.content.starts_with("[legacy](attachments/"));
+    assert!(updated.content.ends_with(".png)"));
+    let migrated_relative = updated
+        .content
+        .trim_start_matches("[legacy](")
+        .trim_end_matches(')');
+    assert_eq!(
+        fs::read(attachment_path(&dir, migrated_relative)).unwrap(),
+        b"legacy-file"
+    );
+    assert_eq!(fs::read(workspace_conflict).unwrap(), b"new-workspace-file");
 
     fs::remove_dir_all(dir).ok();
 }
@@ -914,12 +1003,45 @@ async fn resolve_uploads_canonicalizes_relative_and_legacy_paths() {
             .all(|item| item.absolute_path.ends_with(&filename))
     );
     assert!(resolved.iter().all(|item| item.sha256 == stored.sha256));
+    assert!(resolved.iter().all(|item| item.preview_url.is_none()));
 
     fs::remove_dir_all(dir).ok();
 }
 
 #[tokio::test]
-async fn uploads_are_stored_under_local_app_data_with_relative_urls() {
+async fn resolve_uploads_returns_data_url_preview_for_images() {
+    let dir = temp_app_dir("resolve-image-preview");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "tiny.png".to_string(),
+            bytes: vec![
+                137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0,
+                1, 8, 6, 0, 0, 0, 31, 21, 196, 137,
+            ],
+        })
+        .await
+        .unwrap();
+
+    let resolved = backend
+        .resolve_uploads(vec![stored.relative_path])
+        .await
+        .unwrap();
+
+    assert_eq!(resolved.len(), 1);
+    assert!(
+        resolved[0]
+            .preview_url
+            .as_deref()
+            .unwrap()
+            .starts_with("data:image/png;base64,")
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn uploads_are_stored_under_project_attachments_with_relative_urls() {
     let dir = temp_app_dir("uploads");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
 
@@ -934,7 +1056,7 @@ async fn uploads_are_stored_under_local_app_data_with_relative_urls() {
     assert!(stored.relative_path.starts_with("attachments/"));
     assert!(stored.relative_path.ends_with(".png"));
     assert_eq!(
-        fs::read(dir.join(&stored.relative_path)).unwrap(),
+        fs::read(attachment_path(&dir, &stored.relative_path)).unwrap(),
         vec![1, 2, 3, 4]
     );
 
@@ -991,10 +1113,10 @@ async fn upload_path_copies_external_file_into_private_uploads() {
     assert!(stored.relative_path.starts_with("attachments/"));
     assert!(stored.relative_path.ends_with(".jpeg"));
     assert_eq!(
-        fs::read(dir.join(&stored.relative_path)).unwrap(),
+        fs::read(attachment_path(&dir, &stored.relative_path)).unwrap(),
         vec![11, 12, 13]
     );
-    assert_ne!(dir.join(&stored.relative_path), external_file);
+    assert_ne!(attachment_path(&dir, &stored.relative_path), external_file);
 
     assert!(
         backend
@@ -1676,6 +1798,7 @@ async fn markdown_workspace_can_move_to_user_selected_directory() {
 async fn daily_markdown_auto_sync_failure_does_not_fail_entry_writes() {
     let dir = temp_app_dir("daily-markdown-best-effort");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    fs::remove_dir_all(dir.join("journal")).unwrap();
     fs::write(dir.join("journal"), b"not a directory").unwrap();
 
     let entry = backend
@@ -1928,15 +2051,14 @@ async fn attachment_maintenance_reports_and_cleans_orphaned_uploads() {
             .referenced
     );
 
-    age_file_past_upload_grace(&dir.join(&orphaned.relative_path));
     let cleanup = backend.cleanup_unused_uploads().await.unwrap();
     assert_eq!(cleanup.removed_count, 1);
     assert_eq!(cleanup.removed_bytes, orphaned.size as i64);
-    assert!(dir.join(&referenced.relative_path).exists());
-    assert!(!dir.join(&orphaned.relative_path).exists());
+    assert!(attachment_path(&dir, &referenced.relative_path).exists());
+    assert!(!attachment_path(&dir, &orphaned.relative_path).exists());
 
     backend.delete_entry(entry.id).await.unwrap();
-    assert!(!dir.join(&referenced.relative_path).exists());
+    assert!(!attachment_path(&dir, &referenced.relative_path).exists());
 
     fs::remove_dir_all(dir).ok();
 }
@@ -2011,6 +2133,48 @@ async fn attachment_maintenance_lists_entries_referencing_each_upload() {
 }
 
 #[tokio::test]
+async fn archived_attachment_references_are_counted_and_protected() {
+    let dir = temp_app_dir("attachment-archived-reference");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "archived.pdf".to_string(),
+            bytes: b"archived".to_vec(),
+        })
+        .await
+        .unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: format!("[archived]({})", stored.relative_path),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-12".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend.archive_entry(entry.id).await.unwrap();
+
+    let summary = backend.attachment_maintenance_summary().await.unwrap();
+    let upload = summary
+        .uploads
+        .iter()
+        .find(|upload| upload.relative_path == stored.relative_path)
+        .unwrap();
+    assert!(upload.referenced);
+    assert_eq!(upload.reference_count, 1);
+    assert_eq!(upload.archived_reference_count, 1);
+    assert!(upload.references[0].archived_at.is_some());
+
+    let cleanup = backend.cleanup_unused_uploads().await.unwrap();
+    assert_eq!(cleanup.removed_count, 0);
+    assert!(attachment_path(&dir, &stored.relative_path).exists());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn attachment_reference_scan_ignores_external_upload_urls() {
     let dir = temp_app_dir("attachment-external-reference");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -2039,10 +2203,9 @@ async fn attachment_reference_scan_ignores_external_upload_urls() {
     assert_eq!(summary.orphaned_count, 1);
     assert!(!summary.uploads[0].referenced);
 
-    age_file_past_upload_grace(&dir.join(&stored.relative_path));
     let cleanup = backend.cleanup_unused_uploads().await.unwrap();
     assert_eq!(cleanup.removed_count, 1);
-    assert!(!dir.join(&stored.relative_path).exists());
+    assert!(!attachment_path(&dir, &stored.relative_path).exists());
 
     fs::remove_dir_all(dir).ok();
 }
@@ -2082,12 +2245,12 @@ async fn entry_delete_cleans_only_removed_entry_uploads() {
 
     backend.delete_entry(entry.id).await.unwrap();
 
-    assert!(!dir.join(&referenced.relative_path).exists());
-    assert!(dir.join(&pending.relative_path).exists());
+    assert!(!attachment_path(&dir, &referenced.relative_path).exists());
+    assert!(attachment_path(&dir, &pending.relative_path).exists());
     let cleanup = backend.cleanup_unused_uploads().await.unwrap();
-    assert_eq!(cleanup.removed_count, 0);
-    assert_eq!(cleanup.kept_count, 1);
-    assert!(dir.join(&pending.relative_path).exists());
+    assert_eq!(cleanup.removed_count, 1);
+    assert_eq!(cleanup.kept_count, 0);
+    assert!(!attachment_path(&dir, &pending.relative_path).exists());
 
     fs::remove_dir_all(dir).ok();
 }
@@ -2104,15 +2267,10 @@ async fn forced_attachment_cleanup_removes_recent_orphaned_uploads() {
         .await
         .unwrap();
 
-    let protected = backend.cleanup_unused_uploads().await.unwrap();
-    assert_eq!(protected.removed_count, 0);
-    assert_eq!(protected.kept_count, 1);
-    assert!(dir.join(&pending.relative_path).exists());
-
-    let forced = backend.cleanup_all_unused_uploads().await.unwrap();
-    assert_eq!(forced.removed_count, 1);
-    assert_eq!(forced.kept_count, 0);
-    assert!(!dir.join(&pending.relative_path).exists());
+    let cleanup = backend.cleanup_unused_uploads().await.unwrap();
+    assert_eq!(cleanup.removed_count, 1);
+    assert_eq!(cleanup.kept_count, 0);
+    assert!(!attachment_path(&dir, &pending.relative_path).exists());
 
     fs::remove_dir_all(dir).ok();
 }

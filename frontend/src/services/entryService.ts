@@ -42,6 +42,7 @@ export interface StoredUpload {
 
 export interface ResolvedUpload extends StoredUpload {
   requested_path: string;
+  preview_url?: string | null;
 }
 
 export interface DailyMarkdownFile {
@@ -83,6 +84,7 @@ export interface AttachmentMaintenanceItem {
   size: number;
   referenced: boolean;
   reference_count: number;
+  archived_reference_count: number;
   references: AttachmentEntryReference[];
 }
 

@@ -390,6 +390,14 @@ function AttachmentMaintenanceModal({
                                       )
                                     : labels.orphaned}
                                 </span>
+                                {upload.archived_reference_count > 0 && (
+                                  <span className="rounded-full bg-base-content/10 px-2 py-1 text-[11px] font-bold text-base-content/55">
+                                    {labels.archivedReferenced.replace(
+                                      "{{count}}",
+                                      String(upload.archived_reference_count),
+                                    )}
+                                  </span>
+                                )}
                                 <span className="w-16 text-right text-xs font-bold text-base-content/60">
                                   {formatBytes(upload.size)}
                                 </span>

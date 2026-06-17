@@ -352,12 +352,14 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(translationsSource, /存储管理/);
   assert.match(translationsSource, /展开引用/);
   assert.match(translationsSource, /引用此附件的日记/);
+  assert.match(translationsSource, /归档/);
   assert.match(translationsSource, /Storage/);
   assert.doesNotMatch(translationsSource, /Attachment Maintenance/);
   assert.match(translationsSource, /Show References/);
   assert.match(translationsSource, /Notes referencing this file/);
   assert.match(attachmentMaintenanceSource, /expandedUploads/);
   assert.match(attachmentMaintenanceSource, /referencesHeader/);
+  assert.match(attachmentMaintenanceSource, /archived_reference_count/);
   assert.doesNotMatch(attachmentMaintenanceSource, /cleanupHint/);
   assert.doesNotMatch(attachmentMaintenanceSource, /RefreshCw/);
   assert.doesNotMatch(attachmentMaintenanceSource, /labels\.refresh/);
@@ -369,7 +371,8 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(markdownViewerSource, /parsed\.hostname === "asset\.localhost"/);
   assert.match(markdownViewerSource, /collectUploadRelativePaths/);
   assert.match(markdownViewerSource, /resolveUploads/);
-  assert.match(markdownViewerSource, /replaceAttachmentReferences/);
+  assert.match(markdownViewerSource, /preview_url/);
+  assert.match(markdownViewerSource, /resolveImageSrc/);
   assert.match(markdownViewerSource, /renderedContent/);
   assert.match(entryServiceSource, /resolve_uploads/);
   assert.match(attachmentServiceSource, /attachmentMarkdownUrlFromStoredUpload/);
@@ -385,6 +388,7 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(dropHookSource, /devicePixelRatio/);
   assert.match(addEntrySource, /useTauriAttachmentDrop/);
   assert.match(addEntrySource, /uploadPathsAsMarkdown/);
+  assert.match(addEntrySource, /cleanupAllUnusedUploads/);
   assert.match(addEntrySource, /shouldHandleDomAttachmentDrop\(isTauri\(\)/);
   assert.match(entryEditorSource, /useTauriAttachmentDrop/);
   assert.match(entryEditorSource, /uploadPathsAsMarkdown/);

@@ -11,13 +11,11 @@ import { uiEvents } from "../../lib/uiEvents";
 
 const RECENT_RELEASE_NOTES = `## 最近一次更新
 
-- 新建和编辑条目支持批量拖拽、粘贴附件。
-- 图片、PDF 和普通文件会复制到应用私有 uploads 目录。
-- 修复桌面端拖入输入框不插入附件链接的问题。
-- 修复私有附件 asset 链接无法在 Markdown 中读取的问题。
-- 相同文件按 SHA-256 去重保存，避免重复占用空间。
-- 图片上传可选择压缩或保留原图。
-- .bjk 备份和 Markdown 压缩包会携带附件并修复引用。`;
+- 附件会保存到当前项目文件夹的 attachments 目录。
+- 更改项目文件夹时会移动原项目文件夹内容。
+- 旧 uploads 与旧 Application Support 附件会自动迁移并保持可读取。
+- 关闭编辑弹窗或保存后会立即清理未引用附件。
+- 存储管理会标记归档笔记中的附件引用。`;
 
 const VERSION_NOTES_MARKDOWN_STYLES = `
   .version-release-notes.prose-custom-scale h2,

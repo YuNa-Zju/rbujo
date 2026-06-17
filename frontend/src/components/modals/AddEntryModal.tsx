@@ -182,6 +182,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         });
       },
       close: () => {
+        if (isUploading || loading) return;
         setIsModalOpen(false);
         dialogRef.current?.close();
       },
@@ -521,10 +522,16 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
       <dialog
         ref={dialogRef}
         className="modal modal-bottom sm:modal-middle"
+        onCancel={(e) => {
+          if (isUploading || loading) e.preventDefault();
+        }}
         onClose={() => {
           setIsModalOpen(false);
           setIsDragging(false);
           dragCounter.current = 0;
+          void entryService.cleanupAllUnusedUploads().catch((error) => {
+            console.error("Attachment cleanup after editor close failed", error);
+          });
         }}
       >
         <div className="modal-box w-full sm:w-11/12 sm:max-w-2xl p-0 bg-base-100 shadow-2xl rounded-t-3xl sm:rounded-3xl flex flex-col max-h-[90vh] overflow-hidden">
@@ -551,7 +558,10 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
               )}
             </div>
             <form method="dialog">
-              <button className="btn btn-sm btn-circle btn-ghost text-base-content/50 hover:bg-base-200">
+              <button
+                className="btn btn-sm btn-circle btn-ghost text-base-content/50 hover:bg-base-200"
+                disabled={isUploading || loading}
+              >
                 <X size={20} />
               </button>
             </form>
@@ -742,7 +752,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         </div>
 
         <form method="dialog" className="modal-backdrop">
-          <button>close</button>
+          <button disabled={isUploading || loading}>close</button>
         </form>
       </dialog>
     );

@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::{Engine as _, engine::general_purpose};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,7 +23,6 @@ use crate::models::{
 const LOCAL_USERNAME: &str = "local";
 const LOCAL_PASSWORD_PLACEHOLDER: &str = "local_desktop_profile";
 const EMBEDDING_DIMS: usize = 256;
-const UPLOAD_ORPHAN_GRACE_SECONDS: u64 = 24 * 60 * 60;
 const MARKDOWN_WORKSPACE_SETTING_KEY: &str = "markdown_workspace_path";
 const ATTACHMENT_DIR: &str = "attachments";
 const LEGACY_UPLOAD_DIR: &str = "uploads";
@@ -146,6 +146,7 @@ pub struct ResolvedUpload {
     pub absolute_path: String,
     pub sha256: String,
     pub size: usize,
+    pub preview_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +192,7 @@ pub struct AttachmentMaintenanceItem {
     pub size: i64,
     pub referenced: bool,
     pub reference_count: usize,
+    pub archived_reference_count: usize,
     pub references: Vec<AttachmentEntryReference>,
 }
 
@@ -227,13 +229,120 @@ fn default_search_limit() -> usize {
     50
 }
 
+fn dedup_paths(paths: &mut Vec<PathBuf>) {
+    let mut seen = HashSet::new();
+    paths.retain(|path| seen.insert(path.clone()));
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if let (Ok(left), Ok(right)) = (left.canonicalize(), right.canonicalize()) {
+        return left == right;
+    }
+    left == right
+}
+
+fn path_contains_path(parent: &Path, child: &Path) -> bool {
+    if same_path(parent, child) {
+        return false;
+    }
+    if let (Ok(parent), Ok(child)) = (parent.canonicalize(), child.canonicalize()) {
+        return child.starts_with(parent);
+    }
+    child.starts_with(parent)
+}
+
+async fn same_existing_directory(left: &Path, right: &Path) -> bool {
+    match (
+        tokio::fs::canonicalize(left).await,
+        tokio::fs::canonicalize(right).await,
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+async fn move_path_replace(source: &Path, target: &Path) -> AppResult<()> {
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+    }
+    if let Ok(metadata) = tokio::fs::metadata(target).await {
+        if metadata.is_dir() {
+            tokio::fs::remove_dir_all(target)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        } else {
+            tokio::fs::remove_file(target)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+        }
+    }
+    tokio::fs::rename(source, target)
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))
+}
+
+async fn move_file_to_path(source: PathBuf, target: &Path) -> AppResult<()> {
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+    }
+    match tokio::fs::rename(&source, target).await {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            tokio::fs::copy(&source, target)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            tokio::fs::remove_file(source)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))
+        }
+    }
+}
+
+async fn files_have_same_bytes(left: &Path, right: &Path) -> AppResult<bool> {
+    let left = tokio::fs::read(left)
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    let right = tokio::fs::read(right)
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    Ok(left == right)
+}
+
+fn stored_upload_filename(original_filename: &str, sha256: &str) -> String {
+    let extension = sanitized_extension(original_filename);
+    if extension.is_empty() {
+        sha256.to_string()
+    } else {
+        format!("{sha256}.{extension}")
+    }
+}
+
+async fn attachment_preview_data_url(path: &Path, size: u64) -> AppResult<Option<String>> {
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    if !mime.essence_str().starts_with("image/") {
+        return Ok(None);
+    }
+    const MAX_INLINE_PREVIEW_BYTES: u64 = 25 * 1024 * 1024;
+    if size > MAX_INLINE_PREVIEW_BYTES {
+        return Ok(None);
+    }
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    Ok(Some(format!(
+        "data:{mime};base64,{}",
+        general_purpose::STANDARD.encode(bytes)
+    )))
+}
+
 impl LocalBackend {
     pub async fn open(app_dir: impl AsRef<Path>) -> AppResult<Self> {
         let app_dir = app_dir.as_ref().to_path_buf();
         tokio::fs::create_dir_all(&app_dir)
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        tokio::fs::create_dir_all(app_dir.join(ATTACHMENT_DIR))
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
         let db_path = app_dir.join("rbujo.sqlite3");
@@ -283,19 +392,18 @@ impl LocalBackend {
                 "Markdown workspace path cannot be empty".to_string(),
             ));
         }
-        if let Ok(metadata) = tokio::fs::metadata(&path).await {
-            if !metadata.is_dir() {
-                return Err(AppError::BadRequest(
-                    "Markdown workspace path must be a directory".to_string(),
-                ));
-            }
-        } else {
-            tokio::fs::create_dir_all(&path)
-                .await
-                .map_err(|error| AppError::Internal(error.to_string()))?;
+
+        let current_path = self.markdown_workspace_path().await?;
+        if !same_path(&current_path, &path) {
+            self.move_markdown_workspace(&current_path, &path).await?;
         }
+
         self.set_setting(MARKDOWN_WORKSPACE_SETTING_KEY, &path.to_string_lossy())
             .await?;
+        tokio::fs::create_dir_all(path.join(ATTACHMENT_DIR))
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        self.migrate_legacy_uploads_to_attachments().await?;
         self.clear_daily_markdown_sync_state().await?;
         self.sync_all_daily_markdown_files().await;
         let _ = self.write_future_markdown_files().await;
@@ -306,6 +414,18 @@ impl LocalBackend {
         Ok(PathBuf::from(
             self.get_markdown_workspace().await?.absolute_path,
         ))
+    }
+
+    async fn attachment_dir_path(&self) -> AppResult<PathBuf> {
+        Ok(self.markdown_workspace_path().await?.join(ATTACHMENT_DIR))
+    }
+
+    fn legacy_attachment_dir_path(&self) -> PathBuf {
+        self.app_dir.join(ATTACHMENT_DIR)
+    }
+
+    fn legacy_upload_dir_path(&self) -> PathBuf {
+        self.app_dir.join(LEGACY_UPLOAD_DIR)
     }
 
     async fn get_setting(&self, key: &str) -> AppResult<Option<String>> {
@@ -335,13 +455,14 @@ impl LocalBackend {
         Ok(())
     }
 
-    fn upload_file_path(&self, relative_path: &str) -> AppResult<PathBuf> {
+    fn validate_upload_relative_path(relative_path: &str) -> AppResult<(String, PathBuf)> {
         let relative = Path::new(relative_path);
         let mut components = relative.components();
         let Some(std::path::Component::Normal(first)) = components.next() else {
             return Err(AppError::BadRequest("Invalid upload path".to_string()));
         };
-        if first != ATTACHMENT_DIR && first != LEGACY_UPLOAD_DIR {
+        let directory = first.to_string_lossy().to_string();
+        if directory != ATTACHMENT_DIR && directory != LEGACY_UPLOAD_DIR {
             return Err(AppError::BadRequest("Invalid upload path".to_string()));
         }
         for component in components {
@@ -349,7 +470,95 @@ impl LocalBackend {
                 return Err(AppError::BadRequest("Invalid upload path".to_string()));
             }
         }
-        Ok(self.app_dir.join(relative))
+        Ok((directory, relative.to_path_buf()))
+    }
+
+    async fn upload_file_path(&self, relative_path: &str) -> AppResult<PathBuf> {
+        let (directory, relative) = Self::validate_upload_relative_path(relative_path)?;
+        if directory == ATTACHMENT_DIR {
+            Ok(self.markdown_workspace_path().await?.join(relative))
+        } else {
+            Ok(self.app_dir.join(relative))
+        }
+    }
+
+    async fn upload_file_path_candidates(&self, relative_path: &str) -> AppResult<Vec<PathBuf>> {
+        let (directory, relative) = Self::validate_upload_relative_path(relative_path)?;
+        let mut candidates = Vec::new();
+        if directory == ATTACHMENT_DIR {
+            candidates.push(self.markdown_workspace_path().await?.join(&relative));
+            candidates.push(self.app_dir.join(&relative));
+        } else {
+            candidates.push(self.app_dir.join(&relative));
+        }
+        dedup_paths(&mut candidates);
+        Ok(candidates)
+    }
+
+    async fn allowed_upload_directories(&self) -> Vec<PathBuf> {
+        vec![
+            self.attachment_dir_path()
+                .await
+                .unwrap_or_else(|_| self.default_markdown_workspace_path().join(ATTACHMENT_DIR)),
+            self.legacy_attachment_dir_path(),
+            self.legacy_upload_dir_path(),
+        ]
+    }
+
+    async fn move_markdown_workspace(
+        &self,
+        current_path: &Path,
+        next_path: &Path,
+    ) -> AppResult<()> {
+        if let Ok(metadata) = tokio::fs::metadata(next_path).await {
+            if !metadata.is_dir() {
+                return Err(AppError::BadRequest(
+                    "Markdown workspace path must be a directory".to_string(),
+                ));
+            }
+        }
+
+        if path_contains_path(current_path, next_path) {
+            return Err(AppError::BadRequest(
+                "Markdown workspace cannot be moved inside itself".to_string(),
+            ));
+        }
+
+        let Ok(current_metadata) = tokio::fs::metadata(current_path).await else {
+            tokio::fs::create_dir_all(next_path)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            return Ok(());
+        };
+        if !current_metadata.is_dir() {
+            return Err(AppError::BadRequest(
+                "Current markdown workspace is not a directory".to_string(),
+            ));
+        }
+
+        if tokio::fs::metadata(next_path).await.is_err() {
+            if let Some(parent) = next_path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+            }
+            move_path_replace(current_path, next_path).await?;
+            return Ok(());
+        }
+
+        let mut read_dir = tokio::fs::read_dir(current_path)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?
+        {
+            let target = next_path.join(entry.file_name());
+            move_path_replace(&entry.path(), &target).await?;
+        }
+        let _ = tokio::fs::remove_dir(current_path).await;
+        Ok(())
     }
 
     fn attachment_relative_path(filename: &str) -> String {
@@ -392,7 +601,11 @@ impl LocalBackend {
         directory: &str,
         sha256: &str,
     ) -> AppResult<Option<String>> {
-        let upload_dir = self.app_dir.join(directory);
+        let upload_dir = if directory == ATTACHMENT_DIR {
+            self.attachment_dir_path().await?
+        } else {
+            self.app_dir.join(directory)
+        };
         if tokio::fs::metadata(&upload_dir).await.is_err() {
             return Ok(None);
         }
@@ -427,71 +640,93 @@ impl LocalBackend {
     }
 
     async fn migrate_legacy_uploads_to_attachments(&self) -> AppResult<()> {
-        let legacy_dir = self.app_dir.join(LEGACY_UPLOAD_DIR);
-        if tokio::fs::metadata(&legacy_dir).await.is_err() {
-            return Ok(());
-        }
-
-        let attachment_dir = self.app_dir.join(ATTACHMENT_DIR);
+        let attachment_dir = self.attachment_dir_path().await?;
         tokio::fs::create_dir_all(&attachment_dir)
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
 
         let mut migrated_paths = Vec::new();
-        let mut read_dir = tokio::fs::read_dir(&legacy_dir)
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        while let Some(entry) = read_dir
-            .next_entry()
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?
-        {
-            let metadata = entry
-                .metadata()
-                .await
-                .map_err(|error| AppError::Internal(error.to_string()))?;
-            if !metadata.is_file() {
+        for (directory, legacy_dir) in [
+            (LEGACY_UPLOAD_DIR, self.legacy_upload_dir_path()),
+            (ATTACHMENT_DIR, self.legacy_attachment_dir_path()),
+        ] {
+            if tokio::fs::metadata(&legacy_dir).await.is_err() {
+                continue;
+            }
+            if same_existing_directory(&legacy_dir, &attachment_dir).await {
                 continue;
             }
 
-            let filename = entry.file_name().to_string_lossy().to_string();
-            let legacy_relative_path = Self::legacy_upload_relative_path(&filename);
-            let attachment_relative_path = Self::attachment_relative_path(&filename);
-            let attachment_path = self.app_dir.join(&attachment_relative_path);
-
-            if tokio::fs::metadata(&attachment_path).await.is_err()
-                && tokio::fs::hard_link(entry.path(), &attachment_path)
-                    .await
-                    .is_err()
-            {
-                tokio::fs::copy(entry.path(), &attachment_path)
-                    .await
-                    .map_err(|error| AppError::Internal(error.to_string()))?;
-            }
-
-            let bytes = tokio::fs::read(&attachment_path)
+            let mut read_dir = tokio::fs::read_dir(&legacy_dir)
                 .await
                 .map_err(|error| AppError::Internal(error.to_string()))?;
-            let original_filename = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT original_filename FROM attachment_records WHERE relative_path = ?",
-            )
-            .bind(&legacy_relative_path)
-            .fetch_optional(&self.pool)
-            .await?
-            .flatten();
-            self.register_upload_record(
-                &attachment_relative_path,
-                &filename,
-                original_filename.as_deref().or(Some(&filename)),
-                &sha256_hex(&bytes),
-                bytes.len() as i64,
-            )
-            .await?;
-            sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
+            while let Some(entry) = read_dir
+                .next_entry()
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?
+            {
+                let metadata = entry
+                    .metadata()
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                if !metadata.is_file() {
+                    continue;
+                }
+
+                let filename = entry.file_name().to_string_lossy().to_string();
+                let legacy_relative_path = if directory == ATTACHMENT_DIR {
+                    Self::attachment_relative_path(&filename)
+                } else {
+                    Self::legacy_upload_relative_path(&filename)
+                };
+                let source_bytes = tokio::fs::read(entry.path())
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                let source_sha256 = sha256_hex(&source_bytes);
+                let mut attachment_filename = filename.clone();
+                let mut attachment_path = attachment_dir.join(&attachment_filename);
+
+                if tokio::fs::metadata(&attachment_path).await.is_err() {
+                    move_file_to_path(entry.path(), &attachment_path).await?;
+                } else if files_have_same_bytes(&entry.path(), &attachment_path).await? {
+                    let _ = tokio::fs::remove_file(entry.path()).await;
+                } else {
+                    attachment_filename = stored_upload_filename(&filename, &source_sha256);
+                    attachment_path = attachment_dir.join(&attachment_filename);
+                    if tokio::fs::metadata(&attachment_path).await.is_err() {
+                        move_file_to_path(entry.path(), &attachment_path).await?;
+                    } else if files_have_same_bytes(&entry.path(), &attachment_path).await? {
+                        let _ = tokio::fs::remove_file(entry.path()).await;
+                    }
+                }
+
+                let attachment_relative_path = Self::attachment_relative_path(&attachment_filename);
+                let bytes = tokio::fs::read(&attachment_path)
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                let original_filename = sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT original_filename FROM attachment_records WHERE relative_path = ?",
+                )
                 .bind(&legacy_relative_path)
-                .execute(&self.pool)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten();
+                self.register_upload_record(
+                    &attachment_relative_path,
+                    &attachment_filename,
+                    original_filename.as_deref().or(Some(&filename)),
+                    &sha256_hex(&bytes),
+                    bytes.len() as i64,
+                )
                 .await?;
-            migrated_paths.push((legacy_relative_path, attachment_relative_path));
+                if legacy_relative_path != attachment_relative_path {
+                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
+                        .bind(&legacy_relative_path)
+                        .execute(&self.pool)
+                        .await?;
+                    migrated_paths.push((legacy_relative_path, attachment_relative_path));
+                }
+            }
         }
 
         if migrated_paths.is_empty() {
@@ -1310,7 +1545,7 @@ impl LocalBackend {
                 .and_then(|value| value.to_str())
                 .ok_or_else(|| AppError::Internal("Invalid upload filename".to_string()))?
                 .to_string();
-            let absolute_path = self.app_dir.join(&relative_path);
+            let absolute_path = self.upload_file_path(&relative_path).await?;
             self.register_upload_record(
                 &relative_path,
                 &filename,
@@ -1319,7 +1554,6 @@ impl LocalBackend {
                 size as i64,
             )
             .await?;
-            let _ = self.cleanup_stale_unused_uploads().await;
             return Ok(StoredUpload {
                 relative_path,
                 absolute_path: absolute_path.to_string_lossy().to_string(),
@@ -1328,14 +1562,9 @@ impl LocalBackend {
             });
         }
 
-        let extension = sanitized_extension(&input.filename);
-        let filename = if extension.is_empty() {
-            sha256.clone()
-        } else {
-            format!("{sha256}.{extension}")
-        };
+        let filename = stored_upload_filename(&input.filename, &sha256);
         let relative_path = Self::attachment_relative_path(&filename);
-        let absolute_path = self.app_dir.join(&relative_path);
+        let absolute_path = self.upload_file_path(&relative_path).await?;
         if let Some(parent) = absolute_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -1354,7 +1583,6 @@ impl LocalBackend {
             size as i64,
         )
         .await?;
-        let _ = self.cleanup_stale_unused_uploads().await;
         Ok(StoredUpload {
             relative_path,
             absolute_path: absolute_path.to_string_lossy().to_string(),
@@ -1390,57 +1618,65 @@ impl LocalBackend {
         &self,
         requested_path: &str,
     ) -> AppResult<Option<ResolvedUpload>> {
+        let allowed_directories = self.allowed_upload_directories().await;
         for candidate_relative_path in Self::upload_fallback_candidates(requested_path) {
-            let Ok(path) = self.upload_file_path(&candidate_relative_path) else {
-                continue;
-            };
-            let Ok(canonical_path) = tokio::fs::canonicalize(&path).await else {
-                continue;
-            };
-
-            let mut inside_allowed_directory = false;
-            for directory in [ATTACHMENT_DIR, LEGACY_UPLOAD_DIR] {
-                if let Ok(canonical_dir) =
-                    tokio::fs::canonicalize(self.app_dir.join(directory)).await
-                    && canonical_path.starts_with(&canonical_dir)
-                {
-                    inside_allowed_directory = true;
-                    break;
-                }
-            }
-            if !inside_allowed_directory {
-                continue;
-            }
-
-            let metadata = tokio::fs::metadata(&canonical_path)
+            let Ok(path_candidates) = self
+                .upload_file_path_candidates(&candidate_relative_path)
                 .await
-                .map_err(|error| AppError::Internal(error.to_string()))?;
-            if !metadata.is_file() {
+            else {
                 continue;
-            }
-            let stored_sha = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT sha256 FROM attachment_records WHERE relative_path = ?",
-            )
-            .bind(&candidate_relative_path)
-            .fetch_optional(&self.pool)
-            .await?
-            .flatten();
-            let sha256 = match stored_sha {
-                Some(value) => value,
-                None => {
-                    let bytes = tokio::fs::read(&canonical_path)
-                        .await
-                        .map_err(|error| AppError::Internal(error.to_string()))?;
-                    sha256_hex(&bytes)
-                }
             };
-            return Ok(Some(ResolvedUpload {
-                requested_path: requested_path.to_string(),
-                relative_path: candidate_relative_path,
-                absolute_path: canonical_path.to_string_lossy().to_string(),
-                sha256,
-                size: metadata.len() as usize,
-            }));
+            for path in path_candidates {
+                let Ok(canonical_path) = tokio::fs::canonicalize(&path).await else {
+                    continue;
+                };
+
+                let mut inside_allowed_directory = false;
+                for directory in &allowed_directories {
+                    if let Ok(canonical_dir) = tokio::fs::canonicalize(directory).await
+                        && canonical_path.starts_with(&canonical_dir)
+                    {
+                        inside_allowed_directory = true;
+                        break;
+                    }
+                }
+                if !inside_allowed_directory {
+                    continue;
+                }
+
+                let metadata = tokio::fs::metadata(&canonical_path)
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                if !metadata.is_file() {
+                    continue;
+                }
+                let stored_sha = sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT sha256 FROM attachment_records WHERE relative_path = ?",
+                )
+                .bind(&candidate_relative_path)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten();
+                let sha256 = match stored_sha {
+                    Some(value) => value,
+                    None => {
+                        let bytes = tokio::fs::read(&canonical_path)
+                            .await
+                            .map_err(|error| AppError::Internal(error.to_string()))?;
+                        sha256_hex(&bytes)
+                    }
+                };
+                let preview_url =
+                    attachment_preview_data_url(&canonical_path, metadata.len()).await?;
+                return Ok(Some(ResolvedUpload {
+                    requested_path: requested_path.to_string(),
+                    relative_path: candidate_relative_path,
+                    absolute_path: canonical_path.to_string_lossy().to_string(),
+                    sha256,
+                    size: metadata.len() as usize,
+                    preview_url,
+                }));
+            }
         }
 
         Ok(None)
@@ -1491,12 +1727,29 @@ impl LocalBackend {
     }
 
     async fn scan_upload_files(&self) -> AppResult<Vec<AttachmentMaintenanceItem>> {
-        let mut uploads = self.scan_upload_files_in_dir(ATTACHMENT_DIR).await?;
+        let mut uploads = self
+            .scan_upload_files_in_path(ATTACHMENT_DIR, self.attachment_dir_path().await?)
+            .await?;
         let attachment_filenames = uploads
             .iter()
             .map(|upload| upload.filename.clone())
             .collect::<HashSet<_>>();
-        for upload in self.scan_upload_files_in_dir(LEGACY_UPLOAD_DIR).await? {
+        for upload in self
+            .scan_upload_files_in_path(ATTACHMENT_DIR, self.legacy_attachment_dir_path())
+            .await?
+        {
+            if !attachment_filenames.contains(&upload.filename) {
+                uploads.push(upload);
+            }
+        }
+        let attachment_filenames = uploads
+            .iter()
+            .map(|upload| upload.filename.clone())
+            .collect::<HashSet<_>>();
+        for upload in self
+            .scan_upload_files_in_path(LEGACY_UPLOAD_DIR, self.legacy_upload_dir_path())
+            .await?
+        {
             if !attachment_filenames.contains(&upload.filename) {
                 uploads.push(upload);
             }
@@ -1505,11 +1758,11 @@ impl LocalBackend {
         Ok(uploads)
     }
 
-    async fn scan_upload_files_in_dir(
+    async fn scan_upload_files_in_path(
         &self,
         directory: &str,
+        upload_dir: PathBuf,
     ) -> AppResult<Vec<AttachmentMaintenanceItem>> {
-        let upload_dir = self.app_dir.join(directory);
         if tokio::fs::metadata(&upload_dir).await.is_err() {
             return Ok(Vec::new());
         }
@@ -1563,6 +1816,7 @@ impl LocalBackend {
                 size,
                 referenced: false,
                 reference_count: 0,
+                archived_reference_count: 0,
                 references: Vec::new(),
             });
         }
@@ -1611,8 +1865,13 @@ impl LocalBackend {
                 preview: attachment_reference_preview(&content),
             };
             for reference in references {
+                let normalized_reference = self
+                    .resolve_upload_reference(&reference)
+                    .await?
+                    .map(|upload| upload.relative_path)
+                    .unwrap_or(reference);
                 references_by_upload
-                    .entry(reference)
+                    .entry(normalized_reference)
                     .or_insert_with(Vec::new)
                     .push(entry_reference.clone());
             }
@@ -2468,26 +2727,18 @@ impl LocalBackend {
 
         let reference_counts = self.upload_reference_counts().await?;
         for relative_path in candidates {
-            if reference_counts.get(&relative_path).copied().unwrap_or(0) > 0 {
+            let mut related_paths = Self::upload_fallback_candidates(&relative_path);
+            related_paths.push(relative_path.clone());
+            related_paths.sort();
+            related_paths.dedup();
+            if related_paths
+                .iter()
+                .any(|path| reference_counts.get(path).copied().unwrap_or(0) > 0)
+            {
                 continue;
             }
 
-            let path = self.upload_file_path(&relative_path)?;
-            match tokio::fs::remove_file(&path).await {
-                Ok(()) => {
-                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
-                        .bind(relative_path)
-                        .execute(&self.pool)
-                        .await?;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
-                        .bind(relative_path)
-                        .execute(&self.pool)
-                        .await?;
-                }
-                Err(error) => return Err(AppError::Internal(error.to_string())),
-            }
+            self.remove_upload_files_and_records(&related_paths).await?;
         }
 
         Ok(())
@@ -2507,7 +2758,12 @@ impl LocalBackend {
                 .remove(&upload.relative_path)
                 .unwrap_or_default();
             let reference_count = references.len();
+            let archived_reference_count = references
+                .iter()
+                .filter(|reference| reference.archived_at.is_some())
+                .count();
             upload.reference_count = reference_count;
+            upload.archived_reference_count = archived_reference_count;
             upload.referenced = reference_count > 0;
             upload.references = references;
             total_bytes += upload.size;
@@ -2531,59 +2787,27 @@ impl LocalBackend {
     }
 
     pub async fn cleanup_unused_uploads(&self) -> AppResult<AttachmentCleanupResult> {
-        self.cleanup_stale_unused_uploads().await
+        self.cleanup_unused_uploads_with_min_age().await
     }
 
     pub async fn cleanup_all_unused_uploads(&self) -> AppResult<AttachmentCleanupResult> {
-        self.cleanup_unused_uploads_with_min_age(None).await
+        self.cleanup_unused_uploads_with_min_age().await
     }
 
-    async fn cleanup_stale_unused_uploads(&self) -> AppResult<AttachmentCleanupResult> {
-        self.cleanup_unused_uploads_with_min_age(Some(Duration::from_secs(
-            UPLOAD_ORPHAN_GRACE_SECONDS,
-        )))
-        .await
-    }
-
-    async fn cleanup_unused_uploads_with_min_age(
-        &self,
-        min_age: Option<Duration>,
-    ) -> AppResult<AttachmentCleanupResult> {
+    async fn cleanup_unused_uploads_with_min_age(&self) -> AppResult<AttachmentCleanupResult> {
         let summary = self.attachment_maintenance_summary().await?;
         let mut removed_count = 0;
         let mut removed_bytes = 0;
-        let mut kept_count = 0;
+        let kept_count = 0;
 
         for upload in summary.uploads.iter().filter(|upload| !upload.referenced) {
-            let path = self.upload_file_path(&upload.relative_path)?;
-            if let Some(min_age) = min_age {
-                if let Ok(metadata) = tokio::fs::metadata(&path).await {
-                    if let Ok(modified) = metadata.modified() {
-                        if modified.elapsed().is_ok_and(|age| age < min_age) {
-                            kept_count += 1;
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            match tokio::fs::remove_file(&path).await {
-                Ok(()) => {
-                    removed_count += 1;
-                    removed_bytes += upload.size;
-                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
-                        .bind(&upload.relative_path)
-                        .execute(&self.pool)
-                        .await?;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
-                        .bind(&upload.relative_path)
-                        .execute(&self.pool)
-                        .await?;
-                }
-                Err(error) => return Err(AppError::Internal(error.to_string())),
-            }
+            let mut related_paths = Self::upload_fallback_candidates(&upload.relative_path);
+            related_paths.push(upload.relative_path.clone());
+            related_paths.sort();
+            related_paths.dedup();
+            self.remove_upload_files_and_records(&related_paths).await?;
+            removed_count += 1;
+            removed_bytes += upload.size;
         }
 
         Ok(AttachmentCleanupResult {
@@ -2594,11 +2818,31 @@ impl LocalBackend {
         })
     }
 
+    async fn remove_upload_files_and_records(&self, relative_paths: &[String]) -> AppResult<()> {
+        for relative_path in relative_paths {
+            for path in self.upload_file_path_candidates(relative_path).await? {
+                match tokio::fs::remove_file(&path).await {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(AppError::Internal(error.to_string())),
+                }
+            }
+            sqlx::query("DELETE FROM attachment_records WHERE relative_path = ?")
+                .bind(relative_path)
+                .execute(&self.pool)
+                .await?;
+        }
+        Ok(())
+    }
+
     pub async fn list_uploads_for_backup(&self) -> AppResult<Vec<UploadBackup>> {
         let mut uploads = Vec::new();
         let mut attachment_filenames = HashSet::new();
-        for directory in [ATTACHMENT_DIR, LEGACY_UPLOAD_DIR] {
-            let upload_dir = self.app_dir.join(directory);
+        for (directory, upload_dir) in [
+            (ATTACHMENT_DIR, self.attachment_dir_path().await?),
+            (ATTACHMENT_DIR, self.legacy_attachment_dir_path()),
+            (LEGACY_UPLOAD_DIR, self.legacy_upload_dir_path()),
+        ] {
             if tokio::fs::metadata(&upload_dir).await.is_err() {
                 continue;
             }
@@ -2643,40 +2887,11 @@ impl LocalBackend {
     }
 
     pub async fn open_upload(&self, relative_path: String) -> AppResult<()> {
-        let mut path = self.upload_file_path(&relative_path)?;
-        if tokio::fs::metadata(&path).await.is_err()
-            && let Some(filename) = relative_path.strip_prefix(&format!("{LEGACY_UPLOAD_DIR}/"))
-        {
-            let fallback_relative_path = Self::attachment_relative_path(filename);
-            let fallback_path = self.upload_file_path(&fallback_relative_path)?;
-            if tokio::fs::metadata(&fallback_path).await.is_ok() {
-                path = fallback_path;
-            }
-        }
-        let canonical_path = tokio::fs::canonicalize(&path)
-            .await
-            .map_err(|_| AppError::NotFound("Upload not found".to_string()))?;
-        let mut inside_allowed_directory = false;
-        for directory in [ATTACHMENT_DIR, LEGACY_UPLOAD_DIR] {
-            if let Ok(canonical_dir) = tokio::fs::canonicalize(self.app_dir.join(directory)).await
-                && canonical_path.starts_with(&canonical_dir)
-            {
-                inside_allowed_directory = true;
-                break;
-            }
-        }
-        if !inside_allowed_directory {
-            return Err(AppError::BadRequest("Invalid upload path".to_string()));
-        }
-
-        let metadata = tokio::fs::metadata(&canonical_path)
-            .await
-            .map_err(|_| AppError::NotFound("Upload not found".to_string()))?;
-        if !metadata.is_file() {
-            return Err(AppError::BadRequest(
-                "Upload path is not a file".to_string(),
-            ));
-        }
+        let upload = self
+            .resolve_upload_reference(&relative_path)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Upload not found".to_string()))?;
+        let canonical_path = PathBuf::from(upload.absolute_path);
         open_with_system(&canonical_path)
     }
 

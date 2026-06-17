@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, useRef, useLayoutEffect } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  useLayoutEffect,
+} from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -17,7 +24,6 @@ import { useAppTheme } from "../hooks/useAppTheme";
 import {
   collectUploadRelativePaths,
   extractUploadRelativePath,
-  replaceAttachmentReferences,
 } from "../services/attachmentService";
 import { entryService } from "../services/entryService";
 
@@ -155,8 +161,9 @@ export default function MarkdownViewer({
         if (cancelled) return;
         const nextUrls: Record<string, string> = {};
         for (const upload of uploads) {
-          nextUrls[upload.requested_path] = upload.url;
-          nextUrls[upload.relative_path] = upload.url;
+          if (!upload.preview_url) continue;
+          nextUrls[upload.requested_path] = upload.preview_url;
+          nextUrls[upload.relative_path] = upload.preview_url;
         }
         setAttachmentRenderUrls(nextUrls);
       })
@@ -170,12 +177,15 @@ export default function MarkdownViewer({
     };
   }, [uploadReferences]);
 
-  const renderedContent = useMemo(() => {
-    const replacements = new Map(Object.entries(attachmentRenderUrls));
-    return replacements.size > 0
-      ? replaceAttachmentReferences(content, replacements)
-      : content;
-  }, [attachmentRenderUrls, content]);
+  const renderedContent = content;
+
+  const resolveImageSrc = useCallback(
+    (src?: string) => {
+      const relativePath = extractUploadRelativePath(src);
+      return relativePath ? attachmentRenderUrls[relativePath] || src : src;
+    },
+    [attachmentRenderUrls],
+  );
 
   // 动态主题色
   const themeStyles = (() => {
@@ -220,7 +230,7 @@ export default function MarkdownViewer({
         setHasMeasured(true);
       });
     }
-  }, [renderedContent, disableOverflowCheck]);
+  }, [renderedContent, attachmentRenderUrls, disableOverflowCheck]);
 
   const handleCheckboxChange = (index: number) => {
     if (!onTaskToggle) return;
@@ -384,17 +394,20 @@ export default function MarkdownViewer({
                 h4: ({ children }) => <h4>{children}</h4>,
                 h5: ({ children }) => <h5>{children}</h5>,
                 h6: ({ children }) => <h6>{children}</h6>,
-                img: ({ src, alt }) => (
-                  <img
-                    src={src}
-                    alt={alt}
-                    className="rounded-xl max-h-72 object-contain cursor-zoom-in my-3 transition-all relative z-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPreviewImage(src || null);
-                    }}
-                  />
-                ),
+                img: ({ src, alt }) => {
+                  const imageSrc = resolveImageSrc(src);
+                  return (
+                    <img
+                      src={imageSrc}
+                      alt={alt}
+                      className="rounded-xl max-h-72 object-contain cursor-zoom-in my-3 transition-all relative z-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPreviewImage(imageSrc || null);
+                      }}
+                    />
+                  );
+                },
                 blockquote: ({ children }) => (
                   <blockquote>{children}</blockquote>
                 ),
