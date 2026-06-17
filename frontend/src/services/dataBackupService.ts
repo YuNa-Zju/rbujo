@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import pako from "pako";
 import type { ImportResponse, StoredUpload, UploadBackup } from "./entryService";
 import {
@@ -490,7 +491,19 @@ export const importBackupObject = async (
 export const importBjkArchive = async (
   input: ArrayBuffer | Uint8Array | string,
 ): Promise<BackupImportResult> => {
-  const { backupObject } = parseBjkArchive(input);
+  const bytes = toUint8Array(input);
+  if (isTauri()) {
+    const entryService = await loadEntryService();
+    const response = await entryService.importBjkArchive(bytes);
+    return {
+      success: true,
+      count: response.inserted_count,
+      updated_count: response.updated_count,
+      insertedIds: response.inserted_ids || [],
+    };
+  }
+
+  const { backupObject } = parseBjkArchive(bytes);
   const response: ImportResponse = await importBackupObject(backupObject);
 
   return {

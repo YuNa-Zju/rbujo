@@ -28,6 +28,7 @@ const normalizeIds = (ids: unknown): string[] =>
     : [];
 
 const notifyImportChanged = () => {
+  entryEventBus.emit("entry:invalidate_overview_cache");
   entryEventBus.emit("entry:reload_needed");
 };
 

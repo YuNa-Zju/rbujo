@@ -108,6 +108,10 @@ export default function EntryActionView({
         undo: t.common?.undo || "Undo",
         restored: t.common?.restored || "Restored",
         undoFailed: t.common?.undoFailed || "Undo failed",
+        deletePermanently:
+          t.archivePage?.deletePermanently || "Delete permanently",
+        deleted: t.common?.deleted || "Deleted",
+        deleteFailed: t.common?.deleteFailed || "Delete failed",
       });
     } catch (e) {
       console.error("Archive failed", e);

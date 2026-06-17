@@ -145,6 +145,12 @@ export function useJournalData(
       .then((data) => setOverviewCache((prev) => ({ ...prev, ...data })));
   }, [viewMode, currentDate, selectedDate]);
 
+  const handleInvalidateOverviewCache = useCallback(() => {
+    setOverviewCache({});
+    cacheStorage.clearOverview().catch(console.error);
+    handleSilentRefresh();
+  }, [handleSilentRefresh]);
+
   useEffect(() => {
     if (viewMode === "year" || !isCacheLoaded) return;
     const refreshWhenVisible = () => {
@@ -163,10 +169,15 @@ export function useJournalData(
   useEffect(() => {
     if (!isCacheLoaded) return;
     entryEventBus.on("entry:reload_needed", handleSilentRefresh);
+    entryEventBus.on("entry:invalidate_overview_cache", handleInvalidateOverviewCache);
     return () => {
       entryEventBus.off("entry:reload_needed", handleSilentRefresh);
+      entryEventBus.off(
+        "entry:invalidate_overview_cache",
+        handleInvalidateOverviewCache,
+      );
     };
-  }, [handleSilentRefresh, isCacheLoaded]);
+  }, [handleInvalidateOverviewCache, handleSilentRefresh, isCacheLoaded]);
 
   // -------------------------------------------------------------------------
   // ✅ 5. EventBus Logic (保持之前的修复)

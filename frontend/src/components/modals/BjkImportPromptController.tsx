@@ -2,11 +2,11 @@ import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "framer-motion";
 import { FileArchive, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { EscModalWrapper } from "../common/EscModalWrapper";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { useTranslation } from "../../hooks/useTranslation";
-import { dataBackupService } from "../../services/dataBackupService";
 import {
   entryService,
   type PendingBjkImport,
@@ -109,15 +109,12 @@ export default function BjkImportPromptController() {
     setMessage(t.backup?.externalImportReading || "Reading backup...");
 
     try {
-      const file = await entryService.readBjkImportFile(
+      const response = await entryService.importPendingBjkArchive(
         pending.path,
         pending.token,
       );
-      const result = await dataBackupService.importBjkArchive(
-        new Uint8Array(file.bytes),
-      );
-      const insertedIds = result.insertedIds || [];
-      const importedCount = result.count;
+      const insertedIds = response.inserted_ids || [];
+      const importedCount = response.inserted_count;
       const undoIds = recordImportUndoIds(insertedIds);
 
       await entryService.clearPendingBjkImport(pending.token);
@@ -150,7 +147,7 @@ export default function BjkImportPromptController() {
   const description = (t.backup?.externalImportDesc || "Import {{filename}}?")
     .replace("{{filename}}", filename);
 
-  return (
+  return createPortal(
     <EscModalWrapper id="BjkImportPrompt" isOpen={open} onClose={close}>
       <AnimatePresence>
         {open && (
@@ -266,6 +263,7 @@ export default function BjkImportPromptController() {
           </div>
         )}
       </AnimatePresence>
-    </EscModalWrapper>
+    </EscModalWrapper>,
+    document.body,
   );
 }

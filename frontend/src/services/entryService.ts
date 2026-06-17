@@ -445,4 +445,13 @@ export const entryService = {
     return invoke<BjkImportFile>("read_bjk_import_file", { path, token });
   },
 
+  importPendingBjkArchive: async (path: string, token: string) => {
+    return invoke<ImportResponse>("import_pending_bjk_archive", { path, token });
+  },
+
+  importBjkArchive: async (bytes: number[] | Uint8Array) => {
+    const payload = bytes instanceof Uint8Array ? Array.from(bytes) : bytes;
+    return invoke<ImportResponse>("import_bjk_archive", { bytes: payload });
+  },
+
 };

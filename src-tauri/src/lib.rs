@@ -190,29 +190,60 @@ async fn read_bjk_import_file(
     path: String,
     token: String,
 ) -> Result<BjkImportFile, String> {
-    let pending = {
-        let mut guard = pending_import
-            .0
-            .lock()
-            .map_err(|_| "pending import state lock poisoned".to_string())?;
-        let pending = guard
-            .pending
-            .as_ref()
-            .ok_or_else(|| "there is no pending backup import".to_string())?;
-        if pending.token != token || pending.path != path {
-            return Err("backup import request is no longer valid".to_string());
-        }
-        let pending = pending.clone();
-        guard.active_token = Some(token.clone());
-        pending
-    };
-
+    let pending = activate_pending_bjk_import(&pending_import, &path, &token)?;
     let path_buf = PathBuf::from(&pending.path);
-    if !is_bjk_path(&path_buf) {
+    let bytes = read_bjk_import_bytes(&path_buf).await?;
+
+    Ok(BjkImportFile {
+        path: pending.path,
+        filename: filename_for_path(&path_buf),
+        bytes,
+    })
+}
+
+#[tauri::command]
+async fn import_pending_bjk_archive(
+    state: State<'_, DesktopState>,
+    pending_import: State<'_, PendingBjkImportState>,
+    path: String,
+    token: String,
+) -> Result<ImportResponseDto, String> {
+    let pending = activate_pending_bjk_import(&pending_import, &path, &token)?;
+    let bytes = read_bjk_import_bytes(Path::new(&pending.path)).await?;
+    state
+        .backend
+        .import_bjk_archive_bytes(bytes)
+        .await
+        .map_err(to_error)
+}
+
+fn activate_pending_bjk_import(
+    pending_import: &PendingBjkImportState,
+    path: &str,
+    token: &str,
+) -> Result<PendingBjkImport, String> {
+    let mut guard = pending_import
+        .0
+        .lock()
+        .map_err(|_| "pending import state lock poisoned".to_string())?;
+    let pending = guard
+        .pending
+        .as_ref()
+        .ok_or_else(|| "there is no pending backup import".to_string())?;
+    if pending.token != token || pending.path != path {
+        return Err("backup import request is no longer valid".to_string());
+    }
+    let pending = pending.clone();
+    guard.active_token = Some(token.to_string());
+    Ok(pending)
+}
+
+async fn read_bjk_import_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    if !is_bjk_path(path) {
         return Err("Only .bjk backup files can be imported this way".to_string());
     }
 
-    let file = tokio::fs::File::open(&path_buf).await.map_err(to_error)?;
+    let file = tokio::fs::File::open(path).await.map_err(to_error)?;
     let metadata = file.metadata().await.map_err(to_error)?;
     if !metadata.is_file() {
         return Err("Selected backup path is not a file".to_string());
@@ -231,12 +262,7 @@ async fn read_bjk_import_file(
     if bytes.len() as u64 > MAX_BJK_IMPORT_BYTES {
         return Err("Selected backup file is too large to import".to_string());
     }
-
-    Ok(BjkImportFile {
-        path: pending.path,
-        filename: filename_for_path(&path_buf),
-        bytes,
-    })
+    Ok(bytes)
 }
 
 #[tauri::command]
@@ -677,6 +703,18 @@ async fn import_entries(
 }
 
 #[tauri::command]
+async fn import_bjk_archive(
+    state: State<'_, DesktopState>,
+    bytes: Vec<u8>,
+) -> Result<ImportResponseDto, String> {
+    state
+        .backend
+        .import_bjk_archive_bytes(bytes)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn batch_delete_entries(
     state: State<'_, DesktopState>,
     ids: Vec<String>,
@@ -949,6 +987,7 @@ pub fn run() {
             take_pending_bjk_import,
             clear_pending_bjk_import,
             read_bjk_import_file,
+            import_pending_bjk_archive,
             create_entry,
             update_entry,
             archive_entry,
@@ -986,6 +1025,7 @@ pub fn run() {
             export_markdown_archive_to_file,
             get_all_entries_for_backup,
             import_entries,
+            import_bjk_archive,
             batch_delete_entries
         ])
         .build(tauri::generate_context!())

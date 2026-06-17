@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose};
+use flate2::read::GzDecoder;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,6 +28,13 @@ const MARKDOWN_WORKSPACE_SETTING_KEY: &str = "markdown_workspace_path";
 const ATTACHMENT_DIR: &str = "attachments";
 const LEGACY_UPLOAD_DIR: &str = "uploads";
 const FUTURE_MARKDOWN_SOMEDAY_KEY: &str = "future:someday";
+const BJK_BACKUP_HEADER: &str = "BUJO_SECURE_BACKUP_V1";
+const BJK_FORMAT: &str = "fun.yunazju.rbujo.bjk";
+const BJK_CONTAINER_VERSION: u64 = 1;
+const BJK_MANIFEST_PATH: &str = "manifest.json";
+const BJK_PAYLOAD_PATH: &str = "data/backup.json.gz";
+const MAX_BJK_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
+const MAX_BJK_PAYLOAD_BYTES: u64 = 256 * 1024 * 1024;
 
 const ENTRY_SELECT: &str = r#"
     SELECT entries.id AS id, entries.content AS content, entries.entry_type AS entry_type,
@@ -219,6 +227,41 @@ pub struct AttachmentCleanupResult {
 pub struct FutureLogResponse {
     pub future_log: Vec<EntryResponse>,
     pub monthly_log: BTreeMap<String, Vec<EntryResponse>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PortableBjkAttachment {
+    relative_path: String,
+    filename: Option<String>,
+    sha256: Option<String>,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BjkBackupObject {
+    header: String,
+    data: Vec<EntryExportSchema>,
+    #[serde(default)]
+    attachments: Vec<PortableBjkAttachment>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BjkManifestPayload {
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BjkManifest {
+    format: String,
+    container_version: u64,
+    payload: Option<BjkManifestPayload>,
+}
+
+struct PreparedBjkAttachment {
+    relative_path: String,
+    filename: String,
+    sha256: String,
+    bytes: Vec<u8>,
 }
 
 fn default_search_mode() -> SearchMode {
@@ -1591,6 +1634,74 @@ impl LocalBackend {
             skipped_count,
             inserted_ids,
         })
+    }
+
+    pub async fn import_bjk_archive_bytes(&self, bytes: Vec<u8>) -> AppResult<ImportResponseDto> {
+        let backup = parse_bjk_archive(&bytes)?;
+        if backup.header != BJK_BACKUP_HEADER {
+            return Err(AppError::BadRequest(
+                "Invalid backup file format (Header mismatch)".to_string(),
+            ));
+        }
+
+        let mut prepared_attachments = Vec::new();
+        for attachment in backup.attachments {
+            prepared_attachments.push(prepare_bjk_attachment(attachment)?);
+        }
+
+        let mut replacements = HashMap::new();
+        let mut created_relative_paths = Vec::new();
+        for attachment in prepared_attachments {
+            let existing_relative_path = self
+                .existing_upload_relative_path_for_sha(&attachment.sha256)
+                .await?;
+            let stored = match self
+                .store_upload(UploadInput {
+                    filename: attachment.filename.clone(),
+                    bytes: attachment.bytes,
+                })
+                .await
+            {
+                Ok(stored) => stored,
+                Err(error) => {
+                    let _ = self
+                        .remove_upload_files_and_records(&created_relative_paths)
+                        .await;
+                    return Err(error);
+                }
+            };
+            if existing_relative_path.is_none() {
+                created_relative_paths.push(stored.relative_path.clone());
+            }
+            let restored_relative_path = stored.relative_path;
+            replacements.insert(
+                attachment.relative_path.clone(),
+                restored_relative_path.clone(),
+            );
+            replacements.insert(
+                Self::legacy_upload_relative_path(&attachment.filename),
+                restored_relative_path.clone(),
+            );
+            replacements.insert(
+                Self::attachment_relative_path(&attachment.filename),
+                restored_relative_path,
+            );
+        }
+
+        let entries = backup
+            .data
+            .into_iter()
+            .map(|mut entry| {
+                if let Some(content) = entry.content.as_mut()
+                    && !replacements.is_empty()
+                {
+                    *content = replace_imported_attachment_references(content, &replacements);
+                }
+                entry
+            })
+            .collect();
+
+        self.import_entries(entries).await
     }
 
     pub async fn batch_delete_entries(&self, ids: Vec<String>) -> AppResult<()> {
@@ -4649,6 +4760,185 @@ fn rewrite_attachment_reference_path(
     rewritten
 }
 
+fn replace_imported_attachment_references(
+    content: &str,
+    replacements: &HashMap<String, String>,
+) -> String {
+    let mut rewritten = content.to_string();
+    let mut pairs = replacements.iter().collect::<Vec<_>>();
+    pairs.sort_by(|(left, _), (right, _)| right.len().cmp(&left.len()));
+
+    for (old_relative_path, new_relative_path) in pairs {
+        let escaped_relative_path = regex::escape(old_relative_path);
+        let escaped_encoded_relative_path =
+            regex::escape(&percent_encode_url_component(old_relative_path));
+
+        for pattern in [
+            format!(r#"asset://[^\s\)\]"']*/{escaped_relative_path}"#),
+            format!(r#"https?://asset\.localhost[^\s\)\]"']*/{escaped_relative_path}"#),
+            format!(r#"asset://[^\s\)\]"']*(?i:{escaped_encoded_relative_path})"#),
+            format!(r#"https?://asset\.localhost[^\s\)\]"']*(?i:{escaped_encoded_relative_path})"#),
+        ] {
+            let Ok(regex) = Regex::new(&pattern) else {
+                continue;
+            };
+            rewritten = regex
+                .replace_all(&rewritten, new_relative_path.as_str())
+                .into_owned();
+        }
+
+        let raw_pattern = format!(r#"(^|[\(\s"'=]){escaped_relative_path}($|[\)\]\s"'<>])"#);
+        if let Ok(regex) = Regex::new(&raw_pattern) {
+            rewritten = regex
+                .replace_all(&rewritten, |captures: &regex::Captures<'_>| {
+                    format!("{}{}{}", &captures[1], new_relative_path, &captures[2])
+                })
+                .into_owned();
+        }
+    }
+
+    rewritten
+}
+
+fn parse_bjk_archive(bytes: &[u8]) -> AppResult<BjkBackupObject> {
+    if bytes.len() > MAX_BJK_ARCHIVE_BYTES {
+        return Err(AppError::BadRequest("BJK archive is too large".to_string()));
+    }
+    if bytes.starts_with(b"PK\x03\x04") {
+        parse_bjk_zip(bytes)
+    } else {
+        parse_legacy_backup_text(bytes)
+    }
+}
+
+fn parse_bjk_zip(bytes: &[u8]) -> AppResult<BjkBackupObject> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|_| AppError::BadRequest("Invalid BJK zip container".to_string()))?;
+
+    let mut manifest_text = String::new();
+    {
+        let mut manifest = archive.by_name(BJK_MANIFEST_PATH).map_err(|_| {
+            AppError::BadRequest("Invalid BJK package: missing manifest.json".to_string())
+        })?;
+        manifest
+            .read_to_string(&mut manifest_text)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+    }
+
+    let manifest: BjkManifest = serde_json::from_str(&manifest_text)
+        .map_err(|_| AppError::BadRequest("Invalid BJK manifest".to_string()))?;
+    if manifest.format != BJK_FORMAT {
+        return Err(AppError::BadRequest(
+            "Invalid BJK package format".to_string(),
+        ));
+    }
+    if manifest.container_version != BJK_CONTAINER_VERSION {
+        return Err(AppError::BadRequest(format!(
+            "Unsupported BJK container version: {}",
+            manifest.container_version
+        )));
+    }
+
+    let payload_path = manifest
+        .payload
+        .and_then(|payload| payload.path)
+        .unwrap_or_else(|| BJK_PAYLOAD_PATH.to_string());
+    let mut payload = archive.by_name(&payload_path).map_err(|_| {
+        AppError::BadRequest(format!("Invalid BJK package: missing {payload_path}"))
+    })?;
+    if payload.size() > MAX_BJK_PAYLOAD_BYTES {
+        return Err(AppError::BadRequest(
+            "BJK backup payload is too large".to_string(),
+        ));
+    }
+
+    let mut payload_bytes = Vec::new();
+    payload
+        .read_to_end(&mut payload_bytes)
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    parse_gzipped_backup_object(&payload_bytes)
+}
+
+fn parse_gzipped_backup_object(bytes: &[u8]) -> AppResult<BjkBackupObject> {
+    let decoder = GzDecoder::new(bytes);
+    let mut limited = decoder.take(MAX_BJK_PAYLOAD_BYTES + 1);
+    let mut text = String::new();
+    limited
+        .read_to_string(&mut text)
+        .map_err(|_| AppError::BadRequest("Invalid BJK backup payload".to_string()))?;
+    if text.len() as u64 > MAX_BJK_PAYLOAD_BYTES {
+        return Err(AppError::BadRequest(
+            "BJK backup payload is too large".to_string(),
+        ));
+    }
+    serde_json::from_str(&text)
+        .map_err(|_| AppError::BadRequest("Invalid BJK backup payload".to_string()))
+}
+
+fn parse_legacy_backup_text(bytes: &[u8]) -> AppResult<BjkBackupObject> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| AppError::BadRequest("Invalid legacy BJK backup".to_string()))?;
+    let compressed = general_purpose::STANDARD
+        .decode(text.trim())
+        .map_err(|_| AppError::BadRequest("Invalid legacy BJK backup".to_string()))?;
+    parse_gzipped_backup_object(&compressed)
+}
+
+fn prepare_bjk_attachment(attachment: PortableBjkAttachment) -> AppResult<PreparedBjkAttachment> {
+    let relative_path = validate_bjk_attachment_relative_path(&attachment.relative_path)?;
+    let filename = attachment
+        .filename
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| filename_from_relative_path(&relative_path));
+    let sha256 = sha256_hex(&attachment.bytes);
+
+    if let Some(expected) = attachment.sha256.filter(|value| !value.is_empty()) {
+        if !is_sha256_hex(&expected) {
+            return Err(AppError::BadRequest(format!(
+                "Invalid attachment hash for {filename}"
+            )));
+        }
+        if sha256 != expected.to_ascii_lowercase() {
+            return Err(AppError::BadRequest(format!(
+                "Attachment hash mismatch for {filename}"
+            )));
+        }
+    }
+
+    Ok(PreparedBjkAttachment {
+        relative_path,
+        filename,
+        sha256,
+        bytes: attachment.bytes,
+    })
+}
+
+fn validate_bjk_attachment_relative_path(relative_path: &str) -> AppResult<String> {
+    let (_, relative) = LocalBackend::validate_upload_relative_path(relative_path.trim())?;
+    let filename = relative
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AppError::BadRequest("Invalid upload path".to_string()))?;
+    if filename == ATTACHMENT_DIR || filename == LEGACY_UPLOAD_DIR {
+        return Err(AppError::BadRequest("Invalid upload path".to_string()));
+    }
+    Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn filename_from_relative_path(relative_path: &str) -> String {
+    Path::new(relative_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("attachment")
+        .to_string()
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 fn attachment_reference_preview(content: &str) -> String {
     let compact = content
         .lines()
@@ -4732,10 +5022,16 @@ fn open_with_system(path: &Path) -> AppResult<()> {
     let status = Command::new("open").arg(path).spawn();
 
     #[cfg(target_os = "windows")]
-    let status = Command::new("cmd")
-        .args(["/C", "start", ""])
-        .arg(path)
-        .spawn();
+    let status = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        Command::new("rundll32.exe")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+    };
 
     #[cfg(all(unix, not(target_os = "macos")))]
     let status = Command::new("xdg-open").arg(path).spawn();

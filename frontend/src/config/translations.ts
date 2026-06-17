@@ -30,6 +30,8 @@ export const translations = {
       undo: "撤回",
       restored: "已恢复",
       undoFailed: "撤回失败",
+      deleted: "已删除",
+      deleteFailed: "删除失败",
       // ✅ 新增
       next: "下一步",
       to: "To",
@@ -467,6 +469,8 @@ export const translations = {
       undo: "Undo",
       restored: "Restored",
       undoFailed: "Undo failed",
+      deleted: "Deleted",
+      deleteFailed: "Delete failed",
       // ✅ Added
       next: "Next",
       to: "To",

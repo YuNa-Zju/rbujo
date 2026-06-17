@@ -25,6 +25,10 @@ export const cacheStorage = {
     await set(OVERVIEW_CACHE_KEY, data);
   },
 
+  async clearOverview() {
+    await del(OVERVIEW_CACHE_KEY);
+  },
+
   // --- 清除 (用于 Logout) ---
   async clearAll() {
     await del(DAILY_CACHE_KEY);
