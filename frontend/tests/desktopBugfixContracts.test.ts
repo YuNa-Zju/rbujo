@@ -36,7 +36,8 @@ test("desktop bundle registers bjk backup file association", async () => {
 
   assert.ok(bjkAssociation);
   assert.equal(bjkAssociation.name, "Bullet Journal Backup");
-  assert.equal(bjkAssociation.description, "子弹笔记备份文件");
+  assert.equal(bjkAssociation.description, "BuJo backup file");
+  assert.match(bjkAssociation.description, /^[\x20-\x7E]+$/);
   assert.equal(bjkAssociation.role, "Editor");
   assert.equal(bjkAssociation.mimeType, "application/vnd.yunazju.rbujo.backup");
   assert.deepEqual(bjkAssociation.exportedType, {

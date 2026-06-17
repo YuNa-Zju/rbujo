@@ -52,7 +52,7 @@
           "bjk"
         ],
         "name": "Bullet Journal Backup",
-        "description": "子弹笔记备份文件",
+        "description": "BuJo backup file",
         "role": "Editor",
         "mimeType": "application/vnd.yunazju.rbujo.backup",
         "exportedType": {
