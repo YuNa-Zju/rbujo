@@ -253,7 +253,7 @@ test("future log modal supports dragging entries between month drawers", async (
   assert.match(source, /FUTURE_DROP_SOMEDAY_ID/);
 });
 
-test("future log month dragging uses an explicit compact arrange mode", async () => {
+test("future log month dragging uses the daily-style arrange mode", async () => {
   const futureLogPath = path.resolve(
     import.meta.dirname,
     "../src/components/modals/FutureLogModal.tsx",
@@ -270,8 +270,12 @@ test("future log month dragging uses an explicit compact arrange mode", async ()
   assert.match(source, /ArrowDownUp/);
   assert.match(source, /activeDragWidth/);
   assert.match(source, /getBoundingClientRect\(\)\.width/);
-  assert.match(source, /FutureCompactEntryCard/);
-  assert.match(source, /getSmartSummary/);
+  assert.doesNotMatch(source, /FutureCompactEntryCard/);
+  assert.doesNotMatch(source, /getSmartSummary/);
+  assert.match(source, /dragHandleProps=\{\{ \.\.\.attributes, \.\.\.listeners \}\}/);
+  assert.match(source, /forceCollapse=\{true\}/);
+  assert.match(source, /dragMode\s*\?\s*"bg-base-100 border-base-200 shadow-sm"/);
+  assert.match(source, /dragMode\s*\?\s*"border-base-200 bg-base-100"/);
   assert.match(source, /btn btn-sm btn-circle border shadow-sm/);
   assert.match(source, /btn-primary text-primary-content border-primary/);
   assert.doesNotMatch(source, /bg-stone-900 text-white/);

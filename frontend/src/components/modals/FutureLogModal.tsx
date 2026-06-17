@@ -35,8 +35,6 @@ import { format } from "date-fns";
 import { entryService } from "../../services/entryService";
 import { zhCN, enUS } from "date-fns/locale";
 import { EntryCard } from "../DraggableEntryCard";
-import { ENTRY_THEME, type EntryType } from "../../config/entryTheme";
-import { getSmartSummary } from "../../utils/markdownUtils";
 
 import {
   entryEventBus,
@@ -76,49 +74,6 @@ const futureCardClass = (isDark: boolean) => `
   }
   !shadow-sm
 `;
-
-const FutureCompactEntryCard = ({
-  entry,
-  isDark,
-  isOverlay = false,
-}: {
-  entry: any;
-  isDark: boolean;
-  isOverlay?: boolean;
-}) => {
-  const theme =
-    ENTRY_THEME[entry.entry_type as EntryType] || ENTRY_THEME.task;
-  const summary = getSmartSummary(entry.content || "").text;
-
-  return (
-    <div
-      className={`relative flex h-12 items-center gap-3 overflow-hidden rounded-xl border px-3 pl-4 shadow-sm transition-colors ${
-        isDark
-          ? "border-white/5 bg-[#2a2725]/90 text-stone-200"
-          : "border-orange-100/70 bg-white/95 text-stone-700"
-      } ${isOverlay ? "shadow-2xl ring-1 ring-orange-300/40" : ""}`}
-    >
-      <div
-        className={`absolute bottom-2 left-1 top-2 w-1 rounded-full ${theme.sideBar}`}
-      />
-      <div
-        className={`h-2.5 w-2.5 shrink-0 rounded-full ${theme.dotColor}`}
-      />
-      <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-none">
-        {summary}
-      </span>
-      <span
-        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-          isDark
-            ? "bg-white/10 text-stone-300"
-            : "bg-orange-50 text-stone-500"
-        }`}
-      >
-        {entry.entry_type}
-      </span>
-    </div>
-  );
-};
 
 // ✅ 1. 核心 Hook：监听 <head> 标签上的 data-theme
 const useHeadTheme = () => {
@@ -186,14 +141,19 @@ const FutureLogEntryCard = ({
       id={futureEntryDragId(entry.id)}
       ref={setNodeRef}
       style={style}
-      {...(canDrag && !isMoving ? attributes : {})}
-      {...(canDrag && !isMoving ? listeners : {})}
       className={`rounded-2xl transition-opacity ${
-        canDrag && !isMoving ? "cursor-grab active:cursor-grabbing" : ""
-      } ${isMoving ? "pointer-events-none opacity-50" : ""}`}
+        isMoving ? "pointer-events-none opacity-50" : ""
+      }`}
     >
       {dragMode ? (
-        <FutureCompactEntryCard entry={entry} isDark={isDark} />
+        <EntryCard
+          entry={entry}
+          refresh={() => {}}
+          isDragEnabled={canDrag}
+          forceCollapse={true}
+          disableOverflowCheck={true}
+          dragHandleProps={{ ...attributes, ...listeners }}
+        />
       ) : (
         <EntryCard
           entry={entry}
@@ -226,44 +186,86 @@ const FutureLogSection = ({
   const years = Object.keys(yearGroups || {}).sort();
   const { isOver, setNodeRef } = useDroppable({ id: dropId });
 
-  // --- 样式逻辑 (Glassmorphism) ---
-
-  // 容器：极高的透明度 + 强模糊
-  const glassContainer = isDark
-    ? "bg-[#202020]/40 border-white/5 shadow-inner shadow-white/5" // 暗色玻璃
-    : "bg-white/60 border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)]"; // 亮色玻璃
+  const sectionClassName = dragMode ? "" : className;
+  const sectionSurfaceClass = dragMode
+    ? "bg-base-100 border-base-200 shadow-sm"
+    : isDark
+      ? "bg-[#202020]/40 border-white/5 shadow-inner shadow-white/5"
+      : "bg-white/60 border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)]";
+  const dropTargetClass =
+    isOver && canDragEntries
+      ? dragMode
+        ? "ring-2 ring-primary/35 border-primary/40"
+        : isDark
+          ? "ring-2 ring-orange-400/60 border-orange-400/50"
+          : "ring-2 ring-orange-300/70 border-orange-300/80"
+      : "";
 
   const containerBase = `
-    relative flex flex-col h-full rounded-[1.5rem] transition-all duration-300
-    border backdrop-blur-xl
-    ${glassContainer}
-    ${isOver && canDragEntries ? (isDark ? "ring-2 ring-orange-400/60 border-orange-400/50" : "ring-2 ring-orange-300/70 border-orange-300/80") : ""}
+    relative flex flex-col h-full transition-all duration-300
+    ${dragMode ? "rounded-2xl border" : "rounded-[1.5rem] border backdrop-blur-xl"}
+    ${sectionSurfaceClass}
+    ${dropTargetClass}
   `;
 
-  // 头部：更加通透
+  const headerSurfaceClass = dragMode
+    ? "border-base-200 bg-base-100"
+    : isDark
+      ? "border-white/5 bg-white/5"
+      : "border-orange-100/30 bg-white/40";
   const headerBase = `
     p-4 flex justify-between items-center
-    border-b ${isDark ? "border-white/5 bg-white/5" : "border-orange-100/30 bg-white/40"}
-    rounded-t-[1.5rem]
+    border-b ${headerSurfaceClass}
+    ${dragMode ? "rounded-t-2xl" : "rounded-t-[1.5rem]"}
   `;
 
-  // 图标颜色
-  const iconBoxClass = isSpecial
-    ? isDark
-      ? "bg-amber-500/20 text-amber-400"
-      : "bg-amber-100 text-amber-600"
-    : isDark
-      ? "bg-orange-500/20 text-orange-400"
-      : "bg-orange-50 text-orange-400";
+  const iconBoxClass = dragMode
+    ? "bg-base-200 text-primary"
+    : isSpecial
+      ? isDark
+        ? "bg-amber-500/20 text-amber-400"
+        : "bg-amber-100 text-amber-600"
+      : isDark
+        ? "bg-orange-500/20 text-orange-400"
+        : "bg-orange-50 text-orange-400";
 
-  const titleClass = isDark ? "text-stone-200" : "text-stone-600";
+  const titleClass = dragMode
+    ? "text-base-content"
+    : isDark
+      ? "text-stone-200"
+      : "text-stone-600";
+  const countClass = dragMode
+    ? "bg-base-100 text-base-content/70 border-base-200"
+    : isDark
+      ? "bg-white/10 text-orange-200 border-white/5"
+      : "bg-orange-100/50 text-orange-600 border-orange-100";
+  const emptyIconClass = dragMode
+    ? "bg-base-200/60 text-base-content/20"
+    : isDark
+      ? "bg-white/5 text-white/20"
+      : "bg-orange-50/50 text-orange-200";
+  const emptyTextClass = dragMode
+    ? "text-base-content/40"
+    : isDark
+      ? "text-white/30"
+      : "text-stone-400";
+  const yearPillClass = dragMode
+    ? "bg-base-200 text-base-content/40"
+    : isDark
+      ? "bg-white/10 text-white/50"
+      : "bg-stone-100 text-stone-400";
+  const yearLineClass = dragMode
+    ? "bg-base-200"
+    : isDark
+      ? "bg-white/10"
+      : "bg-orange-100/50";
 
   // 空状态
   if (flatCount === 0) {
     return (
       <div
         ref={setNodeRef}
-        className={`${containerBase} ${className} opacity-60 hover:opacity-100`}
+        className={`${containerBase} ${sectionClassName} opacity-60 hover:opacity-100`}
       >
         <div className={headerBase}>
           <div className="flex items-center gap-2.5">
@@ -278,18 +280,18 @@ const FutureLogSection = ({
           </div>
         </div>
 
-      <div
-        className={`flex flex-1 flex-col items-center justify-center gap-3 select-none ${
-          dragMode ? "min-h-[88px] p-3" : "min-h-[120px] p-4"
-        }`}
-      >
+        <div
+          className={`flex flex-1 flex-col items-center justify-center gap-3 select-none ${
+            dragMode ? "min-h-[88px] p-3" : "min-h-[120px] p-4"
+          }`}
+        >
           <div
-            className={`w-12 h-12 rounded-full flex items-center justify-center ${isDark ? "bg-white/5 text-white/20" : "bg-orange-50/50 text-orange-200"}`}
+            className={`w-12 h-12 rounded-full flex items-center justify-center ${emptyIconClass}`}
           >
             <Icon size={20} />
           </div>
           <span
-            className={`text-xs font-medium tracking-wide font-lxgw ${isDark ? "text-white/30" : "text-stone-400"}`}
+            className={`text-xs font-medium tracking-wide font-lxgw ${emptyTextClass}`}
           >
             {emptyText}
           </span>
@@ -300,7 +302,7 @@ const FutureLogSection = ({
 
   // 有数据状态
   return (
-    <div ref={setNodeRef} className={`${containerBase} ${className}`}>
+    <div ref={setNodeRef} className={`${containerBase} ${sectionClassName}`}>
       {/* Header */}
       <div className={headerBase}>
         <div className="flex items-center gap-2.5">
@@ -314,12 +316,7 @@ const FutureLogSection = ({
           </span>
         </div>
         <span
-          className={`px-2.5 py-0.5 rounded-full font-mono text-[11px] font-bold border
-          ${
-            isDark
-              ? "bg-white/10 text-orange-200 border-white/5"
-              : "bg-orange-100/50 text-orange-600 border-orange-100"
-          }`}
+          className={`px-2.5 py-0.5 rounded-full font-mono text-[11px] font-bold border ${countClass}`}
         >
           {flatCount}
         </span>
@@ -337,16 +334,12 @@ const FutureLogSection = ({
               {year !== "undefined" && (
                 <div className="flex items-center gap-3 px-1 pt-2 pb-1">
                   <div
-                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold
-                    ${isDark ? "bg-white/10 text-white/50" : "bg-stone-100 text-stone-400"}
-                  `}
+                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold ${yearPillClass}`}
                   >
                     <Clock size={10} />
                     {year}
                   </div>
-                  <div
-                    className={`h-px flex-1 ${isDark ? "bg-white/10" : "bg-orange-100/50"}`}
-                  ></div>
+                  <div className={`h-px flex-1 ${yearLineClass}`}></div>
                 </div>
               )}
               {yearGroups[year].map((i: any) => (
@@ -897,10 +890,13 @@ const FutureLogModal = ({ onClose }: Props) => {
                     }}
                   >
                     {isMonthDragMode ? (
-                      <FutureCompactEntryCard
+                      <EntryCard
                         entry={activeDragEntry}
-                        isDark={isDark}
                         isOverlay={true}
+                        isDragEnabled={true}
+                        refresh={() => {}}
+                        forceCollapse={true}
+                        disableOverflowCheck={true}
                       />
                     ) : (
                       <EntryCard
