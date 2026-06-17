@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 use rbullet_journal::local::{
     AttachmentCleanupResult, AttachmentMaintenanceSummary, CreateEntryInput, DailyMarkdownFile,
@@ -62,6 +65,14 @@ struct UpdateMetadata {
     body: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDownloadProgress {
+    downloaded: u64,
+    total: Option<u64>,
+    finished: bool,
+}
+
 #[tauri::command]
 async fn check_for_update(
     app: AppHandle,
@@ -99,8 +110,38 @@ async fn install_update(
         .take()
         .ok_or_else(|| "there is no pending update".to_string())?;
 
+    let downloaded = Arc::new(AtomicU64::new(0));
+    let progress_app = app.clone();
+    let progress_downloaded = downloaded.clone();
+    let finish_app = app.clone();
+    let finish_downloaded = downloaded.clone();
+
     update
-        .download_and_install(|_, _| {}, || {})
+        .download_and_install(
+            move |chunk_length, content_length| {
+                let downloaded = progress_downloaded
+                    .fetch_add(chunk_length as u64, Ordering::Relaxed)
+                    .saturating_add(chunk_length as u64);
+                let _ = progress_app.emit(
+                    "update:download-progress",
+                    UpdateDownloadProgress {
+                        downloaded,
+                        total: content_length,
+                        finished: false,
+                    },
+                );
+            },
+            move || {
+                let _ = finish_app.emit(
+                    "update:download-progress",
+                    UpdateDownloadProgress {
+                        downloaded: finish_downloaded.load(Ordering::Relaxed),
+                        total: None,
+                        finished: true,
+                    },
+                );
+            },
+        )
         .await
         .map_err(to_error)?;
     app.restart();

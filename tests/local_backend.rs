@@ -792,6 +792,33 @@ async fn markdown_workspace_switch_moves_attachments_with_project_folder() {
 }
 
 #[tokio::test]
+async fn batch_delete_entries_ignores_missing_ids_for_import_undo() {
+    let dir = temp_app_dir("batch-delete-missing-ids");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "undo imported item once".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-22".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    backend
+        .batch_delete_entries(vec![entry.id.clone(), "already-deleted".to_string()])
+        .await
+        .unwrap();
+
+    let daily_entries = backend.get_daily_log("2026-06-22", true).await.unwrap();
+    assert!(daily_entries.iter().all(|item| item.id != entry.id));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn future_entry_writes_import_dirty_markdown_before_appending() {
     let dir = temp_app_dir("future-markdown-dirty-before-write");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();

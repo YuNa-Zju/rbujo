@@ -12,6 +12,7 @@ import {
   checkForUpdates,
   dismissUpdate,
   installUpdate,
+  type UpdateDownloadProgress,
   type UpdateMetadata,
 } from "../../services/updateService";
 import { getUpdateCheckFailureMessage } from "../../services/updateCheckErrors";
@@ -57,9 +58,23 @@ const UPDATE_NOTES_MARKDOWN_STYLES = `
   }
 `;
 
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+};
+
 export default function UpdateCheckController() {
   const [update, setUpdate] = useState<UpdateMetadata | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [downloadProgress, setDownloadProgress] =
+    useState<UpdateDownloadProgress | null>(null);
   const checkingRef = useRef(false);
 
   const runCheck = useCallback(async (source: UpdateCheckSource) => {
@@ -82,6 +97,7 @@ export default function UpdateCheckController() {
       }
 
       if (result.status === "available") {
+        setDownloadProgress(null);
         setUpdate(result.update);
         return;
       }
@@ -147,12 +163,42 @@ export default function UpdateCheckController() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const register = async () => {
+      try {
+        unlisten = await listen<UpdateDownloadProgress>(
+          "update:download-progress",
+          (event) => {
+            setDownloadProgress(event.payload);
+          },
+        );
+      } catch (error) {
+        console.warn("Update progress listener registration failed", error);
+        return;
+      }
+
+      if (disposed && unlisten) {
+        unlisten();
+      }
+    };
+
+    register();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const close = useCallback(() => {
     if (!update || installing) {
       return;
     }
     dismissUpdate(update.version);
     setUpdate(null);
+    setDownloadProgress(null);
   }, [installing, update]);
 
   const handleInstall = useCallback(async () => {
@@ -161,6 +207,7 @@ export default function UpdateCheckController() {
     }
 
     setInstalling(true);
+    setDownloadProgress({ downloaded: 0, total: null, finished: false });
     const toastId = toast.loading("正在下载并安装更新...");
     try {
       await installUpdate();
@@ -169,6 +216,7 @@ export default function UpdateCheckController() {
       console.error("Update install failed", error);
       toast.error("更新安装失败，请稍后重试", { id: toastId });
       setInstalling(false);
+      setDownloadProgress(null);
     }
   }, [installing, update]);
 
@@ -176,6 +224,7 @@ export default function UpdateCheckController() {
     <UpdatePromptModal
       update={update}
       installing={installing}
+      downloadProgress={downloadProgress}
       onClose={close}
       onInstall={handleInstall}
     />
@@ -185,11 +234,13 @@ export default function UpdateCheckController() {
 function UpdatePromptModal({
   update,
   installing,
+  downloadProgress,
   onClose,
   onInstall,
 }: {
   update: UpdateMetadata | null;
   installing: boolean;
+  downloadProgress: UpdateDownloadProgress | null;
   onClose: () => void;
   onInstall: () => void;
 }) {
@@ -253,6 +304,8 @@ function UpdatePromptModal({
                 <VersionBadge label="最新版本" version={update.version} />
               </div>
 
+              {installing && <UpdateProgressPanel progress={downloadProgress} />}
+
               <div
                 className={`
                   mt-5 rounded-2xl border p-4
@@ -310,6 +363,62 @@ function UpdatePromptModal({
         )}
       </AnimatePresence>
     </EscModalWrapper>
+  );
+}
+
+function UpdateProgressPanel({
+  progress,
+}: {
+  progress: UpdateDownloadProgress | null;
+}) {
+  const { styles } = useAppTheme();
+  const downloaded = progress?.downloaded ?? 0;
+  const total = progress?.total ?? null;
+  const percent =
+    total && total > 0
+      ? Math.max(0, Math.min(100, Math.round((downloaded / total) * 100)))
+      : null;
+  const isIndeterminate = percent === null && !progress?.finished;
+  const progressPercent = progress?.finished ? 100 : percent;
+
+  return (
+    <div
+      className={`
+        mt-5 rounded-2xl border p-4
+        ${styles.card.bg} ${styles.card.border}
+      `}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className={`text-sm font-bold ${styles.modal.title}`}>
+          {progress?.finished ? "正在安装更新" : "正在下载更新"}
+        </span>
+        <span className={`text-xs font-semibold ${styles.card.textSecondary}`}>
+          {percent === null ? formatBytes(downloaded) : `${percent}%`}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="更新下载进度"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progressPercent ?? undefined}
+        className="mt-3 h-2 overflow-hidden rounded-full bg-base-200/70"
+      >
+        <div
+          className={`h-full rounded-full bg-primary transition-all duration-300 ${
+            isIndeterminate ? "w-1/3 animate-pulse" : ""
+          }`}
+          style={
+            isIndeterminate ? undefined : { width: `${progressPercent ?? 100}%` }
+          }
+        />
+      </div>
+      <div className={`mt-2 text-xs ${styles.card.textSecondary}`}>
+        {total && total > 0
+          ? `${formatBytes(downloaded)} / ${formatBytes(total)}`
+          : "服务器未提供总大小时会显示已下载数据量"}
+      </div>
+    </div>
   );
 }
 

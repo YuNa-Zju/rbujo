@@ -139,6 +139,31 @@ test("update and version dialogs use polished aligned layouts", async () => {
   assert.match(versionSource, /w-full/);
 });
 
+test("update install flow reports download progress in the update dialog", async () => {
+  const updatePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/UpdateCheckController.tsx",
+  );
+  const updateServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/updateService.ts",
+  );
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const updateSource = await readFile(updatePath, "utf8");
+  const updateServiceSource = await readFile(updateServicePath, "utf8");
+  const libSource = await readFile(libPath, "utf8");
+
+  assert.match(updateServiceSource, /UpdateDownloadProgress/);
+  assert.match(libSource, /UpdateDownloadProgress/);
+  assert.match(libSource, /emit\(\s*"update:download-progress"/);
+  assert.match(updateSource, /listen<UpdateDownloadProgress>\(\s*"update:download-progress"/);
+  assert.match(updateSource, /downloadProgress/);
+  assert.match(updateSource, /role="progressbar"/);
+  assert.match(updateSource, /aria-valuenow/);
+  assert.match(updateSource, /formatBytes/);
+  assert.match(updateSource, /isIndeterminate/);
+});
+
 test("backup modal header keeps title and close button aligned", async () => {
   const backupPath = path.resolve(
     import.meta.dirname,
@@ -274,6 +299,7 @@ test("daily page can open the disk-backed markdown file in the system editor", a
 
 test("markdown workspace controls live in the unified storage panel", async () => {
   const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const localPath = path.resolve(import.meta.dirname, "../../src/local.rs");
   const capabilityPath = path.resolve(
     import.meta.dirname,
     "../../src-tauri/capabilities/default.json",
@@ -297,6 +323,7 @@ test("markdown workspace controls live in the unified storage panel", async () =
     "../src/components/modals/AttachmentMaintenanceController.tsx",
   );
   const libSource = await readFile(libPath, "utf8");
+  const localSource = await readFile(localPath, "utf8");
   const capability = JSON.parse(await readFile(capabilityPath, "utf8"));
   const appSource = await readFile(appPath, "utf8");
   const entryServiceSource = await readFile(entryServicePath, "utf8");
@@ -308,6 +335,9 @@ test("markdown workspace controls live in the unified storage panel", async () =
   assert.match(libSource, /get_markdown_workspace/);
   assert.match(libSource, /choose_markdown_workspace/);
   assert.match(libSource, /blocking_pick_folder/);
+  assert.match(localSource, /copy_dir_recursive/);
+  assert.match(localSource, /same_existing_directory\(current_path, next_path\)\.await/);
+  assert.match(localSource, /tokio::fs::rename\(source, target\)\.await/);
   assert.ok(capability.permissions.includes("dialog:allow-open"));
   assert.match(entryServiceSource, /getMarkdownWorkspace/);
   assert.match(entryServiceSource, /chooseMarkdownWorkspace/);
