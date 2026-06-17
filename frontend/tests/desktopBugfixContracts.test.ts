@@ -253,6 +253,32 @@ test("future log modal supports dragging entries between month drawers", async (
   assert.match(source, /FUTURE_DROP_SOMEDAY_ID/);
 });
 
+test("future log month dragging uses an explicit compact arrange mode", async () => {
+  const futureLogPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/FutureLogModal.tsx",
+  );
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const source = await readFile(futureLogPath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+
+  assert.match(source, /isMonthDragMode/);
+  assert.match(source, /setIsMonthDragMode/);
+  assert.match(source, /ArrowDownUp/);
+  assert.match(source, /activeDragWidth/);
+  assert.match(source, /getBoundingClientRect\(\)\.width/);
+  assert.match(source, /FutureCompactEntryCard/);
+  assert.match(source, /getSmartSummary/);
+  assert.match(source, /dragMode/);
+  assert.match(source, /t\.futureLog\.arrangeMonths/);
+  assert.match(source, /t\.futureLog\.finishArrange/);
+  assert.match(translationsSource, /调整月份/);
+  assert.match(translationsSource, /Finish Arrange/);
+});
+
 test("future log refreshes disk-backed markdown when app regains focus", async () => {
   const futureLogPath = path.resolve(
     import.meta.dirname,

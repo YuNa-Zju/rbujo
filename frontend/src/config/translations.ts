@@ -238,6 +238,8 @@ export const translations = {
       emptySomeday: "暂无待定事项",
       noEntries: "暂无条目",
       add: "添加到Future Log",
+      arrangeMonths: "调整月份",
+      finishArrange: "完成调整",
     },
     logout: {
       title: "确认退出",
@@ -662,6 +664,8 @@ export const translations = {
       emptySomeday: "No undetermined items",
       noEntries: "No entries",
       add: "Add to Future Log",
+      arrangeMonths: "Arrange Months",
+      finishArrange: "Finish Arrange",
     },
     logout: {
       title: "Confirm Logout",

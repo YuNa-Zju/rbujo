@@ -13,6 +13,8 @@ import {
   CalendarDays,
   Clock,
   ListTodo,
+  ArrowDownUp,
+  Check,
 } from "lucide-react";
 import {
   DndContext,
@@ -33,6 +35,8 @@ import { format } from "date-fns";
 import { entryService } from "../../services/entryService";
 import { zhCN, enUS } from "date-fns/locale";
 import { EntryCard } from "../DraggableEntryCard";
+import { ENTRY_THEME, type EntryType } from "../../config/entryTheme";
+import { getSmartSummary } from "../../utils/markdownUtils";
 
 import {
   entryEventBus,
@@ -72,6 +76,49 @@ const futureCardClass = (isDark: boolean) => `
   }
   !shadow-sm
 `;
+
+const FutureCompactEntryCard = ({
+  entry,
+  isDark,
+  isOverlay = false,
+}: {
+  entry: any;
+  isDark: boolean;
+  isOverlay?: boolean;
+}) => {
+  const theme =
+    ENTRY_THEME[entry.entry_type as EntryType] || ENTRY_THEME.task;
+  const summary = getSmartSummary(entry.content || "").text;
+
+  return (
+    <div
+      className={`relative flex h-12 items-center gap-3 overflow-hidden rounded-xl border px-3 pl-4 shadow-sm transition-colors ${
+        isDark
+          ? "border-white/5 bg-[#2a2725]/90 text-stone-200"
+          : "border-orange-100/70 bg-white/95 text-stone-700"
+      } ${isOverlay ? "shadow-2xl ring-1 ring-orange-300/40" : ""}`}
+    >
+      <div
+        className={`absolute bottom-2 left-1 top-2 w-1 rounded-full ${theme.sideBar}`}
+      />
+      <div
+        className={`h-2.5 w-2.5 shrink-0 rounded-full ${theme.dotColor}`}
+      />
+      <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-none">
+        {summary}
+      </span>
+      <span
+        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+          isDark
+            ? "bg-white/10 text-stone-300"
+            : "bg-orange-50 text-stone-500"
+        }`}
+      >
+        {entry.entry_type}
+      </span>
+    </div>
+  );
+};
 
 // ✅ 1. 核心 Hook：监听 <head> 标签上的 data-theme
 const useHeadTheme = () => {
@@ -113,11 +160,13 @@ const FutureLogEntryCard = ({
   isDark,
   canDrag,
   isMoving,
+  dragMode,
 }: {
   entry: any;
   isDark: boolean;
   canDrag: boolean;
   isMoving: boolean;
+  dragMode: boolean;
 }) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -134,6 +183,7 @@ const FutureLogEntryCard = ({
 
   return (
     <div
+      id={futureEntryDragId(entry.id)}
       ref={setNodeRef}
       style={style}
       {...(canDrag && !isMoving ? attributes : {})}
@@ -142,14 +192,18 @@ const FutureLogEntryCard = ({
         canDrag && !isMoving ? "cursor-grab active:cursor-grabbing" : ""
       } ${isMoving ? "pointer-events-none opacity-50" : ""}`}
     >
-      <EntryCard
-        entry={entry}
-        refresh={() => {}}
-        isDragEnabled={canDrag}
-        forceCollapse={isDragging}
-        disableOverflowCheck={isDragging}
-        className={futureCardClass(isDark)}
-      />
+      {dragMode ? (
+        <FutureCompactEntryCard entry={entry} isDark={isDark} />
+      ) : (
+        <EntryCard
+          entry={entry}
+          refresh={() => {}}
+          isDragEnabled={canDrag}
+          forceCollapse={isDragging}
+          disableOverflowCheck={isDragging}
+          className={futureCardClass(isDark)}
+        />
+      )}
     </div>
   );
 };
@@ -167,6 +221,7 @@ const FutureLogSection = ({
   dropId,
   canDragEntries,
   movingEntryIds,
+  dragMode,
 }: any) => {
   const years = Object.keys(yearGroups || {}).sort();
   const { isOver, setNodeRef } = useDroppable({ id: dropId });
@@ -223,7 +278,11 @@ const FutureLogSection = ({
           </div>
         </div>
 
-        <div className="flex-1 min-h-[120px] flex flex-col items-center justify-center p-4 gap-3 select-none">
+      <div
+        className={`flex flex-1 flex-col items-center justify-center gap-3 select-none ${
+          dragMode ? "min-h-[88px] p-3" : "min-h-[120px] p-4"
+        }`}
+      >
           <div
             className={`w-12 h-12 rounded-full flex items-center justify-center ${isDark ? "bg-white/5 text-white/20" : "bg-orange-50/50 text-orange-200"}`}
           >
@@ -267,8 +326,12 @@ const FutureLogSection = ({
       </div>
 
       {/* Body */}
-      <div className="p-3 flex-1 min-h-[100px] overflow-y-auto max-h-[400px] overscroll-contain custom-scrollbar">
-        <div className="flex flex-col gap-5">
+      <div
+        className={`flex-1 overflow-y-auto overscroll-contain custom-scrollbar ${
+          dragMode ? "min-h-[80px] max-h-[260px] p-2" : "min-h-[100px] max-h-[400px] p-3"
+        }`}
+      >
+        <div className={`flex flex-col ${dragMode ? "gap-3" : "gap-5"}`}>
           {years.map((year) => (
             <div key={year} className="flex flex-col gap-2">
               {year !== "undefined" && (
@@ -293,6 +356,7 @@ const FutureLogSection = ({
                   isDark={isDark}
                   canDrag={Boolean(canDragEntries)}
                   isMoving={Boolean(movingEntryIds?.has(i.id))}
+                  dragMode={Boolean(dragMode)}
                 />
               ))}
             </div>
@@ -321,8 +385,11 @@ const FutureLogModal = ({ onClose }: Props) => {
   const monthIndexes = useMemo(() => Array.from({ length: 12 }, (_, i) => i), []);
   const currentYear = new Date().getFullYear();
   const [activeDragEntry, setActiveDragEntry] = useState<any | null>(null);
+  const [activeDragWidth, setActiveDragWidth] = useState<number | null>(null);
+  const [isMonthDragMode, setIsMonthDragMode] = useState(false);
   const [movingEntryIds, setMovingEntryIds] = useState<Set<string>>(new Set());
-  const canDragFutureEntries = futureLogMode === "planning";
+  const canDragFutureEntries =
+    futureLogMode === "planning" && isMonthDragMode;
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
@@ -504,6 +571,10 @@ const FutureLogModal = ({ onClose }: Props) => {
     return () => window.removeEventListener("keydown", handleEsc);
   }, [handleClose]);
 
+  useEffect(() => {
+    if (futureLogMode !== "planning") setIsMonthDragMode(false);
+  }, [futureLogMode]);
+
   const filterEntries = (entries: any[]) => {
     return entries.filter((entry) => {
       if (isExpiredFutureEntry(entry, currentYear)) return false;
@@ -524,12 +595,15 @@ const FutureLogModal = ({ onClose }: Props) => {
     const entryId = event.active.data.current?.entryId;
     if (typeof entryId !== "string") return;
     setActiveDragEntry(findEntryInLayout(layout, entryId));
+    const element = document.getElementById(futureEntryDragId(entryId));
+    setActiveDragWidth(element?.getBoundingClientRect().width || null);
   };
 
   const handleFutureDragEnd = async (event: DragEndEvent) => {
     const entryId = event.active.data.current?.entryId;
     const targetMonth = getFutureDropTargetMonth(event.over?.id, currentYear);
     setActiveDragEntry(null);
+    setActiveDragWidth(null);
 
     if (typeof entryId !== "string" || targetMonth === undefined) return;
 
@@ -560,6 +634,9 @@ const FutureLogModal = ({ onClose }: Props) => {
 
   const filteredUndetermined = filterEntries(layout.undetermined);
   const undeterminedCount = filteredUndetermined.length;
+  const gridClassName = isMonthDragMode
+    ? "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 pb-10"
+    : "grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 pb-10";
 
   return (
     <div
@@ -628,6 +705,43 @@ const FutureLogModal = ({ onClose }: Props) => {
 
           {/* Actions */}
           <div className="flex gap-3 items-center">
+            {futureLogMode === "planning" && (
+              <button
+                type="button"
+                className={`btn btn-sm h-10 rounded-full border px-4 shadow-sm gap-2 transition-all active:scale-95 ${
+                  isMonthDragMode
+                    ? isDark
+                      ? "bg-white text-stone-950 border-white"
+                      : "bg-stone-900 text-white border-stone-900"
+                    : isDark
+                      ? "bg-white/10 hover:bg-white/20 border-white/10 text-stone-200"
+                      : "bg-white/80 hover:bg-white border-orange-100 text-stone-600"
+                }`}
+                onClick={() => setIsMonthDragMode((current) => !current)}
+                title={
+                  isMonthDragMode
+                    ? t.futureLog.finishArrange
+                    : t.futureLog.arrangeMonths
+                }
+                aria-label={
+                  isMonthDragMode
+                    ? t.futureLog.finishArrange
+                    : t.futureLog.arrangeMonths
+                }
+              >
+                {isMonthDragMode ? (
+                  <Check size={16} strokeWidth={3} />
+                ) : (
+                  <ArrowDownUp size={16} strokeWidth={2.5} />
+                )}
+                <span className="hidden sm:inline font-bold">
+                  {isMonthDragMode
+                    ? t.futureLog.finishArrange
+                    : t.futureLog.arrangeMonths}
+                </span>
+              </button>
+            )}
+
             <button
               className={`btn btn-sm h-10 px-5 rounded-full border-0 shadow-lg gap-2 transition-transform active:scale-95
                 ${isDark ? "bg-orange-600 hover:bg-orange-500 text-white shadow-orange-500/10" : "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-500/20"}
@@ -717,11 +831,18 @@ const FutureLogModal = ({ onClose }: Props) => {
             collisionDetection={pointerWithin}
             onDragStart={handleFutureDragStart}
             onDragEnd={handleFutureDragEnd}
-            onDragCancel={() => setActiveDragEntry(null)}
+            onDragCancel={() => {
+              setActiveDragEntry(null);
+              setActiveDragWidth(null);
+            }}
           >
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 pb-10">
+            <div className={gridClassName}>
               {/* Someday / Undetermined Box - Full Width */}
-              <div className="col-span-1 md:col-span-2">
+              <div
+                className={
+                  isMonthDragMode ? "col-span-1" : "col-span-1 md:col-span-2"
+                }
+              >
                 <FutureLogSection
                   // 传入主题状态
                   isDark={isDark}
@@ -739,6 +860,7 @@ const FutureLogModal = ({ onClose }: Props) => {
                   dropId={FUTURE_DROP_SOMEDAY_ID}
                   canDragEntries={canDragFutureEntries}
                   movingEntryIds={movingEntryIds}
+                  dragMode={isMonthDragMode}
                 />
               </div>
 
@@ -765,6 +887,7 @@ const FutureLogModal = ({ onClose }: Props) => {
                     dropId={futureMonthDropId(idx)}
                     canDragEntries={canDragFutureEntries}
                     movingEntryIds={movingEntryIds}
+                    dragMode={isMonthDragMode}
                   />
                 );
               })}
@@ -773,16 +896,32 @@ const FutureLogModal = ({ onClose }: Props) => {
             {createPortal(
               <DragOverlay zIndex={6000}>
                 {activeDragEntry && (
-                  <div className="w-[min(34rem,calc(100vw-2rem))] cursor-grabbing">
-                    <EntryCard
-                      entry={activeDragEntry}
-                      refresh={() => {}}
-                      isOverlay={true}
-                      isDragEnabled={true}
-                      forceCollapse={true}
-                      disableOverflowCheck={true}
-                      className={futureCardClass(isDark)}
-                    />
+                  <div
+                    className="cursor-grabbing"
+                    style={{
+                      width:
+                        activeDragWidth !== null
+                          ? activeDragWidth
+                          : undefined,
+                    }}
+                  >
+                    {isMonthDragMode ? (
+                      <FutureCompactEntryCard
+                        entry={activeDragEntry}
+                        isDark={isDark}
+                        isOverlay={true}
+                      />
+                    ) : (
+                      <EntryCard
+                        entry={activeDragEntry}
+                        refresh={() => {}}
+                        isOverlay={true}
+                        isDragEnabled={true}
+                        forceCollapse={true}
+                        disableOverflowCheck={true}
+                        className={futureCardClass(isDark)}
+                      />
+                    )}
                   </div>
                 )}
               </DragOverlay>,
