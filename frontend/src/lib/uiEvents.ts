@@ -24,7 +24,6 @@ type UIEventType =
   | "OPEN_TAG_SEARCH"
   | "OPEN_FUTURE_LOG"
   | "OPEN_TIMELINE"
-  | "OPEN_CALENDAR_SYNC"
   | "OPEN_ADD_ENTRY"
   | "OPEN_MIGRATE_ENTRY"
   | "OPEN_FUTURE_ENTRY"
@@ -44,7 +43,6 @@ interface UIEventPayloads {
   OPEN_TAG_SEARCH: string | null;
   OPEN_FUTURE_LOG: void;
   OPEN_TIMELINE: void;
-  OPEN_CALENDAR_SYNC: void;
   OPEN_ADD_ENTRY: AddEntryPayload;
   OPEN_MIGRATE_ENTRY: EntryActionPayload;
   OPEN_FUTURE_ENTRY: EntryActionPayload;
@@ -72,7 +70,6 @@ class UIEventEmitter {
     "OPEN_TAG_SEARCH",
     "OPEN_FUTURE_LOG",
     "OPEN_TIMELINE",
-    "OPEN_CALENDAR_SYNC",
     "OPEN_ADD_ENTRY",
     "OPEN_MIGRATE_ENTRY",
     "OPEN_FUTURE_ENTRY",

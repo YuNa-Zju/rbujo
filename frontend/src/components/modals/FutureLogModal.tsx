@@ -1,4 +1,11 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   X,
   CalendarCheck,
@@ -7,11 +14,25 @@ import {
   Clock,
   ListTodo,
 } from "lucide-react";
+import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "../../hooks/useTranslation";
 import { format } from "date-fns";
 import { entryService } from "../../services/entryService";
 import { zhCN, enUS } from "date-fns/locale";
-import DraggableEntryCard from "../DraggableEntryCard";
+import { EntryCard } from "../DraggableEntryCard";
 
 import {
   entryEventBus,
@@ -23,6 +44,13 @@ import {
   isCompletedFutureStatus,
   isExpiredFutureEntry,
 } from "../../features/futureLog/futureLogClassification";
+import {
+  FUTURE_DROP_SOMEDAY_ID,
+  futureEntryDragId,
+  futureMonthDropId,
+  getFutureDropTargetMonth,
+  isSameFutureDropTarget,
+} from "../../features/futureLog/futureLogDrag";
 
 type YearGroup = Record<string, any[]>;
 type FutureLayout = {
@@ -34,6 +62,16 @@ type FutureLogTab = "planning" | "completed";
 interface Props {
   onClose: () => void;
 }
+
+const futureCardClass = (isDark: boolean) => `
+  !backdrop-blur-none
+  ${
+    isDark
+      ? "!bg-[#2a2725]/80 !border-white/5 !text-stone-200 hover:!bg-[#35312e]"
+      : "!bg-white/90 !border-orange-100/50 !text-stone-700 hover:!border-orange-200"
+  }
+  !shadow-sm
+`;
 
 // ✅ 1. 核心 Hook：监听 <head> 标签上的 data-theme
 const useHeadTheme = () => {
@@ -70,6 +108,52 @@ const useHeadTheme = () => {
   return theme;
 };
 
+const FutureLogEntryCard = ({
+  entry,
+  isDark,
+  canDrag,
+  isMoving,
+}: {
+  entry: any;
+  isDark: boolean;
+  canDrag: boolean;
+  isMoving: boolean;
+}) => {
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({
+      id: futureEntryDragId(entry.id),
+      data: { entryId: entry.id },
+      disabled: !canDrag || isMoving,
+    });
+
+  const style: CSSProperties = {
+    transform: isDragging ? undefined : CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.35 : 1,
+    touchAction: canDrag ? "none" : "pan-y",
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...(canDrag && !isMoving ? attributes : {})}
+      {...(canDrag && !isMoving ? listeners : {})}
+      className={`rounded-2xl transition-opacity ${
+        canDrag && !isMoving ? "cursor-grab active:cursor-grabbing" : ""
+      } ${isMoving ? "pointer-events-none opacity-50" : ""}`}
+    >
+      <EntryCard
+        entry={entry}
+        refresh={() => {}}
+        isDragEnabled={canDrag}
+        forceCollapse={isDragging}
+        disableOverflowCheck={isDragging}
+        className={futureCardClass(isDark)}
+      />
+    </div>
+  );
+};
+
 // ✅ FutureLogSection: 极致的毛玻璃卡片
 const FutureLogSection = ({
   title,
@@ -80,8 +164,12 @@ const FutureLogSection = ({
   emptyText,
   isSpecial = false,
   isDark, // 传入主题状态
+  dropId,
+  canDragEntries,
+  movingEntryIds,
 }: any) => {
   const years = Object.keys(yearGroups || {}).sort();
+  const { isOver, setNodeRef } = useDroppable({ id: dropId });
 
   // --- 样式逻辑 (Glassmorphism) ---
 
@@ -94,6 +182,7 @@ const FutureLogSection = ({
     relative flex flex-col h-full rounded-[1.5rem] transition-all duration-300
     border backdrop-blur-xl
     ${glassContainer}
+    ${isOver && canDragEntries ? (isDark ? "ring-2 ring-orange-400/60 border-orange-400/50" : "ring-2 ring-orange-300/70 border-orange-300/80") : ""}
   `;
 
   // 头部：更加通透
@@ -118,6 +207,7 @@ const FutureLogSection = ({
   if (flatCount === 0) {
     return (
       <div
+        ref={setNodeRef}
         className={`${containerBase} ${className} opacity-60 hover:opacity-100`}
       >
         <div className={headerBase}>
@@ -151,7 +241,7 @@ const FutureLogSection = ({
 
   // 有数据状态
   return (
-    <div className={`${containerBase} ${className}`}>
+    <div ref={setNodeRef} className={`${containerBase} ${className}`}>
       {/* Header */}
       <div className={headerBase}>
         <div className="flex items-center gap-2.5">
@@ -197,21 +287,12 @@ const FutureLogSection = ({
                 </div>
               )}
               {yearGroups[year].map((i: any) => (
-                <DraggableEntryCard
+                <FutureLogEntryCard
                   key={i.id}
                   entry={i}
-                  refresh={() => {}}
-                  isDragEnabled={false}
-                  // ✅ 卡片样式：适配玻璃背景
-                  className={`
-                    !backdrop-blur-none
-                    ${
-                      isDark
-                        ? "!bg-[#2a2725]/80 !border-white/5 !text-stone-200 hover:!bg-[#35312e]"
-                        : "!bg-white/90 !border-orange-100/50 !text-stone-700 hover:!border-orange-200"
-                    }
-                    !shadow-sm
-                  `}
+                  isDark={isDark}
+                  canDrag={Boolean(canDragEntries)}
+                  isMoving={Boolean(movingEntryIds?.has(i.id))}
                 />
               ))}
             </div>
@@ -239,6 +320,16 @@ const FutureLogModal = ({ onClose }: Props) => {
   const [futureLogMode, setFutureLogMode] = useState<FutureLogTab>("planning");
   const monthIndexes = useMemo(() => Array.from({ length: 12 }, (_, i) => i), []);
   const currentYear = new Date().getFullYear();
+  const [activeDragEntry, setActiveDragEntry] = useState<any | null>(null);
+  const [movingEntryIds, setMovingEntryIds] = useState<Set<string>>(new Set());
+  const canDragFutureEntries = futureLogMode === "planning";
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 180, tolerance: 8 },
+    }),
+  );
 
   const handleClose = useCallback(() => {
     setIsActive(false);
@@ -296,6 +387,27 @@ const FutureLogModal = ({ onClose }: Props) => {
     } catch (e) {
       console.error("Error parsing target_month", entry);
     }
+  };
+
+  const findEntryInLayout = (targetLayout: FutureLayout, id: string) => {
+    const someday = targetLayout.undetermined.find((entry) => entry.id === id);
+    if (someday) return someday;
+
+    for (const group of Object.values(targetLayout.months)) {
+      for (const entries of Object.values(group || {})) {
+        const found = entries.find((entry: any) => entry.id === id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const updateEntryInLayout = (entry: any) => {
+    setLayout((prev) => {
+      const next = removeEntryFromLayout(prev, entry.id);
+      addToLayoutStruct(next, entry);
+      return next;
+    });
   };
 
   const fetchFutureLog = useCallback(async () => {
@@ -406,6 +518,44 @@ const FutureLogModal = ({ onClose }: Props) => {
       if (filteredList.length > 0) newGroup[year] = filteredList;
     });
     return newGroup;
+  };
+
+  const handleFutureDragStart = (event: DragStartEvent) => {
+    const entryId = event.active.data.current?.entryId;
+    if (typeof entryId !== "string") return;
+    setActiveDragEntry(findEntryInLayout(layout, entryId));
+  };
+
+  const handleFutureDragEnd = async (event: DragEndEvent) => {
+    const entryId = event.active.data.current?.entryId;
+    const targetMonth = getFutureDropTargetMonth(event.over?.id, currentYear);
+    setActiveDragEntry(null);
+
+    if (typeof entryId !== "string" || targetMonth === undefined) return;
+
+    const entry = findEntryInLayout(layout, entryId);
+    if (!entry || isSameFutureDropTarget(entry.target_month, targetMonth)) {
+      return;
+    }
+
+    const optimisticEntry = { ...entry, target_month: targetMonth };
+    updateEntryInLayout(optimisticEntry);
+    setMovingEntryIds((current) => new Set(current).add(entryId));
+
+    try {
+      const updated = await entryService.moveFutureEntry(entryId, targetMonth);
+      updateEntryInLayout(updated);
+      entryEventBus.emit("entry:update", updated);
+    } catch (error) {
+      console.error("Failed to move future entry", error);
+      void fetchFutureLog();
+    } finally {
+      setMovingEntryIds((current) => {
+        const next = new Set(current);
+        next.delete(entryId);
+        return next;
+      });
+    }
   };
 
   const filteredUndetermined = filterEntries(layout.undetermined);
@@ -562,50 +712,83 @@ const FutureLogModal = ({ onClose }: Props) => {
           }}
         >
           {/* ✅ 布局修改：大屏限制为两列 (lg:grid-cols-2) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 pb-10">
-            {/* Someday / Undetermined Box - Full Width */}
-            <div className="col-span-1 md:col-span-2">
-              <FutureLogSection
-                // 传入主题状态
-                isDark={isDark}
-                className={
-                  isDark
-                    ? "bg-amber-900/10 border-dashed border-amber-500/20"
-                    : "bg-amber-50/40 border-dashed border-amber-200"
-                }
-                title={t.futureLog.undetermined}
-                yearGroups={{ undefined: filteredUndetermined }}
-                flatCount={undeterminedCount}
-                icon={ListTodo}
-                isSpecial={true}
-                emptyText={t.futureLog.emptySomeday}
-              />
+          <DndContext
+            sensors={sensors}
+            collisionDetection={pointerWithin}
+            onDragStart={handleFutureDragStart}
+            onDragEnd={handleFutureDragEnd}
+            onDragCancel={() => setActiveDragEntry(null)}
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 pb-10">
+              {/* Someday / Undetermined Box - Full Width */}
+              <div className="col-span-1 md:col-span-2">
+                <FutureLogSection
+                  // 传入主题状态
+                  isDark={isDark}
+                  className={
+                    isDark
+                      ? "bg-amber-900/10 border-dashed border-amber-500/20"
+                      : "bg-amber-50/40 border-dashed border-amber-200"
+                  }
+                  title={t.futureLog.undetermined}
+                  yearGroups={{ undefined: filteredUndetermined }}
+                  flatCount={undeterminedCount}
+                  icon={ListTodo}
+                  isSpecial={true}
+                  emptyText={t.futureLog.emptySomeday}
+                  dropId={FUTURE_DROP_SOMEDAY_ID}
+                  canDragEntries={canDragFutureEntries}
+                  movingEntryIds={movingEntryIds}
+                />
+              </div>
+
+              {/* Monthly Grid */}
+              {monthIndexes.map((idx) => {
+                const dummyDate = new Date(new Date().getFullYear(), idx, 1);
+                const title = format(dummyDate, "MMMM", { locale: dateLocale });
+                const filteredYearGroups = filterYearGroup(
+                  layout.months[idx] || {},
+                );
+                const totalCount = Object.values(filteredYearGroups).reduce(
+                  (acc, curr) => acc + curr.length,
+                  0,
+                );
+                return (
+                  <FutureLogSection
+                    key={idx}
+                    isDark={isDark} // 传入主题状态
+                    title={title}
+                    yearGroups={filteredYearGroups}
+                    flatCount={totalCount}
+                    icon={CalendarDays}
+                    emptyText={t.futureLog.emptyMonth}
+                    dropId={futureMonthDropId(idx)}
+                    canDragEntries={canDragFutureEntries}
+                    movingEntryIds={movingEntryIds}
+                  />
+                );
+              })}
             </div>
 
-            {/* Monthly Grid */}
-            {monthIndexes.map((idx) => {
-              const dummyDate = new Date(new Date().getFullYear(), idx, 1);
-              const title = format(dummyDate, "MMMM", { locale: dateLocale });
-              const filteredYearGroups = filterYearGroup(
-                layout.months[idx] || {},
-              );
-              const totalCount = Object.values(filteredYearGroups).reduce(
-                (acc, curr) => acc + curr.length,
-                0,
-              );
-              return (
-                <FutureLogSection
-                  key={idx}
-                  isDark={isDark} // 传入主题状态
-                  title={title}
-                  yearGroups={filteredYearGroups}
-                  flatCount={totalCount}
-                  icon={CalendarDays}
-                  emptyText={t.futureLog.emptyMonth}
-                />
-              );
-            })}
-          </div>
+            {createPortal(
+              <DragOverlay zIndex={6000}>
+                {activeDragEntry && (
+                  <div className="w-[min(34rem,calc(100vw-2rem))] cursor-grabbing">
+                    <EntryCard
+                      entry={activeDragEntry}
+                      refresh={() => {}}
+                      isOverlay={true}
+                      isDragEnabled={true}
+                      forceCollapse={true}
+                      disableOverflowCheck={true}
+                      className={futureCardClass(isDark)}
+                    />
+                  </div>
+                )}
+              </DragOverlay>,
+              document.body,
+            )}
+          </DndContext>
         </div>
       </div>
     </div>

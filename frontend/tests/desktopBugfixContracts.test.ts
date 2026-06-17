@@ -197,6 +197,62 @@ test("storage panel focuses attachments and navigates attachment references", as
   assert.match(source, /labels\.openReference/);
 });
 
+test("calendar subscription sync feature is removed from global UI", async () => {
+  const uiEventsPath = path.resolve(import.meta.dirname, "../src/lib/uiEvents.ts");
+  const modalControllerPath = path.resolve(
+    import.meta.dirname,
+    "../src/context/ModalControllerContext.tsx",
+  );
+  const globalModalsPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/GlobalUIModals.tsx",
+  );
+  const userMenuPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/components/UserMenu.tsx",
+  );
+  const commandPalettePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/cmdk/GlobalCommandPalette.tsx",
+  );
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+
+  const uiEventsSource = await readFile(uiEventsPath, "utf8");
+  const modalControllerSource = await readFile(modalControllerPath, "utf8");
+  const globalModalsSource = await readFile(globalModalsPath, "utf8");
+  const userMenuSource = await readFile(userMenuPath, "utf8");
+  const commandPaletteSource = await readFile(commandPalettePath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+
+  assert.doesNotMatch(uiEventsSource, /OPEN_CALENDAR_SYNC/);
+  assert.doesNotMatch(modalControllerSource, /calendarSync/i);
+  assert.doesNotMatch(globalModalsSource, /CalendarSyncModal/);
+  assert.doesNotMatch(userMenuSource, /Calendar Sync|日历订阅同步|t\.ics/);
+  assert.doesNotMatch(commandPaletteSource, /OPEN_CALENDAR_SYNC|calendarSync/);
+  assert.doesNotMatch(translationsSource, /\bics:/);
+  assert.doesNotMatch(translationsSource, /calendarSync/);
+});
+
+test("future log modal supports dragging entries between month drawers", async () => {
+  const futureLogPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/FutureLogModal.tsx",
+  );
+  const source = await readFile(futureLogPath, "utf8");
+
+  assert.match(source, /DndContext/);
+  assert.match(source, /useDraggable/);
+  assert.match(source, /useDroppable/);
+  assert.match(source, /getFutureDropTargetMonth/);
+  assert.match(source, /entryService\.moveFutureEntry/);
+  assert.match(source, /entryEventBus\.emit\("entry:update"/);
+  assert.match(source, /futureMonthDropId/);
+  assert.match(source, /FUTURE_DROP_SOMEDAY_ID/);
+});
+
 test("future log refreshes disk-backed markdown when app regains focus", async () => {
   const futureLogPath = path.resolve(
     import.meta.dirname,
