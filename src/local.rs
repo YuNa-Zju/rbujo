@@ -262,6 +262,9 @@ async fn same_existing_directory(left: &Path, right: &Path) -> bool {
 }
 
 async fn move_path_replace(source: &Path, target: &Path) -> AppResult<()> {
+    let source_metadata = tokio::fs::metadata(source)
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))?;
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -278,9 +281,66 @@ async fn move_path_replace(source: &Path, target: &Path) -> AppResult<()> {
                 .map_err(|error| AppError::Internal(error.to_string()))?;
         }
     }
-    tokio::fs::rename(source, target)
-        .await
-        .map_err(|error| AppError::Internal(error.to_string()))
+    match tokio::fs::rename(source, target).await {
+        Ok(()) => Ok(()),
+        Err(_rename_error) if source_metadata.is_dir() => {
+            copy_dir_recursive(source, target).await?;
+            tokio::fs::remove_dir_all(source)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))
+        }
+        Err(rename_error) if source_metadata.is_file() => {
+            tokio::fs::copy(source, target)
+                .await
+                .map_err(|copy_error| {
+                    AppError::Internal(format!(
+                        "failed to move file: {rename_error}; fallback copy failed: {copy_error}"
+                    ))
+                })?;
+            tokio::fs::remove_file(source)
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))
+        }
+        Err(error) => Err(AppError::Internal(error.to_string())),
+    }
+}
+
+async fn copy_dir_recursive(source: &Path, target: &Path) -> AppResult<()> {
+    let mut pending = vec![(source.to_path_buf(), target.to_path_buf())];
+    while let Some((source_dir, target_dir)) = pending.pop() {
+        tokio::fs::create_dir_all(&target_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+
+        let mut read_dir = tokio::fs::read_dir(&source_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?
+        {
+            let source_path = entry.path();
+            let target_path = target_dir.join(entry.file_name());
+            let file_type = entry
+                .file_type()
+                .await
+                .map_err(|error| AppError::Internal(error.to_string()))?;
+            if file_type.is_dir() {
+                pending.push((source_path, target_path));
+            } else if file_type.is_file() || file_type.is_symlink() {
+                if let Some(parent) = target_path.parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .map_err(|error| AppError::Internal(error.to_string()))?;
+                }
+                tokio::fs::copy(&source_path, &target_path)
+                    .await
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn move_file_to_path(source: PathBuf, target: &Path) -> AppResult<()> {
@@ -516,6 +576,10 @@ impl LocalBackend {
                     "Markdown workspace path must be a directory".to_string(),
                 ));
             }
+        }
+
+        if same_existing_directory(current_path, next_path).await {
+            return Ok(());
         }
 
         if path_contains_path(current_path, next_path) {
@@ -1531,7 +1595,11 @@ impl LocalBackend {
 
     pub async fn batch_delete_entries(&self, ids: Vec<String>) -> AppResult<()> {
         for id in ids {
-            self.delete_entry(id).await?;
+            match self.delete_entry(id).await {
+                Ok(()) => {}
+                Err(AppError::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
         }
         Ok(())
     }

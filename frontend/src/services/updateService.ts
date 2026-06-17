@@ -12,6 +12,12 @@ export type UpdateMetadata = {
   body?: string | null;
 };
 
+export type UpdateDownloadProgress = {
+  downloaded: number;
+  total?: number | null;
+  finished: boolean;
+};
+
 export type UpdateCheckResult =
   | { status: "available"; update: UpdateMetadata }
   | { status: "none" }
