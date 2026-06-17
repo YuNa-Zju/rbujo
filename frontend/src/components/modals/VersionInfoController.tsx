@@ -1,5 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "framer-motion";
 import { Info, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -11,11 +12,10 @@ import { uiEvents } from "../../lib/uiEvents";
 
 const RECENT_RELEASE_NOTES = `## 最近一次更新
 
-- 附件会保存到当前项目文件夹的 attachments 目录。
-- 更改项目文件夹时会移动原项目文件夹内容。
-- 旧 uploads 与旧 Application Support 附件会自动迁移并保持可读取。
-- 关闭编辑弹窗或保存后会立即清理未引用附件。
-- 存储管理会标记归档笔记中的附件引用。`;
+- .bjk 备份文件改为带 manifest.json 的可扩展数据包，双击后会打开导入确认弹窗。
+- 右上角菜单、命令面板和桌面菜单统一为数据 / 应用入口。
+- Windows 菜单栏新增数据与帮助菜单，补齐存储管理和版本信息。
+- 图片预览改为滚轮平移，Ctrl 或触控板缩放手势才缩放。`;
 
 const VERSION_NOTES_MARKDOWN_STYLES = `
   .version-release-notes.prose-custom-scale h2,
@@ -78,6 +78,32 @@ export default function VersionInfoController() {
       uiEvents.off("OPEN_VERSION_INFO", openVersionInfo);
     };
   }, [openVersionInfo]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const register = async () => {
+      try {
+        unlisten = await listen("menu:version-info", () => {
+          uiEvents.emit("OPEN_VERSION_INFO");
+        });
+      } catch (error) {
+        console.warn("Native version menu listener registration failed", error);
+        return;
+      }
+
+      if (disposed && unlisten) {
+        unlisten();
+      }
+    };
+
+    register();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   return (
     <VersionInfoModal

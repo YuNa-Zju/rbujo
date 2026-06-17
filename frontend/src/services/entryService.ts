@@ -56,6 +56,18 @@ export interface MarkdownWorkspace {
   is_default: boolean;
 }
 
+export interface PendingBjkImport {
+  path: string;
+  filename: string;
+  token: string;
+}
+
+export interface BjkImportFile {
+  path: string;
+  filename: string;
+  bytes: number[];
+}
+
 export interface UploadBackup {
   relative_path: string;
   absolute_path: string;
@@ -419,6 +431,18 @@ export const entryService = {
     return invoke<string | null>("export_markdown_archive_to_file", {
       suggestedFilename: `bujo_obsidian_${dateStr}.zip`,
     });
+  },
+
+  takePendingBjkImport: async () => {
+    return invoke<PendingBjkImport | null>("take_pending_bjk_import");
+  },
+
+  clearPendingBjkImport: async (token: string) => {
+    await invoke<void>("clear_pending_bjk_import", { token });
+  },
+
+  readBjkImportFile: async (path: string, token: string) => {
+    return invoke<BjkImportFile>("read_bjk_import_file", { path, token });
   },
 
 };

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rbullet_journal::local::{
@@ -16,6 +16,9 @@ use tauri::{
 };
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
+use tokio::io::AsyncReadExt;
+use url::Url;
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct DesktopState {
@@ -23,6 +26,33 @@ struct DesktopState {
 }
 
 struct PendingUpdate(Mutex<Option<Update>>);
+
+const BJK_OPEN_EVENT: &str = "file:open-bjk";
+const MAX_BJK_IMPORT_BYTES: u64 = 256 * 1024 * 1024;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingBjkImport {
+    path: String,
+    filename: String,
+    token: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BjkImportFile {
+    path: String,
+    filename: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Default)]
+struct PendingBjkImportSlot {
+    pending: Option<PendingBjkImport>,
+    active_token: Option<String>,
+}
+
+struct PendingBjkImportState(Mutex<PendingBjkImportSlot>);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +104,98 @@ async fn install_update(
         .await
         .map_err(to_error)?;
     app.restart();
+}
+
+#[tauri::command]
+async fn take_pending_bjk_import(
+    pending_import: State<'_, PendingBjkImportState>,
+) -> Result<Option<PendingBjkImport>, String> {
+    Ok(pending_import
+        .0
+        .lock()
+        .map_err(|_| "pending import state lock poisoned".to_string())?
+        .pending
+        .clone())
+}
+
+#[tauri::command]
+async fn clear_pending_bjk_import(
+    pending_import: State<'_, PendingBjkImportState>,
+    token: String,
+) -> Result<(), String> {
+    let mut guard = pending_import
+        .0
+        .lock()
+        .map_err(|_| "pending import state lock poisoned".to_string())?;
+    let matches_pending = guard
+        .pending
+        .as_ref()
+        .map(|pending| pending.token.as_str())
+        .is_some_and(|pending_token| pending_token == token);
+    let matches_active = guard.active_token.as_deref() == Some(token.as_str());
+
+    if matches_pending {
+        guard.pending = None;
+    }
+    if matches_active {
+        guard.active_token = None;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn read_bjk_import_file(
+    pending_import: State<'_, PendingBjkImportState>,
+    path: String,
+    token: String,
+) -> Result<BjkImportFile, String> {
+    let pending = {
+        let mut guard = pending_import
+            .0
+            .lock()
+            .map_err(|_| "pending import state lock poisoned".to_string())?;
+        let pending = guard
+            .pending
+            .as_ref()
+            .ok_or_else(|| "there is no pending backup import".to_string())?;
+        if pending.token != token || pending.path != path {
+            return Err("backup import request is no longer valid".to_string());
+        }
+        let pending = pending.clone();
+        guard.active_token = Some(token.clone());
+        pending
+    };
+
+    let path_buf = PathBuf::from(&pending.path);
+    if !is_bjk_path(&path_buf) {
+        return Err("Only .bjk backup files can be imported this way".to_string());
+    }
+
+    let file = tokio::fs::File::open(&path_buf).await.map_err(to_error)?;
+    let metadata = file.metadata().await.map_err(to_error)?;
+    if !metadata.is_file() {
+        return Err("Selected backup path is not a file".to_string());
+    }
+    if metadata.len() > MAX_BJK_IMPORT_BYTES {
+        return Err("Selected backup file is too large to import".to_string());
+    }
+
+    let mut bytes =
+        Vec::with_capacity(usize::try_from(metadata.len().min(MAX_BJK_IMPORT_BYTES)).unwrap_or(0));
+    let mut limited_file = file.take(MAX_BJK_IMPORT_BYTES + 1);
+    limited_file
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(to_error)?;
+    if bytes.len() as u64 > MAX_BJK_IMPORT_BYTES {
+        return Err("Selected backup file is too large to import".to_string());
+    }
+
+    Ok(BjkImportFile {
+        path: pending.path,
+        filename: filename_for_path(&path_buf),
+        bytes,
+    })
 }
 
 #[tauri::command]
@@ -530,15 +652,102 @@ fn menu_event_name(menu_id: &str) -> Option<&'static str> {
         "new_entry" => Some("menu:new-entry"),
         "search" => Some("menu:search"),
         "future_log" => Some("menu:future-log"),
+        "archive" => Some("menu:archive"),
         "backup" => Some("menu:backup"),
+        "attachment_maintenance" => Some("menu:attachment-maintenance"),
         "check_update" => Some("menu:check-update"),
+        "version_info" => Some("menu:version-info"),
         _ => None,
+    }
+}
+
+fn filename_for_path(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("backup.bjk")
+        .to_string()
+}
+
+fn is_bjk_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("bjk"))
+        .unwrap_or(false)
+}
+
+fn bjk_path_from_arg(arg: &str) -> Option<PathBuf> {
+    let trimmed = arg.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let path = if trimmed.starts_with("file://") {
+        Url::parse(trimmed)
+            .ok()
+            .and_then(|url| url.to_file_path().ok())?
+    } else {
+        PathBuf::from(trimmed)
+    };
+    if is_bjk_path(&path) { Some(path) } else { None }
+}
+
+fn bjk_path_from_args(args: impl IntoIterator<Item = String>) -> Option<PathBuf> {
+    args.into_iter().find_map(|arg| bjk_path_from_arg(&arg))
+}
+
+fn pending_bjk_import_from_path(path: PathBuf) -> PendingBjkImport {
+    PendingBjkImport {
+        filename: filename_for_path(&path),
+        path: path.to_string_lossy().to_string(),
+        token: Uuid::new_v4().to_string(),
+    }
+}
+
+fn pending_bjk_import_from_args(
+    args: impl IntoIterator<Item = String>,
+) -> Option<PendingBjkImport> {
+    bjk_path_from_args(args).map(pending_bjk_import_from_path)
+}
+
+fn remember_pending_bjk_import(app: &AppHandle, pending: PendingBjkImport) -> bool {
+    let Some(state) = app.try_state::<PendingBjkImportState>() else {
+        return false;
+    };
+    let Ok(mut guard) = state.0.lock() else {
+        return false;
+    };
+    if guard.pending.is_some() || guard.active_token.is_some() {
+        return false;
+    }
+
+    guard.pending = Some(pending);
+    true
+}
+
+fn emit_bjk_import_request(app: &AppHandle, pending: PendingBjkImport) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit(BJK_OPEN_EVENT, pending);
+    } else {
+        let _ = app.emit(BJK_OPEN_EVENT, pending);
     }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            if let Some(pending) = pending_bjk_import_from_args(argv) {
+                if remember_pending_bjk_import(app, pending.clone()) {
+                    emit_bjk_import_request(app, pending);
+                }
+            }
+        }))
         .menu(|app| {
             let app_menu = Submenu::with_items(
                 app,
@@ -546,14 +755,6 @@ pub fn run() {
                 true,
                 &[
                     &PredefinedMenuItem::about(app, Some("关于 BuJo"), None)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(
-                        app,
-                        "check_update",
-                        "检查更新...",
-                        true,
-                        Some("CmdOrCtrl+Shift+U"),
-                    )?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::hide(app, Some("隐藏 BuJo"))?,
                     &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
@@ -568,13 +769,6 @@ pub fn run() {
                 true,
                 &[
                     &MenuItem::with_id(app, "new_entry", "新建条目", true, Some("CmdOrCtrl+N"))?,
-                    &MenuItem::with_id(
-                        app,
-                        "backup",
-                        "备份与导入",
-                        true,
-                        Some("CmdOrCtrl+Shift+B"),
-                    )?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::close_window(app, Some("关闭窗口"))?,
                 ],
@@ -602,7 +796,55 @@ pub fn run() {
                     &MenuItem::with_id(app, "future_log", "未来日志", true, Some("CmdOrCtrl+L"))?,
                 ],
             )?;
-            Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &view_menu])
+            let data_menu = Submenu::with_items(
+                app,
+                "数据",
+                true,
+                &[
+                    &MenuItem::with_id(app, "archive", "归档", true, Some("CmdOrCtrl+Shift+A"))?,
+                    &MenuItem::with_id(
+                        app,
+                        "backup",
+                        "备份与导入",
+                        true,
+                        Some("CmdOrCtrl+Shift+B"),
+                    )?,
+                    &MenuItem::with_id(
+                        app,
+                        "attachment_maintenance",
+                        "存储管理",
+                        true,
+                        Some("CmdOrCtrl+Shift+M"),
+                    )?,
+                ],
+            )?;
+            let help_menu = Submenu::with_items(
+                app,
+                "帮助",
+                true,
+                &[
+                    &MenuItem::with_id(
+                        app,
+                        "check_update",
+                        "检查更新...",
+                        true,
+                        Some("CmdOrCtrl+Shift+U"),
+                    )?,
+                    &MenuItem::with_id(
+                        app,
+                        "version_info",
+                        "版本信息",
+                        true,
+                        Some("CmdOrCtrl+Shift+I"),
+                    )?,
+                ],
+            )?;
+            Menu::with_items(
+                app,
+                &[
+                    &app_menu, &file_menu, &edit_menu, &view_menu, &data_menu, &help_menu,
+                ],
+            )
         })
         .on_menu_event(|app, event| {
             if let Some(event_name) = menu_event_name(event.id().as_ref()) {
@@ -615,25 +857,26 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
-        }))
         .setup(|app| {
+            let pending_import = pending_bjk_import_from_args(std::env::args().collect::<Vec<_>>());
             let app_dir = app.path().app_data_dir()?;
             let backend = tauri::async_runtime::block_on(LocalBackend::open(app_dir))?;
             app.manage(DesktopState {
                 backend: Arc::new(backend),
             });
             app.manage(PendingUpdate(Mutex::new(None)));
+            app.manage(PendingBjkImportState(Mutex::new(PendingBjkImportSlot {
+                pending: pending_import,
+                active_token: None,
+            })));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             check_for_update,
             install_update,
+            take_pending_bjk_import,
+            clear_pending_bjk_import,
+            read_bjk_import_file,
             create_entry,
             update_entry,
             archive_entry,
@@ -695,15 +938,62 @@ fn safe_export_archive_filename(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::menu_event_name;
+    use super::{
+        bjk_path_from_arg, bjk_path_from_args, menu_event_name, pending_bjk_import_from_path,
+    };
+    use std::path::PathBuf;
 
     #[test]
     fn maps_native_menu_ids_to_frontend_events() {
         assert_eq!(menu_event_name("new_entry"), Some("menu:new-entry"));
         assert_eq!(menu_event_name("search"), Some("menu:search"));
         assert_eq!(menu_event_name("future_log"), Some("menu:future-log"));
+        assert_eq!(menu_event_name("archive"), Some("menu:archive"));
         assert_eq!(menu_event_name("backup"), Some("menu:backup"));
+        assert_eq!(
+            menu_event_name("attachment_maintenance"),
+            Some("menu:attachment-maintenance")
+        );
         assert_eq!(menu_event_name("check_update"), Some("menu:check-update"));
+        assert_eq!(menu_event_name("version_info"), Some("menu:version-info"));
         assert_eq!(menu_event_name("unknown"), None);
+    }
+
+    #[test]
+    fn finds_bjk_path_from_launch_args() {
+        let path = bjk_path_from_args(vec![
+            "/Applications/BuJo.app/Contents/MacOS/BuJo".to_string(),
+            "/Users/test/Desktop/backup.BJK".to_string(),
+        ]);
+
+        assert_eq!(path, Some(PathBuf::from("/Users/test/Desktop/backup.BJK")));
+    }
+
+    #[test]
+    fn ignores_non_bjk_launch_args() {
+        let path = bjk_path_from_args(vec![
+            "BuJo.exe".to_string(),
+            "notes.md".to_string(),
+            "backup.zip".to_string(),
+        ]);
+
+        assert_eq!(path, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn decodes_file_url_bjk_launch_args() {
+        let path = bjk_path_from_arg("file:///Users/test/My%20Backup.bjk");
+
+        assert_eq!(path, Some(PathBuf::from("/Users/test/My Backup.bjk")));
+    }
+
+    #[test]
+    fn builds_pending_bjk_import_payload() {
+        let pending = pending_bjk_import_from_path(PathBuf::from("/tmp/my-backup.bjk"));
+
+        assert_eq!(pending.filename, "my-backup.bjk");
+        assert_eq!(pending.path, "/tmp/my-backup.bjk");
+        assert!(!pending.token.is_empty());
     }
 }

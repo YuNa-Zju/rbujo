@@ -14,6 +14,8 @@ const BJK_PAYLOAD_PATH = "data/backup.json.gz";
 const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const MAX_BJK_ARCHIVE_BYTES = 256 * 1024 * 1024;
+const MAX_BJK_PAYLOAD_BYTES = 256 * 1024 * 1024;
 
 interface PortableAttachment {
   relative_path: string;
@@ -59,6 +61,13 @@ export interface BjkManifest {
 interface ParsedBjkArchive {
   manifest: BjkManifest | null;
   backupObject: BackupObject;
+}
+
+export interface BackupImportResult {
+  success: boolean;
+  count: number;
+  updated_count: number;
+  insertedIds: string[];
 }
 
 interface BackupImportServices {
@@ -111,6 +120,40 @@ const toUint8Array = (input: ArrayBuffer | Uint8Array | string) => {
   if (typeof input === "string") return textEncoder.encode(input);
   if (input instanceof Uint8Array) return input;
   return new Uint8Array(input);
+};
+
+const assertBjkSize = (size: number, label: string, max = MAX_BJK_ARCHIVE_BYTES) => {
+  if (size > max) {
+    throw new Error(`${label} is too large`);
+  }
+};
+
+const inflateGzipToString = (bytes: Uint8Array, label: string) => {
+  const inflater = new pako.Inflate({ to: "string", chunkSize: 64 * 1024 });
+  let output = "";
+  let outputBytes = 0;
+
+  inflater.onData = (chunk: ArrayBuffer | Uint8Array | string) => {
+    if (typeof chunk === "string") {
+      outputBytes += textEncoder.encode(chunk).byteLength;
+      assertBjkSize(outputBytes, label, MAX_BJK_PAYLOAD_BYTES);
+      output += chunk;
+      return;
+    }
+
+    const chunkBytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+    const chunkSize = chunkBytes.byteLength;
+    outputBytes += chunkSize;
+    assertBjkSize(outputBytes, label, MAX_BJK_PAYLOAD_BYTES);
+    output += textDecoder.decode(chunkBytes);
+  };
+
+  inflater.push(bytes, true);
+  if (inflater.err) {
+    throw new Error(inflater.msg || `Invalid ${label}`);
+  }
+
+  return output;
 };
 
 const writeStoredZip = (entries: Array<{ name: string; data: Uint8Array }>) => {
@@ -214,16 +257,14 @@ const readZipEntries = (bytes: Uint8Array) => {
     if (dataEnd > bytes.byteLength) {
       throw new Error("Truncated BJK zip entry");
     }
+    assertBjkSize(uncompressedSize, "BJK zip entry", MAX_BJK_PAYLOAD_BYTES);
 
     const name = textDecoder.decode(bytes.slice(nameStart, nameStart + nameLength));
     const compressed = bytes.slice(dataStart, dataEnd);
-    const data =
-      method === 0
-        ? compressed
-        : method === 8
-          ? pako.inflateRaw(compressed)
-          : null;
-    if (!data) throw new Error(`Unsupported BJK zip compression method: ${method}`);
+    if (method !== 0) {
+      throw new Error(`Unsupported BJK zip compression method: ${method}`);
+    }
+    const data = compressed;
     if (data.byteLength !== uncompressedSize) {
       throw new Error(`Invalid BJK zip size for ${name}`);
     }
@@ -294,8 +335,21 @@ export const buildBjkArchive = (
   ]);
 };
 
-const parseGzippedBackupObject = (bytes: Uint8Array): BackupObject =>
-  JSON.parse(pako.ungzip(bytes, { to: "string" }));
+const gzipUncompressedSize = (bytes: Uint8Array) => {
+  if (bytes.byteLength < 4) return 0;
+  const view = new DataView(bytes.buffer, bytes.byteOffset + bytes.byteLength - 4, 4);
+  return view.getUint32(0, true);
+};
+
+const parseGzippedBackupObject = (bytes: Uint8Array): BackupObject => {
+  assertBjkSize(
+    gzipUncompressedSize(bytes),
+    "BJK backup payload",
+    MAX_BJK_PAYLOAD_BYTES,
+  );
+  const text = inflateGzipToString(bytes, "BJK backup payload");
+  return JSON.parse(text);
+};
 
 const parseLegacyBackupText = (text: string): BackupObject => {
   const binaryString = atob(text.trim());
@@ -307,6 +361,7 @@ export const parseBjkArchive = (
   input: ArrayBuffer | Uint8Array | string,
 ): ParsedBjkArchive => {
   const bytes = toUint8Array(input);
+  assertBjkSize(bytes.byteLength, "BJK archive");
 
   if (!isZipContainer(bytes)) {
     return {
@@ -432,6 +487,20 @@ export const importBackupObject = async (
   return entryService.bulkImport(entries);
 };
 
+export const importBjkArchive = async (
+  input: ArrayBuffer | Uint8Array | string,
+): Promise<BackupImportResult> => {
+  const { backupObject } = parseBjkArchive(input);
+  const response: ImportResponse = await importBackupObject(backupObject);
+
+  return {
+    success: true,
+    count: response.inserted_count,
+    updated_count: response.updated_count,
+    insertedIds: response.inserted_ids || [],
+  };
+};
+
 export const dataBackupService = {
   /**
    * 📤 导出流程
@@ -461,38 +530,22 @@ export const dataBackupService = {
     }
   },
 
+  importBjkArchive,
+
   /**
    * 📥 导入流程
    * ✅ 修复：正确解构后端返回的详细对象
    */
   async importData(file: File) {
     // 定义 Promise 返回类型，确保 UI 能拿到正确的 count 和 IDs
-    return new Promise<{
-      success: boolean;
-      count: number; // 这里的 count 指新增数量
-      updated_count: number; // 更新数量
-      insertedIds: string[]; // 撤回用的 ID 列表
-    }>((resolve, reject) => {
+    return new Promise<BackupImportResult>((resolve, reject) => {
       const reader = new FileReader();
 
       reader.onload = async (event) => {
         try {
           const fileContent = event.target?.result;
           if (!fileContent) throw new Error("File is empty");
-          const { backupObject } = parseBjkArchive(fileContent as ArrayBuffer);
-
-          // 2. 校验 + 恢复附件 + 导入条目
-          const response: ImportResponse = await importBackupObject(backupObject);
-
-          // 4. 返回给前端 UI
-          resolve({
-            success: true,
-            // UI 显示 "Restored X items" 时，通常指新增成功的数量，或者你可以相加
-            count: response.inserted_count,
-            updated_count: response.updated_count,
-            // ✅ 必须从 response.inserted_ids 取值，这里才是纯净的 ID 数组
-            insertedIds: response.inserted_ids || [],
-          });
+          resolve(await importBjkArchive(fileContent as ArrayBuffer));
         } catch (e) {
           console.error("Backup Import Failed:", e);
           reject(e);

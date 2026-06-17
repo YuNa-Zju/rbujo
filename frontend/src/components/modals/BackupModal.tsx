@@ -259,15 +259,19 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     try {
       const res = await dataBackupService.importData(file);
       const newIds = res.insertedIds || [];
+      const changedCount = res.count + res.updated_count;
       if (newIds.length > 0) {
         localStorage.setItem(UNDO_STORAGE_KEY, JSON.stringify(newIds));
         setLastImportedIds(newIds);
+      } else {
+        localStorage.removeItem(UNDO_STORAGE_KEY);
+        setLastImportedIds([]);
       }
       setStatus("success");
       setMessage(
         (t.backup?.importSuccess || "Restored {{count}} items.").replace(
           "{{count}}",
-          String(newIds.length),
+          String(changedCount),
         ),
       );
       setTimeout(() => handleHardRefresh(), 1500);

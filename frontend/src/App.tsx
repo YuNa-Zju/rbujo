@@ -11,12 +11,15 @@ import { Toaster } from "sonner";
 import UpdateCheckController from "./components/modals/UpdateCheckController";
 import VersionInfoController from "./components/modals/VersionInfoController";
 import AttachmentMaintenanceController from "./components/modals/AttachmentMaintenanceController";
+import BjkImportPromptController from "./components/modals/BjkImportPromptController";
+import NativeMenuBridge from "./components/NativeMenuBridge";
 
 export default function App() {
   return (
     <EntryModalProvider>
       <BrowserRouter>
         <ModalControllerProvider>
+          <NativeMenuBridge />
           <GlobalCommandPalette />
 
           <Routes>
@@ -31,6 +34,7 @@ export default function App() {
           <UpdateCheckController />
           <VersionInfoController />
           <AttachmentMaintenanceController />
+          <BjkImportPromptController />
           <Toaster
             position="bottom-center"
             expand={false}

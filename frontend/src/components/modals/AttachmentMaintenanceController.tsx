@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -142,6 +143,32 @@ export default function AttachmentMaintenanceController() {
       uiEvents.off("OPEN_ATTACHMENT_MAINTENANCE", openPanel);
     };
   }, [openPanel]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const register = async () => {
+      try {
+        unlisten = await listen("menu:attachment-maintenance", () => {
+          uiEvents.emit("OPEN_ATTACHMENT_MAINTENANCE");
+        });
+      } catch (error) {
+        console.warn("Native storage menu listener registration failed", error);
+        return;
+      }
+
+      if (disposed && unlisten) {
+        unlisten();
+      }
+    };
+
+    register();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   return (
     <AttachmentMaintenanceModal

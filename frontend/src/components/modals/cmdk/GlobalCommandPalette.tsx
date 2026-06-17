@@ -35,7 +35,12 @@ import {
   Moon,
   Monitor,
   Languages,
+  FileArchive,
+  HardDrive,
+  RefreshCw,
+  Info,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { uiEvents } from "../../../lib/uiEvents";
 import { entryService } from "../../../services/entryService";
@@ -77,6 +82,7 @@ const normalizeCommandTag = (value: string) =>
     .replace(/^[,，;；:：\s]+|[,，;；:：\s]+$/g, "");
 
 export default function GlobalCommandPalette() {
+  const navigate = useNavigate();
   const { t, lang, toggleLang } = useTranslation();
   const { themeMode, cycleTheme } = useTheme();
   const { allTags, refreshTags } = useTagCache();
@@ -520,17 +526,36 @@ export default function GlobalCommandPalette() {
                 />
               </Command.Group>
 
-              {/* Tools */}
+              {/* Data */}
               <Command.Group
-                heading={t.command?.tools || "Tools"}
+                heading={t.command?.data || "Data"}
                 className="space-y-2"
               >
                 <Item
                   icon={<Archive />}
+                  label={t.common?.archive || "Archive"}
+                  value={`${t.common?.archive} archive archived entries`}
+                  onSelect={() => run(() => navigate("/archive"))}
+                />
+                <Item
+                  icon={<FileArchive />}
                   label={t.backup?.title || "Backup & Restore"}
                   subLabel=".BJK / Markdown"
                   value={`${t.backup?.title} backup export download restore`}
                   onSelect={() => run(() => uiEvents.emit("OPEN_BACKUP"))}
+                />
+                <Item
+                  icon={<HardDrive />}
+                  label={
+                    t.command?.storage ||
+                    t.attachmentMaintenance?.menuLabel ||
+                    "Storage"
+                  }
+                  subLabel={t.attachmentMaintenance?.dailyFolder || "Markdown Folder"}
+                  value={`${t.command?.storage} storage attachments markdown folder`}
+                  onSelect={() =>
+                    run(() => uiEvents.emit("OPEN_ATTACHMENT_MAINTENANCE"))
+                  }
                 />
               </Command.Group>
 
@@ -554,11 +579,31 @@ export default function GlobalCommandPalette() {
                 </Command.Group>
               )}
 
-              {/* Settings (新增) */}
+              {/* App */}
               <Command.Group
-                heading={t.command?.settings || "Settings"}
+                heading={t.command?.app || "App"}
                 className="space-y-2"
               >
+                <Item
+                  icon={<RefreshCw />}
+                  label={
+                    t.command?.checkUpdate ||
+                    t.common?.checkUpdate ||
+                    "Check for Updates"
+                  }
+                  value={`${t.command?.checkUpdate} update check version upgrade`}
+                  onSelect={() => run(() => uiEvents.emit("OPEN_CHECK_UPDATE"))}
+                />
+                <Item
+                  icon={<Info />}
+                  label={
+                    t.command?.versionInfo ||
+                    t.common?.versionInfo ||
+                    "Version Info"
+                  }
+                  value={`${t.command?.versionInfo} version info changelog release`}
+                  onSelect={() => run(() => uiEvents.emit("OPEN_VERSION_INFO"))}
+                />
                 <Item
                   icon={getThemeIcon()}
                   label={t.command?.theme || "Switch Theme"}

@@ -27,8 +27,7 @@ fn tag_inputs_offer_existing_native_tag_suggestions() {
     let tag_cache = read_file("frontend/src/context/TagCacheContext.tsx");
     let add_entry = read_file("frontend/src/components/modals/AddEntryModal.tsx");
     let search_modal = read_file("frontend/src/components/modals/SearchModal.tsx");
-    let command_palette =
-        read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+    let command_palette = read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
 
     assert!(
         tag_cache.contains("allTags"),
@@ -65,23 +64,22 @@ fn tag_inputs_offer_existing_native_tag_suggestions() {
 }
 
 #[test]
-fn command_palette_places_tags_above_settings_near_bottom() {
-    let command_palette =
-        read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+fn command_palette_places_tags_between_data_and_app_groups() {
+    let command_palette = read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
 
-    let tools = command_palette
-        .find("t.command?.tools")
-        .expect("Tools group should exist");
+    let data = command_palette
+        .find("t.command?.data")
+        .expect("Data group should exist");
     let tags = command_palette
         .find("t.command?.tagMenu")
         .expect("Tag group should exist");
-    let settings = command_palette
-        .find("t.command?.settings")
-        .expect("Settings group should exist");
+    let app = command_palette
+        .find("t.command?.app")
+        .expect("App group should exist");
 
     assert!(
-        tools < tags && tags < settings,
-        "Command palette should render tag suggestions after tools and before settings"
+        data < tags && tags < app,
+        "Command palette should render tag suggestions after data tools and before app settings"
     );
 }
 
@@ -218,7 +216,7 @@ fn future_log_modal_does_not_mix_archive_tab_into_future_log() {
 }
 
 #[test]
-fn archive_is_exposed_from_user_menu_only() {
+fn archive_is_exposed_from_all_global_menus() {
     let user_menu = read_file("frontend/src/features/calendar/components/UserMenu.tsx");
     let command_palette = read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
     let tauri_menu = read_file("src-tauri/src/lib.rs");
@@ -228,11 +226,11 @@ fn archive_is_exposed_from_user_menu_only() {
         "User menu should navigate to archive"
     );
     assert!(
-        !command_palette.contains("navigate(\"/archive\")"),
-        "Command palette menu should not navigate to archive"
+        command_palette.contains("navigate(\"/archive\")"),
+        "Command palette should navigate to archive"
     );
     assert!(
-        !tauri_menu.contains("menu:archive"),
-        "macOS menu should not emit archive menu events"
+        tauri_menu.contains("menu:archive"),
+        "Native desktop menu should emit archive menu events"
     );
 }

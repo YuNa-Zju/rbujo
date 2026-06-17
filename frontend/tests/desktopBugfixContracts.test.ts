@@ -45,6 +45,57 @@ test("desktop bundle registers bjk backup file association", async () => {
   });
 });
 
+test("double-clicked bjk files open an import confirmation flow", async () => {
+  const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const controllerPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/BjkImportPromptController.tsx",
+  );
+  const entryServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/entryService.ts",
+  );
+  const backupServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/dataBackupService.ts",
+  );
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+
+  const appSource = await readFile(appPath, "utf8");
+  const controllerSource = await readFile(controllerPath, "utf8");
+  const entryServiceSource = await readFile(entryServicePath, "utf8");
+  const backupServiceSource = await readFile(backupServicePath, "utf8");
+  const libSource = await readFile(libPath, "utf8");
+
+  assert.match(appSource, /BjkImportPromptController/);
+  assert.match(controllerSource, /listen(?:<[^>]+>)?\("file:open-bjk"/);
+  assert.match(controllerSource, /takePendingBjkImport/);
+  assert.match(controllerSource, /readBjkImportFile/);
+  assert.match(controllerSource, /clearPendingBjkImport/);
+  assert.match(controllerSource, /statusRef/);
+  assert.match(controllerSource, /statusRef\.current === "loading"/);
+  assert.match(controllerSource, /dataBackupService\.importBjkArchive/);
+  assert.match(controllerSource, /result\.count \+ result\.updated_count/);
+  assert.match(controllerSource, /bujo_last_import_ids/);
+  assert.match(controllerSource, /localStorage\.removeItem\(UNDO_STORAGE_KEY\)/);
+  assert.match(entryServiceSource, /takePendingBjkImport/);
+  assert.match(entryServiceSource, /readBjkImportFile/);
+  assert.match(entryServiceSource, /clearPendingBjkImport/);
+  assert.match(backupServiceSource, /importBjkArchive/);
+  assert.doesNotMatch(backupServiceSource, /inflateRaw/);
+  assert.match(backupServiceSource, /new pako\.Inflate/);
+  assert.match(libSource, /PendingBjkImport/);
+  assert.match(libSource, /token: String/);
+  assert.match(libSource, /active_token/);
+  assert.match(libSource, /BJK_OPEN_EVENT/);
+  assert.match(libSource, /take_pending_bjk_import/);
+  assert.match(libSource, /clear_pending_bjk_import/);
+  assert.match(libSource, /read_bjk_import_file/);
+  assert.match(libSource, /Url::parse/);
+  assert.match(libSource, /bjk_path_from_args/);
+  assert.match(libSource, /tauri_plugin_single_instance::init\(\|app, argv/);
+});
+
 test("windows release binary uses gui subsystem instead of console subsystem", async () => {
   const mainPath = path.resolve(import.meta.dirname, "../../src-tauri/src/main.rs");
   const source = await readFile(mainPath, "utf8");
@@ -86,6 +137,9 @@ test("backup modal header keeps title and close button aligned", async () => {
   assert.match(source, /truncate/);
   assert.match(source, /styles\.modal\.closeBtn.*shrink-0/);
   assert.match(source, /aria-label=\{t\.common\?\.close/);
+  assert.match(source, /res\.count \+ res\.updated_count/);
+  assert.match(source, /localStorage\.removeItem\(UNDO_STORAGE_KEY\)/);
+  assert.match(source, /setLastImportedIds\(\[\]\)/);
 });
 
 test("entry editing reuses the add-entry modal including future options", async () => {
@@ -195,6 +249,106 @@ test("markdown workspace controls live in the unified storage panel", async () =
   assert.match(translationsSource, /Markdown 存放文件夹/);
   assert.match(translationsSource, /Storage/);
   assert.match(translationsSource, /Change Path/);
+});
+
+test("top-right menu and command palette expose the same data and app tools", async () => {
+  const userMenuPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/components/UserMenu.tsx",
+  );
+  const commandPalettePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/cmdk/GlobalCommandPalette.tsx",
+  );
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const userMenuSource = await readFile(userMenuPath, "utf8");
+  const commandPaletteSource = await readFile(commandPalettePath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+
+  for (const source of [userMenuSource, commandPaletteSource]) {
+    assert.match(source, /OPEN_BACKUP/);
+    assert.match(source, /OPEN_ATTACHMENT_MAINTENANCE/);
+    assert.match(source, /OPEN_CHECK_UPDATE/);
+    assert.match(source, /OPEN_VERSION_INFO/);
+    assert.match(source, /navigate\("\/archive"\)/);
+  }
+
+  assert.match(userMenuSource, /MENU_SECTION_DATA/);
+  assert.match(userMenuSource, /MENU_SECTION_APP/);
+  assert.match(commandPaletteSource, /t\.command\?\.data/);
+  assert.match(commandPaletteSource, /t\.command\?\.app/);
+  assert.match(translationsSource, /data: "数据"/);
+  assert.match(translationsSource, /app: "应用"/);
+  assert.match(translationsSource, /storage: "存储管理"/);
+  assert.match(translationsSource, /checkUpdate: "检查更新"/);
+  assert.match(translationsSource, /versionInfo: "版本信息"/);
+  assert.match(translationsSource, /data: "Data"/);
+  assert.match(translationsSource, /app: "App"/);
+  assert.match(translationsSource, /storage: "Storage"/);
+  assert.match(translationsSource, /checkUpdate: "Check for Updates"/);
+  assert.match(translationsSource, /versionInfo: "Version Info"/);
+});
+
+test("native desktop menu routes data and app tools on Windows too", async () => {
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const nativeBridgePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/NativeMenuBridge.tsx",
+  );
+  const attachmentMaintenancePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/AttachmentMaintenanceController.tsx",
+  );
+  const versionPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/VersionInfoController.tsx",
+  );
+  const libSource = await readFile(libPath, "utf8");
+  const appSource = await readFile(appPath, "utf8");
+  const nativeBridgeSource = await readFile(nativeBridgePath, "utf8");
+  const attachmentMaintenanceSource = await readFile(
+    attachmentMaintenancePath,
+    "utf8",
+  );
+  const versionSource = await readFile(versionPath, "utf8");
+
+  assert.match(libSource, /"archive" => Some\("menu:archive"\)/);
+  assert.match(
+    libSource,
+    /"attachment_maintenance" => Some\("menu:attachment-maintenance"\)/,
+  );
+  assert.match(libSource, /"version_info" => Some\("menu:version-info"\)/);
+  assert.match(libSource, /"数据"/);
+  assert.match(libSource, /"帮助"/);
+  assert.match(libSource, /"存储管理"/);
+  assert.match(libSource, /"版本信息"/);
+  assert.match(appSource, /NativeMenuBridge/);
+  assert.match(nativeBridgeSource, /listen\("menu:archive"/);
+  assert.match(nativeBridgeSource, /navigate\("\/archive"\)/);
+  assert.match(
+    attachmentMaintenanceSource,
+    /listen\("menu:attachment-maintenance"/,
+  );
+  assert.match(versionSource, /listen\("menu:version-info"/);
+});
+
+test("image preview pans on wheel and reserves ctrl wheel for zoom gestures", async () => {
+  const previewPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/ImagePreview.tsx",
+  );
+  const source = await readFile(previewPath, "utf8");
+
+  assert.match(source, /wheel=\{\{ step: 0\.2, wheelDisabled: true \}\}/);
+  assert.match(source, /panning=\{\{ wheelPanning: true \}\}/);
+  assert.match(source, /activePointers/);
+  assert.match(source, /gestureInProgress/);
+  assert.match(source, /touchAction: "none"/);
+  assert.match(source, /overscrollBehavior: "contain"/);
 });
 
 test("storage panel focuses attachments and navigates attachment references", async () => {

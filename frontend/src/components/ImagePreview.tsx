@@ -23,6 +23,8 @@ export default function ImagePreview({ src, alt, onClose }: Props) {
   // 拖拽/点击判断逻辑
   const clickStartPos = useRef({ x: 0, y: 0 });
   const shouldClose = useRef(false);
+  const activePointers = useRef<Set<number>>(new Set());
+  const gestureInProgress = useRef(false);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -38,14 +40,36 @@ export default function ImagePreview({ src, alt, onClose }: Props) {
   }, []);
 
   // --- 交互逻辑 ---
+  const clearGestureWhenIdle = () => {
+    if (activePointers.current.size > 0) return;
+    window.setTimeout(() => {
+      if (activePointers.current.size === 0) {
+        gestureInProgress.current = false;
+      }
+    }, 0);
+  };
+
   const handlePointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
+    activePointers.current.add(e.pointerId);
+    if (activePointers.current.size > 1) {
+      gestureInProgress.current = true;
+    }
     shouldClose.current = false;
     clickStartPos.current = { x: e.clientX, y: e.clientY };
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     e.stopPropagation();
+    const wasGesture =
+      gestureInProgress.current || activePointers.current.size > 1;
+    activePointers.current.delete(e.pointerId);
+    if (wasGesture) {
+      shouldClose.current = false;
+      clearGestureWhenIdle();
+      return;
+    }
+
     const deltaX = Math.abs(e.clientX - clickStartPos.current.x);
     const deltaY = Math.abs(e.clientY - clickStartPos.current.y);
     if (deltaX < 5 && deltaY < 5) {
@@ -54,6 +78,14 @@ export default function ImagePreview({ src, alt, onClose }: Props) {
         shouldClose.current = true;
       }
     }
+    clearGestureWhenIdle();
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    activePointers.current.delete(e.pointerId);
+    shouldClose.current = false;
+    clearGestureWhenIdle();
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -99,7 +131,9 @@ export default function ImagePreview({ src, alt, onClose }: Props) {
       onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
       onClick={handleClick}
+      style={{ touchAction: "none", overscrollBehavior: "contain" }}
     >
       <TransformWrapper
         centerOnInit={true}
@@ -108,7 +142,8 @@ export default function ImagePreview({ src, alt, onClose }: Props) {
         minScale={0.5}
         maxScale={4}
         smooth={true}
-        wheel={{ step: 0.2 }}
+        wheel={{ step: 0.2, wheelDisabled: true }}
+        panning={{ wheelPanning: true }}
         alignmentAnimation={{ sizeX: 0, sizeY: 0 }}
       >
         {({ zoomIn, zoomOut, resetTransform }) => (

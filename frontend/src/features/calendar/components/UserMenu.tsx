@@ -10,6 +10,7 @@ import {
   Info,
   RefreshCw,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useTheme } from "../../../hooks/useTheme";
@@ -22,6 +23,9 @@ const LANG_MAP: Record<string, string> = {
   zh: "CN",
   en: "EN",
 };
+
+const MENU_SECTION_DATA = "MENU_SECTION_DATA";
+const MENU_SECTION_APP = "MENU_SECTION_APP";
 
 export default function UserMenu() {
   const navigate = useNavigate();
@@ -97,6 +101,23 @@ export default function UserMenu() {
     </button>
   );
 
+  const MenuSection = ({
+    label,
+    section,
+    children,
+  }: {
+    label: string;
+    section: string;
+    children: ReactNode;
+  }) => (
+    <div className="flex flex-col gap-0.5" data-section={section}>
+      <div className="px-2.5 pb-1 pt-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-base-content/35">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+
   return (
     <div className="dropdown dropdown-end ml-1">
       <div
@@ -109,50 +130,62 @@ export default function UserMenu() {
 
       <div
         tabIndex={0}
-        className="dropdown-content mt-3 z-50 w-60 p-1.5 origin-top-right transform transition-all duration-200"
+        className="dropdown-content mt-3 z-50 w-64 p-1.5 origin-top-right transform transition-all duration-200"
       >
         <div className="bg-base-100/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/5 border border-white/10 dark:border-white/5 flex flex-col gap-0.5 p-1.5">
-          <MenuItem
-            icon={Archive}
-            label={t.common?.archive || "Archive"}
-            onClick={handleOpenArchive}
-          />
-          <MenuItem
-            icon={FileArchive}
-            label={t.backup?.title || "Backup & Export"}
-            onClick={handleOpenBackup}
-          />
-          <MenuItem
-            icon={HardDrive}
-            label={
-              t.attachmentMaintenance?.menuLabel || "Attachment Maintenance"
-            }
-            onClick={handleOpenAttachmentMaintenance}
-          />
-          <MenuItem
-            icon={RefreshCw}
-            label={t.common?.checkUpdate || "Check for Updates"}
-            onClick={handleCheckUpdate}
-          />
-          <MenuItem
-            icon={
-              themeMode === "light" ? Sun : themeMode === "dark" ? Moon : Monitor
-            }
-            label={t?.calendar?.theme || "Theme"}
-            value={t.common.theme[themeMode]}
-            onClick={cycleTheme}
-          />
-          <MenuItem
-            icon={Languages}
-            label={t?.common?.language || "Language"}
-            value={LANG_MAP[lang] || lang.toUpperCase()}
-            onClick={toggleLang}
-          />
-          <MenuItem
-            icon={Info}
-            label={t.common?.versionInfo || "Version Info"}
-            onClick={handleOpenVersionInfo}
-          />
+          <MenuSection
+            section={MENU_SECTION_DATA}
+            label={t.command?.data || "Data"}
+          >
+            <MenuItem
+              icon={Archive}
+              label={t.common?.archive || "Archive"}
+              onClick={handleOpenArchive}
+            />
+            <MenuItem
+              icon={FileArchive}
+              label={t.backup?.title || "Backup & Export"}
+              onClick={handleOpenBackup}
+            />
+            <MenuItem
+              icon={HardDrive}
+              label={t.command?.storage || t.attachmentMaintenance?.menuLabel || "Storage"}
+              onClick={handleOpenAttachmentMaintenance}
+            />
+          </MenuSection>
+
+          <div className="my-1 h-px bg-base-content/10" />
+
+          <MenuSection section={MENU_SECTION_APP} label={t.command?.app || "App"}>
+            <MenuItem
+              icon={RefreshCw}
+              label={t.command?.checkUpdate || t.common?.checkUpdate || "Check for Updates"}
+              onClick={handleCheckUpdate}
+            />
+            <MenuItem
+              icon={Info}
+              label={t.command?.versionInfo || t.common?.versionInfo || "Version Info"}
+              onClick={handleOpenVersionInfo}
+            />
+            <MenuItem
+              icon={
+                themeMode === "light"
+                  ? Sun
+                  : themeMode === "dark"
+                    ? Moon
+                    : Monitor
+              }
+              label={t?.calendar?.theme || "Theme"}
+              value={t.common.theme[themeMode]}
+              onClick={cycleTheme}
+            />
+            <MenuItem
+              icon={Languages}
+              label={t?.common?.language || "Language"}
+              value={LANG_MAP[lang] || lang.toUpperCase()}
+              onClick={toggleLang}
+            />
+          </MenuSection>
         </div>
       </div>
     </div>

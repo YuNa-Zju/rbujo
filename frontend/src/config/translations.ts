@@ -334,8 +334,13 @@ export const translations = {
       delete: "删除条目",
       back: "返回",
       tools: "工具与数据",
+      data: "数据",
+      app: "应用",
       backup: "备份与恢复",
       export: "导出为 Markdown",
+      storage: "存储管理",
+      checkUpdate: "检查更新",
+      versionInfo: "版本信息",
       settings: "设置",
       theme: "切换主题",
       language: "切换语言",
@@ -365,6 +370,11 @@ export const translations = {
       exportZipSuccess: "归档文件已生成",
       importData: "导入备份文件",
       importDataDesc: "从 .bjk 文件恢复",
+      externalImportTitle: "导入备份文件？",
+      externalImportDesc:
+        "检测到你打开了 {{filename}}。确认后会导入其中的笔记和附件。",
+      externalImportConfirm: "导入",
+      externalImportCancel: "暂不导入",
 
       // Status Messages
       processing: "处理中...",
@@ -373,6 +383,9 @@ export const translations = {
       exportSuccess: "成功导出 {{count}} 条记录。",
       exportMdSuccess: "Markdown 导出成功。",
       importSuccess: "已恢复 {{count}} 条记录，即将刷新...",
+      externalImportReading: "正在读取备份文件...",
+      externalImportSuccess: "已导入 {{count}} 条记录，即将刷新...",
+      externalImportError: "导入失败，请检查备份文件。",
       error: "操作失败",
 
       // Undo / Recent Import Logic
@@ -760,8 +773,13 @@ export const translations = {
       delete: "Delete Entry",
       back: "Back",
       tools: "Tools & Data",
+      data: "Data",
+      app: "App",
       backup: "Backup & Restore",
       export: "Export to Markdown",
+      storage: "Storage",
+      checkUpdate: "Check for Updates",
+      versionInfo: "Version Info",
       settings: "Settings",
       theme: "Switch Theme",
       language: "Switch Language",
@@ -791,6 +809,11 @@ export const translations = {
       exportZipSuccess: "Archive generated successfully",
       importData: "Restore Data",
       importDataDesc: "From .bjk file",
+      externalImportTitle: "Import backup?",
+      externalImportDesc:
+        "You opened {{filename}}. Confirm to import its entries and attachments.",
+      externalImportConfirm: "Import",
+      externalImportCancel: "Not now",
 
       // Status Messages
       processing: "Processing...",
@@ -799,6 +822,9 @@ export const translations = {
       exportSuccess: "Exported {{count}} entries.",
       exportMdSuccess: "Markdown exported successfully.",
       importSuccess: "Restored {{count}} items. Refreshing...",
+      externalImportReading: "Reading backup file...",
+      externalImportSuccess: "Imported {{count}} entries. Refreshing...",
+      externalImportError: "Import failed. Please check the backup file.",
       error: "Operation failed.",
 
       // Undo / Recent Import Logic
