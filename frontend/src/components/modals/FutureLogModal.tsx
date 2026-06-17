@@ -133,7 +133,7 @@ const FutureLogEntryCard = ({
   const style: CSSProperties = {
     transform: isDragging ? undefined : CSS.Translate.toString(transform),
     opacity: isDragging ? 0.35 : 1,
-    touchAction: canDrag ? "none" : "pan-y",
+    touchAction: "pan-y",
   };
 
   return (
@@ -152,6 +152,7 @@ const FutureLogEntryCard = ({
           isDragEnabled={canDrag}
           forceCollapse={true}
           disableOverflowCheck={true}
+          readOnly={true}
           dragHandleProps={{ ...attributes, ...listeners }}
         />
       ) : (
@@ -381,8 +382,9 @@ const FutureLogModal = ({ onClose }: Props) => {
   const [activeDragWidth, setActiveDragWidth] = useState<number | null>(null);
   const [isMonthDragMode, setIsMonthDragMode] = useState(false);
   const [movingEntryIds, setMovingEntryIds] = useState<Set<string>>(new Set());
-  const canDragFutureEntries =
+  const isFutureArrangeMode =
     futureLogMode === "planning" && isMonthDragMode;
+  const canDragFutureEntries = isFutureArrangeMode;
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
@@ -627,7 +629,7 @@ const FutureLogModal = ({ onClose }: Props) => {
 
   const filteredUndetermined = filterEntries(layout.undetermined);
   const undeterminedCount = filteredUndetermined.length;
-  const gridClassName = isMonthDragMode
+  const gridClassName = isFutureArrangeMode
     ? "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 pb-10"
     : "grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 pb-10";
 
@@ -702,23 +704,23 @@ const FutureLogModal = ({ onClose }: Props) => {
               <button
                 type="button"
                 className={`btn btn-sm btn-circle border shadow-sm transition-all duration-300 ${
-                  isMonthDragMode
+                  isFutureArrangeMode
                     ? "btn-primary text-primary-content border-primary"
                     : "bg-base-100 text-base-content/70 border-base-200 hover:bg-base-200"
                 }`}
                 onClick={() => setIsMonthDragMode((current) => !current)}
                 title={
-                  isMonthDragMode
+                  isFutureArrangeMode
                     ? t.futureLog.finishArrange
                     : t.futureLog.arrangeMonths
                 }
                 aria-label={
-                  isMonthDragMode
+                  isFutureArrangeMode
                     ? t.futureLog.finishArrange
                     : t.futureLog.arrangeMonths
                 }
               >
-                {isMonthDragMode ? (
+                {isFutureArrangeMode ? (
                   <Check size={16} strokeWidth={3} />
                 ) : (
                   <ArrowDownUp size={16} strokeWidth={2.5} />
@@ -824,7 +826,9 @@ const FutureLogModal = ({ onClose }: Props) => {
               {/* Someday / Undetermined Box - Full Width */}
               <div
                 className={
-                  isMonthDragMode ? "col-span-1" : "col-span-1 md:col-span-2"
+                  isFutureArrangeMode
+                    ? "col-span-1"
+                    : "col-span-1 md:col-span-2"
                 }
               >
                 <FutureLogSection
@@ -844,7 +848,7 @@ const FutureLogModal = ({ onClose }: Props) => {
                   dropId={FUTURE_DROP_SOMEDAY_ID}
                   canDragEntries={canDragFutureEntries}
                   movingEntryIds={movingEntryIds}
-                  dragMode={isMonthDragMode}
+                  dragMode={isFutureArrangeMode}
                 />
               </div>
 
@@ -871,7 +875,7 @@ const FutureLogModal = ({ onClose }: Props) => {
                     dropId={futureMonthDropId(idx)}
                     canDragEntries={canDragFutureEntries}
                     movingEntryIds={movingEntryIds}
-                    dragMode={isMonthDragMode}
+                    dragMode={isFutureArrangeMode}
                   />
                 );
               })}
@@ -889,7 +893,7 @@ const FutureLogModal = ({ onClose }: Props) => {
                           : undefined,
                     }}
                   >
-                    {isMonthDragMode ? (
+                    {isFutureArrangeMode ? (
                       <EntryCard
                         entry={activeDragEntry}
                         isOverlay={true}
@@ -897,6 +901,7 @@ const FutureLogModal = ({ onClose }: Props) => {
                         refresh={() => {}}
                         forceCollapse={true}
                         disableOverflowCheck={true}
+                        readOnly={true}
                       />
                     ) : (
                       <EntryCard
