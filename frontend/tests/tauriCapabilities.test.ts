@@ -8,7 +8,7 @@ type TauriCapability = {
   permissions?: Array<string | { identifier: string }>;
 };
 
-test("main window has event and updater IPC permissions", async () => {
+test("desktop windows have event and updater IPC permissions", async () => {
   const capabilityPath = path.resolve(
     import.meta.dirname,
     "../../src-tauri/capabilities/default.json",

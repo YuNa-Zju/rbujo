@@ -25,6 +25,7 @@ interface ItemProps {
   shortcut?: React.ReactNode | string;
   // ✅ 新增 value 属性，用于传递别名关键词
   value?: string;
+  keywords?: string[];
   onSelect: (value?: string) => void;
   danger?: boolean;
 }
@@ -32,17 +33,22 @@ interface ItemProps {
 // ✅ 使用 forwardRef 包裹，修复键盘导航和滚动问题
 export const Item = React.forwardRef<HTMLDivElement, ItemProps>(
   (
-    { icon, label, subLabel, shortcut, onSelect, danger = false, value },
+    { icon, label, subLabel, shortcut, onSelect, danger = false, value, keywords = [] },
     ref,
   ) => {
     // ✅ 构造搜索字符串：同时包含显示的 Label 和 隐式的 Value (别名)
     // 这样输入 "new" 就能匹配到 "新建日记" (如果 value="new")
-    const searchString = value ? `${label} ${value}` : label;
+    const searchString = [label, subLabel, ...keywords]
+      .filter((keyword): keyword is string => Boolean(keyword))
+      .join(" ");
+    const commandValue = value || label;
+    const searchKeywords = searchString ? [searchString] : [];
 
     return (
       <Command.Item
         ref={ref}
-        value={searchString} // ✅ 传递给 cmdk 用于过滤
+        value={commandValue}
+        keywords={searchKeywords}
         onSelect={onSelect}
         className={`
         relative flex items-center gap-4 px-5 py-3.5 rounded-2xl text-base font-medium transition-all duration-200 cursor-pointer group font-lxgw

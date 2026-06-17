@@ -13,6 +13,7 @@ import VersionInfoController from "./components/modals/VersionInfoController";
 import AttachmentMaintenanceController from "./components/modals/AttachmentMaintenanceController";
 import BjkImportPromptController from "./components/modals/BjkImportPromptController";
 import NativeMenuBridge from "./components/NativeMenuBridge";
+import SettingsModalController from "./components/modals/SettingsModalController";
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
           <UpdateCheckController />
           <VersionInfoController />
           <AttachmentMaintenanceController />
+          <SettingsModalController />
           <BjkImportPromptController />
           <Toaster
             position="bottom-center"

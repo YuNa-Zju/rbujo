@@ -9,6 +9,7 @@ import {
   HardDrive,
   Info,
   RefreshCw,
+  Settings,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -46,6 +47,10 @@ export default function UserMenu() {
 
   const handleOpenAttachmentMaintenance = () => {
     uiEvents.emit("OPEN_ATTACHMENT_MAINTENANCE");
+  };
+
+  const handleOpenSettings = () => {
+    uiEvents.emit("OPEN_SETTINGS");
   };
 
   const handleOpenArchive = () => {
@@ -157,6 +162,11 @@ export default function UserMenu() {
           <div className="my-1 h-px bg-base-content/10" />
 
           <MenuSection section={MENU_SECTION_APP} label={t.command?.app || "App"}>
+            <MenuItem
+              icon={Settings}
+              label={t.command?.settings || "Settings"}
+              onClick={handleOpenSettings}
+            />
             <MenuItem
               icon={RefreshCw}
               label={t.command?.checkUpdate || t.common?.checkUpdate || "Check for Updates"}

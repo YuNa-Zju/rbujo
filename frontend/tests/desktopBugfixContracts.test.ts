@@ -296,9 +296,11 @@ test("archive toast offers undo and permanent delete actions", async () => {
   const entryActionsSource = await readFile(entryActionsPath, "utf8");
   const cmdkEntryActionSource = await readFile(cmdkEntryActionPath, "utf8");
 
-  assert.match(archiveToastSource, /cancel:\s*\{/);
-  assert.match(archiveToastSource, /action:\s*\{/);
+  assert.match(archiveToastSource, /toast\.custom/);
   assert.match(archiveToastSource, /deletePermanently/);
+  assert.match(archiveToastSource, /ml-auto flex shrink-0 items-center gap-2/);
+  assert.match(archiveToastSource, /border-error\/30/);
+  assert.match(archiveToastSource, /bg-primary/);
   assert.match(archiveToastSource, /entryService\.delete\(archivedEntry\.id,\s*true\)/);
   assert.match(archiveToastSource, /entryEventBus\.emit\("entry:delete", archivedEntry\.id\)/);
   assert.match(archiveToastSource, /entryEventBus\.emit\("entry:create", restored\)/);
@@ -462,7 +464,63 @@ test("top-right menu and command palette expose the same data and app tools", as
   assert.match(translationsSource, /versionInfo: "Version Info"/);
 });
 
-test("native desktop menu routes data and app tools on Windows too", async () => {
+test("command palette uses stable non-looping keyboard navigation", async () => {
+  const commandPalettePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/cmdk/GlobalCommandPalette.tsx",
+  );
+  const cmdkComponentsPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/cmdk/CmdkComponents.tsx",
+  );
+  const commandPaletteSource = await readFile(commandPalettePath, "utf8");
+  const cmdkComponentsSource = await readFile(cmdkComponentsPath, "utf8");
+
+  assert.match(commandPaletteSource, /<Command[\s\S]*\bloop=\{false\}/);
+  assert.match(cmdkComponentsSource, /searchString/);
+  assert.match(cmdkComponentsSource, /commandValue/);
+  assert.match(cmdkComponentsSource, /keywords=\{searchKeywords\}/);
+  assert.doesNotMatch(cmdkComponentsSource, /value=\{searchString\}/);
+});
+
+test("desktop shell does not keep a tray background app or today widget window", async () => {
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const capabilityPath = path.resolve(
+    import.meta.dirname,
+    "../../src-tauri/capabilities/default.json",
+  );
+  const commandPalettePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/cmdk/GlobalCommandPalette.tsx",
+  );
+  const userMenuPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/components/UserMenu.tsx",
+  );
+  const settingsPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/SettingsModalController.tsx",
+  );
+  const libSource = await readFile(libPath, "utf8");
+  const appSource = await readFile(appPath, "utf8");
+  const capability = JSON.parse(await readFile(capabilityPath, "utf8"));
+  const commandPaletteSource = await readFile(commandPalettePath, "utf8");
+  const userMenuSource = await readFile(userMenuPath, "utf8");
+  const settingsSource = await readFile(settingsPath, "utf8");
+
+  assert.deepEqual(capability.windows, ["main"]);
+  assert.doesNotMatch(libSource, /TrayIconBuilder/);
+  assert.doesNotMatch(libSource, /api\.prevent_close\(\)/);
+  assert.doesNotMatch(libSource, /today-widget/);
+  assert.doesNotMatch(libSource, /open_today_widget|toggle_today_widget|list_today_widget_tasks/);
+  assert.doesNotMatch(appSource, /TodayWidgetApp|view"\)\s*===\s*"today-widget"/);
+  assert.doesNotMatch(commandPaletteSource, /todayWidget|openTodayWidget|desktopService/);
+  assert.doesNotMatch(userMenuSource, /todayWidget|openTodayWidget|desktopService/);
+  assert.doesNotMatch(settingsSource, /todayWidget|toggleTodayWidget|desktopService/);
+});
+
+test("native desktop menu is macOS-only while app actions stay available elsewhere", async () => {
   const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
   const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
   const nativeBridgePath = path.resolve(
@@ -486,6 +544,10 @@ test("native desktop menu routes data and app tools on Windows too", async () =>
   );
   const versionSource = await readFile(versionPath, "utf8");
 
+  assert.match(libSource, /native_menu_enabled\(\)/);
+  assert.match(libSource, /cfg!\(target_os = "macos"\)/);
+  assert.match(libSource, /#\[cfg\(target_os = "macos"\)\]\s*fn build_native_menu/);
+  assert.match(libSource, /let builder = builder\.menu\(build_native_menu\)/);
   assert.match(libSource, /"archive" => Some\("menu:archive"\)/);
   assert.match(
     libSource,
