@@ -10,9 +10,7 @@ import MarkdownViewer from "../MarkdownViewer";
 import { useAppTheme } from "../../hooks/useAppTheme";
 import { uiEvents } from "../../lib/uiEvents";
 
-const RECENT_RELEASE_NOTES = `## 最近一次更新
-
-- .bjk 备份文件改为带 manifest.json 的可扩展数据包，双击后会打开导入确认弹窗。
+const RECENT_RELEASE_NOTES = `- .bjk 备份文件改为带 manifest.json 的可扩展数据包，双击后会打开导入确认弹窗。
 - 右上角菜单、命令面板和桌面菜单统一为数据 / 应用入口。
 - Windows 菜单栏新增数据与帮助菜单，补齐存储管理和版本信息。
 - 图片预览改为滚轮平移，Ctrl 或触控板缩放手势才缩放。`;

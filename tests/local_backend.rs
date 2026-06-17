@@ -1,13 +1,16 @@
 use std::fs::{self, FileTimes};
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use flate2::{Compression, write::GzEncoder};
 use rbullet_journal::db;
 use rbullet_journal::local::{
     CreateEntryInput, EntryPatch, LocalBackend, SearchMode, SearchOptions, UploadInput,
 };
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
+use zip::{ZipWriter, write::SimpleFileOptions};
 
 fn temp_app_dir(label: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("rbujo-{label}-{}", Uuid::new_v4()));
@@ -25,6 +28,44 @@ fn default_workspace_path(dir: &std::path::Path) -> std::path::PathBuf {
 
 fn attachment_path(dir: &std::path::Path, relative_path: &str) -> std::path::PathBuf {
     default_workspace_path(dir).join(relative_path)
+}
+
+fn test_sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn bjk_archive_bytes(backup: serde_json::Value) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(serde_json::to_string(&backup).unwrap().as_bytes())
+        .unwrap();
+    let payload = encoder.finish().unwrap();
+    let manifest = serde_json::json!({
+        "format": "fun.yunazju.rbujo.bjk",
+        "container_version": 1,
+        "created_at": "2026-06-17T00:00:00Z",
+        "payload": {
+            "path": "data/backup.json.gz",
+            "media_type": "application/json",
+            "compression": "gzip"
+        }
+    });
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    writer.start_file("manifest.json", options).unwrap();
+    writer
+        .write_all(serde_json::to_string(&manifest).unwrap().as_bytes())
+        .unwrap();
+    writer.start_file("data/backup.json.gz", options).unwrap();
+    writer.write_all(&payload).unwrap();
+    writer.finish().unwrap().into_inner()
 }
 
 #[tokio::test]
@@ -2673,4 +2714,235 @@ async fn backup_roundtrip_preserves_archive_and_migration_chain() {
 
     fs::remove_dir_all(source_dir).ok();
     fs::remove_dir_all(target_dir).ok();
+}
+
+#[tokio::test]
+async fn bjk_import_restores_attachments_and_rewrites_asset_urls() {
+    let dir = temp_app_dir("bjk-import-attachments");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let attachment_bytes = b"portable attachment bytes";
+    let attachment_hash = test_sha256_hex(attachment_bytes);
+    let entry_id = Uuid::new_v4().to_string();
+    let backup = serde_json::json!({
+        "header": "BUJO_SECURE_BACKUP_V1",
+        "version": 2,
+        "timestamp": 1781654400000u64,
+        "count": 1,
+        "attachments": [{
+            "relative_path": "uploads/original.png",
+            "filename": "original.png",
+            "sha256": attachment_hash,
+            "bytes": attachment_bytes
+        }],
+        "data": [{
+            "id": entry_id,
+            "content": "![img](asset://localhost/private/uploads/original.png)",
+            "entry_type": "idea",
+            "status": "open",
+            "tags": ["附件"],
+            "created_at": "2026-06-17T00:00:00Z",
+            "target_date": "2026-06-17",
+            "target_month": null,
+            "is_future": false,
+            "source_entry_id": null,
+            "position": 0,
+            "from_date": null,
+            "migrated_to_date": null,
+            "migrated_to_month": null,
+            "archived_at": null,
+            "chain_root_id": null,
+            "migrated_to_entry_id": null
+        }]
+    });
+
+    let result = backend
+        .import_bjk_archive_bytes(bjk_archive_bytes(backup))
+        .await
+        .unwrap();
+
+    assert_eq!(result.inserted_count, 1);
+    assert_eq!(result.updated_count, 0);
+
+    let entries = backend.get_daily_log("2026-06-17", false).await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].content.contains("attachments/"));
+    assert!(!entries[0].content.contains("asset://localhost"));
+    assert!(!entries[0].content.contains("uploads/original.png"));
+
+    let uploads = backend.list_uploads_for_backup().await.unwrap();
+    assert_eq!(uploads.len(), 1);
+    assert!(uploads[0].relative_path.starts_with("attachments/"));
+    assert!(Path::new(&uploads[0].absolute_path).exists());
+    assert!(
+        Path::new(&uploads[0].absolute_path).starts_with(default_workspace_path(&dir)),
+        "attachment should be stored in the markdown workspace"
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn bjk_import_rejects_attachment_hash_mismatch() {
+    let dir = temp_app_dir("bjk-import-hash-mismatch");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let backup = serde_json::json!({
+        "header": "BUJO_SECURE_BACKUP_V1",
+        "version": 2,
+        "timestamp": 1781654400000u64,
+        "count": 1,
+        "attachments": [{
+            "relative_path": "uploads/broken.pdf",
+            "filename": "broken.pdf",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "bytes": [1, 2, 3, 4]
+        }],
+        "data": [{
+            "id": Uuid::new_v4().to_string(),
+            "content": "[file](uploads/broken.pdf)",
+            "entry_type": "idea",
+            "status": "open",
+            "tags": [],
+            "created_at": "2026-06-17T00:00:00Z",
+            "target_date": "2026-06-17",
+            "target_month": null,
+            "is_future": false,
+            "source_entry_id": null,
+            "position": 0,
+            "from_date": null,
+            "migrated_to_date": null,
+            "migrated_to_month": null,
+            "archived_at": null,
+            "chain_root_id": null,
+            "migrated_to_entry_id": null
+        }]
+    });
+
+    let error = backend
+        .import_bjk_archive_bytes(bjk_archive_bytes(backup))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("Attachment hash mismatch"));
+    let entries = backend.get_daily_log("2026-06-17", false).await.unwrap();
+    assert!(entries.is_empty());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn bjk_import_preserves_zero_byte_attachments() {
+    let dir = temp_app_dir("bjk-import-empty-attachment");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let attachment_hash = test_sha256_hex(&[]);
+    let backup = serde_json::json!({
+        "header": "BUJO_SECURE_BACKUP_V1",
+        "version": 2,
+        "timestamp": 1781654400000u64,
+        "count": 1,
+        "attachments": [{
+            "relative_path": "uploads/empty.txt",
+            "filename": "empty.txt",
+            "sha256": attachment_hash,
+            "bytes": []
+        }],
+        "data": [{
+            "id": Uuid::new_v4().to_string(),
+            "content": "[empty](uploads/empty.txt)",
+            "entry_type": "idea",
+            "status": "open",
+            "tags": [],
+            "created_at": "2026-06-17T00:00:00Z",
+            "target_date": "2026-06-17",
+            "target_month": null,
+            "is_future": false,
+            "source_entry_id": null,
+            "position": 0,
+            "from_date": null,
+            "migrated_to_date": null,
+            "migrated_to_month": null,
+            "archived_at": null,
+            "chain_root_id": null,
+            "migrated_to_entry_id": null
+        }]
+    });
+
+    let result = backend
+        .import_bjk_archive_bytes(bjk_archive_bytes(backup))
+        .await
+        .unwrap();
+
+    assert_eq!(result.inserted_count, 1);
+    let entries = backend.get_daily_log("2026-06-17", false).await.unwrap();
+    assert!(entries[0].content.contains("attachments/"));
+    let uploads = backend.list_uploads_for_backup().await.unwrap();
+    assert_eq!(uploads.len(), 1);
+    assert_eq!(uploads[0].bytes, Vec::<u8>::new());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn bjk_import_rejects_invalid_attachment_paths_before_writing() {
+    let dir = temp_app_dir("bjk-import-invalid-path");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let backup = serde_json::json!({
+        "header": "BUJO_SECURE_BACKUP_V1",
+        "version": 2,
+        "timestamp": 1781654400000u64,
+        "count": 0,
+        "attachments": [{
+            "relative_path": "notes.md",
+            "filename": "notes.md",
+            "sha256": test_sha256_hex(b"bad path"),
+            "bytes": b"bad path"
+        }],
+        "data": []
+    });
+
+    let error = backend
+        .import_bjk_archive_bytes(bjk_archive_bytes(backup))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("Invalid upload path"));
+    assert!(backend.list_uploads_for_backup().await.unwrap().is_empty());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn bjk_import_hash_failure_leaves_no_prior_attachment_side_effects() {
+    let dir = temp_app_dir("bjk-import-partial-hash-failure");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let backup = serde_json::json!({
+        "header": "BUJO_SECURE_BACKUP_V1",
+        "version": 2,
+        "timestamp": 1781654400000u64,
+        "count": 0,
+        "attachments": [
+            {
+                "relative_path": "uploads/ok.txt",
+                "filename": "ok.txt",
+                "sha256": test_sha256_hex(b"ok"),
+                "bytes": b"ok"
+            },
+            {
+                "relative_path": "uploads/broken.txt",
+                "filename": "broken.txt",
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "bytes": b"broken"
+            }
+        ],
+        "data": []
+    });
+
+    let error = backend
+        .import_bjk_archive_bytes(bjk_archive_bytes(backup))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("Attachment hash mismatch"));
+    assert!(backend.list_uploads_for_backup().await.unwrap().is_empty());
+
+    fs::remove_dir_all(dir).ok();
 }

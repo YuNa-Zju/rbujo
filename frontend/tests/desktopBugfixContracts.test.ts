@@ -69,9 +69,13 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
   const libSource = await readFile(libPath, "utf8");
 
   assert.match(appSource, /BjkImportPromptController/);
+  assert.match(controllerSource, /createPortal/);
+  assert.match(controllerSource, /document\.body/);
   assert.match(controllerSource, /listen(?:<[^>]+>)?\("file:open-bjk"/);
   assert.match(controllerSource, /takePendingBjkImport/);
-  assert.match(controllerSource, /readBjkImportFile/);
+  assert.match(controllerSource, /importPendingBjkArchive/);
+  assert.doesNotMatch(controllerSource, /readBjkImportFile/);
+  assert.doesNotMatch(controllerSource, /new Uint8Array\(file\.bytes\)/);
   assert.match(controllerSource, /clearPendingBjkImport/);
   assert.match(controllerSource, /const checkPendingImport = useCallback/);
   assert.match(
@@ -84,15 +88,23 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
   );
   assert.match(controllerSource, /statusRef/);
   assert.match(controllerSource, /statusRef\.current === "loading"/);
-  assert.match(controllerSource, /dataBackupService\.importBjkArchive/);
-  assert.match(controllerSource, /const importedCount = result\.count/);
+  assert.match(controllerSource, /entryService\.importPendingBjkArchive/);
+  assert.match(controllerSource, /const importedCount = response\.inserted_count/);
   assert.doesNotMatch(controllerSource, /result\.count \+ result\.updated_count/);
   assert.match(controllerSource, /recordImportUndoIds/);
   assert.match(controllerSource, /showImportSuccessToast/);
   assert.match(entryServiceSource, /takePendingBjkImport/);
   assert.match(entryServiceSource, /readBjkImportFile/);
+  assert.match(entryServiceSource, /importPendingBjkArchive/);
+  assert.match(
+    entryServiceSource,
+    /invoke<ImportResponse>\("import_pending_bjk_archive"/,
+  );
   assert.match(entryServiceSource, /clearPendingBjkImport/);
+  assert.match(entryServiceSource, /importBjkArchive/);
+  assert.match(entryServiceSource, /invoke<ImportResponse>\("import_bjk_archive"/);
   assert.match(backupServiceSource, /importBjkArchive/);
+  assert.match(backupServiceSource, /entryService\.importBjkArchive/);
   assert.doesNotMatch(backupServiceSource, /inflateRaw/);
   assert.match(backupServiceSource, /new pako\.Inflate/);
   assert.match(libSource, /PendingBjkImport/);
@@ -102,6 +114,8 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
   assert.match(libSource, /take_pending_bjk_import/);
   assert.match(libSource, /clear_pending_bjk_import/);
   assert.match(libSource, /read_bjk_import_file/);
+  assert.match(libSource, /import_pending_bjk_archive/);
+  assert.match(libSource, /import_bjk_archive/);
   assert.match(libSource, /Url::parse/);
   assert.match(libSource, /bjk_path_from_args/);
   assert.match(libSource, /pending_bjk_import_from_url/);
@@ -112,12 +126,19 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
 
 test("windows release binary uses gui subsystem instead of console subsystem", async () => {
   const mainPath = path.resolve(import.meta.dirname, "../../src-tauri/src/main.rs");
+  const localPath = path.resolve(import.meta.dirname, "../../src/local.rs");
   const source = await readFile(mainPath, "utf8");
+  const localSource = await readFile(localPath, "utf8");
 
   assert.match(
     source,
     /cfg_attr\(all\(not\(debug_assertions\),\s*windows\),\s*windows_subsystem\s*=\s*"windows"\)/,
   );
+  assert.match(localSource, /std::os::windows::process::CommandExt/);
+  assert.match(localSource, /CREATE_NO_WINDOW/);
+  assert.match(localSource, /creation_flags\(CREATE_NO_WINDOW\)/);
+  assert.match(localSource, /url\.dll,FileProtocolHandler/);
+  assert.doesNotMatch(localSource, /Command::new\("cmd"\)/);
 });
 
 test("update and version dialogs use polished aligned layouts", async () => {
@@ -136,6 +157,10 @@ test("update and version dialogs use polished aligned layouts", async () => {
   assert.match(updateSource, /justify-between/);
   assert.match(versionSource, /MarkdownViewer/);
   assert.match(versionSource, /最近一次更新/);
+  assert.doesNotMatch(
+    versionSource,
+    /const RECENT_RELEASE_NOTES = `## 最近一次更新/,
+  );
   assert.match(versionSource, /w-full/);
 });
 
@@ -238,7 +263,13 @@ test("backup imports keep an undoable record and refresh views without full relo
   assert.match(importUndoSource, /dataBackupService\.undoImport/);
   assert.match(importUndoSource, /entryEventBus\.emit\("entry:delete"/);
   assert.match(importUndoSource, /entryEventBus\.emit\("entry:reload_needed"/);
+  assert.match(importUndoSource, /entryEventBus\.emit\("entry:invalidate_overview_cache"/);
   assert.match(journalDataSource, /entryEventBus\.on\("entry:reload_needed", handleSilentRefresh\)/);
+  assert.match(
+    journalDataSource,
+    /entryEventBus\.on\("entry:invalidate_overview_cache", handleInvalidateOverviewCache\)/,
+  );
+  assert.match(journalDataSource, /cacheStorage\.clearOverview/);
   assert.match(
     journalDataSource,
     /const handleSilentRefresh = useCallback\(\(\) => \{[\s\S]*viewMode === "year"[\s\S]*entryService[\s\S]*\.getRangeOverview/,
@@ -246,6 +277,34 @@ test("backup imports keep an undoable record and refresh views without full relo
   assert.match(dailyPageSource, /entryEventBus\.on\("entry:reload_needed", refreshCurrentDate\)/);
   assert.doesNotMatch(translationsSource, /即将刷新/);
   assert.doesNotMatch(translationsSource, /Refreshing\.\.\./);
+});
+
+test("archive toast offers undo and permanent delete actions", async () => {
+  const archiveToastPath = path.resolve(
+    import.meta.dirname,
+    "../src/lib/archiveUndoToast.ts",
+  );
+  const entryActionsPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/entry/useEntryActions.ts",
+  );
+  const cmdkEntryActionPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/cmdk/EntryActionView.tsx",
+  );
+  const archiveToastSource = await readFile(archiveToastPath, "utf8");
+  const entryActionsSource = await readFile(entryActionsPath, "utf8");
+  const cmdkEntryActionSource = await readFile(cmdkEntryActionPath, "utf8");
+
+  assert.match(archiveToastSource, /cancel:\s*\{/);
+  assert.match(archiveToastSource, /action:\s*\{/);
+  assert.match(archiveToastSource, /deletePermanently/);
+  assert.match(archiveToastSource, /entryService\.delete\(archivedEntry\.id,\s*true\)/);
+  assert.match(archiveToastSource, /entryEventBus\.emit\("entry:delete", archivedEntry\.id\)/);
+  assert.match(archiveToastSource, /entryEventBus\.emit\("entry:create", restored\)/);
+  assert.match(archiveToastSource, /entryEventBus\.emit\("entry:reload_needed"\)/);
+  assert.match(entryActionsSource, /deletePermanently:\s*t\.archivePage\?\.deletePermanently/);
+  assert.match(cmdkEntryActionSource, /deletePermanently:\s*t\.archivePage\?\.deletePermanently/);
 });
 
 test("entry editing reuses the add-entry modal including future options", async () => {

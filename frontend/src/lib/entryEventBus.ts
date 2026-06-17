@@ -19,6 +19,7 @@ export type EventType =
   | "entry:status_change"
   | "entry:migrate"
   | "entry:reload_needed"
+  | "entry:invalidate_overview_cache"
   | "window:close_all_modals" // 全局关闭弹窗指令
   | "window:open_future_log" // 🚀 新增：打开 Future Log 指令
   | "ui:open_timeline";
