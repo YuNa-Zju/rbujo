@@ -85,8 +85,8 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
   assert.match(controllerSource, /statusRef\.current === "loading"/);
   assert.match(controllerSource, /dataBackupService\.importBjkArchive/);
   assert.match(controllerSource, /result\.count \+ result\.updated_count/);
-  assert.match(controllerSource, /bujo_last_import_ids/);
-  assert.match(controllerSource, /localStorage\.removeItem\(UNDO_STORAGE_KEY\)/);
+  assert.match(controllerSource, /recordImportUndoIds/);
+  assert.match(controllerSource, /showImportSuccessToast/);
   assert.match(entryServiceSource, /takePendingBjkImport/);
   assert.match(entryServiceSource, /readBjkImportFile/);
   assert.match(entryServiceSource, /clearPendingBjkImport/);
@@ -150,8 +150,68 @@ test("backup modal header keeps title and close button aligned", async () => {
   assert.match(source, /styles\.modal\.closeBtn.*shrink-0/);
   assert.match(source, /aria-label=\{t\.common\?\.close/);
   assert.match(source, /res\.count \+ res\.updated_count/);
-  assert.match(source, /localStorage\.removeItem\(UNDO_STORAGE_KEY\)/);
+  assert.match(source, /readStoredImportUndoIds/);
+  assert.match(source, /undoStoredImport/);
   assert.match(source, /setLastImportedIds\(\[\]\)/);
+});
+
+test("backup imports keep an undoable record and refresh views without full reload", async () => {
+  const backupPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/BackupModal.tsx",
+  );
+  const bjkPromptPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/BjkImportPromptController.tsx",
+  );
+  const importUndoPath = path.resolve(
+    import.meta.dirname,
+    "../src/lib/importUndoToast.ts",
+  );
+  const journalDataPath = path.resolve(
+    import.meta.dirname,
+    "../src/hooks/useJournalData.ts",
+  );
+  const dailyPagePath = path.resolve(
+    import.meta.dirname,
+    "../src/features/daily/DailyPage.tsx",
+  );
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const backupSource = await readFile(backupPath, "utf8");
+  const bjkPromptSource = await readFile(bjkPromptPath, "utf8");
+  const importUndoSource = await readFile(importUndoPath, "utf8");
+  const journalDataSource = await readFile(journalDataPath, "utf8");
+  const dailyPageSource = await readFile(dailyPagePath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+
+  for (const source of [backupSource, bjkPromptSource]) {
+    assert.match(source, /showImportSuccessToast/);
+    assert.match(source, /recordImportUndoIds/);
+    assert.doesNotMatch(source, /window\.location\.reload/);
+  }
+
+  assert.match(backupSource, /readStoredImportUndoIds/);
+  assert.match(backupSource, /undoStoredImport/);
+  assert.doesNotMatch(backupSource, /handleDismissUndo/);
+  assert.doesNotMatch(backupSource, /<Trash2/);
+
+  assert.match(importUndoSource, /const IMPORT_UNDO_STORAGE_KEY = "bujo_last_import_ids"/);
+  assert.match(importUndoSource, /toast\.success/);
+  assert.match(importUndoSource, /options\.action = \{/);
+  assert.match(importUndoSource, /dataBackupService\.undoImport/);
+  assert.match(importUndoSource, /entryEventBus\.emit\("entry:delete"/);
+  assert.match(importUndoSource, /entryEventBus\.emit\("entry:reload_needed"/);
+  assert.match(journalDataSource, /entryEventBus\.on\("entry:reload_needed", handleSilentRefresh\)/);
+  assert.match(
+    journalDataSource,
+    /const handleSilentRefresh = useCallback\(\(\) => \{[\s\S]*viewMode === "year"[\s\S]*entryService[\s\S]*\.getRangeOverview/,
+  );
+  assert.match(dailyPageSource, /entryEventBus\.on\("entry:reload_needed", refreshCurrentDate\)/);
+  assert.doesNotMatch(translationsSource, /即将刷新/);
+  assert.doesNotMatch(translationsSource, /Refreshing\.\.\./);
 });
 
 test("entry editing reuses the add-entry modal including future options", async () => {

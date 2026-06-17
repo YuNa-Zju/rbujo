@@ -11,8 +11,10 @@ import {
   entryService,
   type PendingBjkImport,
 } from "../../services/entryService";
-
-const UNDO_STORAGE_KEY = "bujo_last_import_ids";
+import {
+  recordImportUndoIds,
+  showImportSuccessToast,
+} from "../../lib/importUndoToast";
 
 type ImportStatus = "idle" | "loading" | "success" | "error";
 
@@ -116,22 +118,26 @@ export default function BjkImportPromptController() {
       );
       const insertedIds = result.insertedIds || [];
       const changedCount = result.count + result.updated_count;
+      const undoIds = recordImportUndoIds(insertedIds);
 
-      if (insertedIds.length > 0) {
-        localStorage.setItem(UNDO_STORAGE_KEY, JSON.stringify(insertedIds));
-      } else {
-        localStorage.removeItem(UNDO_STORAGE_KEY);
-      }
       await entryService.clearPendingBjkImport(pending.token);
 
       setImportStatus("success");
-      setMessage(
-        (t.backup?.externalImportSuccess || "Imported {{count}} entries.")
-          .replace("{{count}}", String(changedCount)),
-      );
-      window.setTimeout(() => {
-        window.location.reload();
-      }, 1500);
+      const successMessage = (
+        t.backup?.externalImportSuccess || "Imported {{count}} entries."
+      ).replace("{{count}}", String(changedCount));
+      setMessage(successMessage);
+      showImportSuccessToast({
+        changedCount,
+        insertedIds: undoIds,
+        labels: {
+          importedCount:
+            t.backup?.externalImportSuccess || "Imported {{count}} entries.",
+          undo: t.backup?.undo || "Undo This Import",
+          undoSuccess: t.backup?.undoSuccess || "Undo success.",
+          undoFailed: t.backup?.error || "Undo failed.",
+        },
+      });
     } catch (error) {
       console.error("BJK import failed", error);
       setImportStatus("error");

@@ -154,9 +154,11 @@ export default function DailyPage() {
     };
     window.addEventListener("focus", refreshCurrentDate);
     document.addEventListener("visibilitychange", refreshWhenVisible);
+    entryEventBus.on("entry:reload_needed", refreshCurrentDate);
     return () => {
       window.removeEventListener("focus", refreshCurrentDate);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
+      entryEventBus.off("entry:reload_needed", refreshCurrentDate);
     };
   }, [viewDate, isValidDate, isCacheLoaded]);
 

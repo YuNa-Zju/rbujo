@@ -126,6 +126,16 @@ export function useJournalData(
   }, [currentDate, viewMode]);
 
   const handleSilentRefresh = useCallback(() => {
+    if (viewMode === "year") {
+      const start = format(startOfYear(currentDate), "yyyy-MM-dd");
+      const end = format(endOfYear(currentDate), "yyyy-MM-dd");
+      entryService
+        .getRangeOverview(start, end)
+        .then(setYearEntries)
+        .catch(console.error);
+      return;
+    }
+
     const dStr = format(selectedDate, "yyyy-MM-dd");
     entryService
       .getDailyEntries(dStr)
@@ -149,6 +159,14 @@ export function useJournalData(
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [handleSilentRefresh, isCacheLoaded, viewMode]);
+
+  useEffect(() => {
+    if (!isCacheLoaded) return;
+    entryEventBus.on("entry:reload_needed", handleSilentRefresh);
+    return () => {
+      entryEventBus.off("entry:reload_needed", handleSilentRefresh);
+    };
+  }, [handleSilentRefresh, isCacheLoaded]);
 
   // -------------------------------------------------------------------------
   // ✅ 5. EventBus Logic (保持之前的修复)

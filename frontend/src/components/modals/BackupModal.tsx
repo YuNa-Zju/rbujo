@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useCallback, useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -11,7 +11,6 @@ import {
   Loader2,
   RotateCcw,
   FileText,
-  Trash2,
   Archive,
   ChevronRight,
   ShieldCheck,
@@ -20,13 +19,16 @@ import {
 } from "lucide-react";
 
 import { dataBackupService } from "../../services/dataBackupService";
-import { cacheStorage } from "../../utils/cacheStorage";
 import { exportToMarkdown } from "../../utils/exportUtils";
 import { useTranslation } from "../../hooks/useTranslation";
 import { entryService } from "../../services/entryService";
 import { useAppTheme } from "../../hooks/useAppTheme"; // ✅ 1. 引入封装好的 Hook
-
-const UNDO_STORAGE_KEY = "bujo_last_import_ids";
+import {
+  readStoredImportUndoIds,
+  recordImportUndoIds,
+  showImportSuccessToast,
+  undoStoredImport,
+} from "../../lib/importUndoToast";
 
 interface BackupModalProps {
   open: boolean;
@@ -128,23 +130,18 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     onClose();
   };
 
+  const syncLastImportedIds = useCallback(() => {
+    setLastImportedIds(readStoredImportUndoIds());
+  }, []);
+
   // --- 初始化 ---
   useEffect(() => {
-    const savedIds = localStorage.getItem(UNDO_STORAGE_KEY);
-    if (savedIds) {
-      try {
-        const parsed = JSON.parse(savedIds);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setLastImportedIds(parsed);
-        }
-      } catch {
-        localStorage.removeItem(UNDO_STORAGE_KEY);
-      }
-    }
-  }, []);
+    syncLastImportedIds();
+  }, [syncLastImportedIds]);
 
   useEffect(() => {
     if (open) {
+      syncLastImportedIds();
       setIsOpen(true);
       setStatus("idle");
       setMessage("");
@@ -152,7 +149,7 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     } else if (!showConfirm) {
       setIsOpen(false);
     }
-  }, [open, showConfirm]);
+  }, [open, showConfirm, syncLastImportedIds]);
 
   // --- ESC 关闭 ---
   useEffect(() => {
@@ -172,21 +169,6 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
   }, [isOpen, showConfirm, loading]);
 
   // --- Helpers & Actions ---
-  const handleHardRefresh = async () => {
-    try {
-      await (cacheStorage as any).clearDaily?.({});
-      await (cacheStorage as any).saveOverview?.({});
-    } finally {
-      window.location.reload();
-    }
-  };
-
-  const handleDismissUndo = () => {
-    localStorage.removeItem(UNDO_STORAGE_KEY);
-    setLastImportedIds([]);
-    setStatus("idle");
-  };
-
   const handleExportData = async () => {
     setLoading(true);
     setStatus("idle");
@@ -260,26 +242,33 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
       const res = await dataBackupService.importData(file);
       const newIds = res.insertedIds || [];
       const changedCount = res.count + res.updated_count;
-      if (newIds.length > 0) {
-        localStorage.setItem(UNDO_STORAGE_KEY, JSON.stringify(newIds));
-        setLastImportedIds(newIds);
-      } else {
-        localStorage.removeItem(UNDO_STORAGE_KEY);
-        setLastImportedIds([]);
-      }
+      const undoIds = recordImportUndoIds(newIds);
+      setLastImportedIds(undoIds);
       setStatus("success");
-      setMessage(
-        (t.backup?.importSuccess || "Restored {{count}} items.").replace(
-          "{{count}}",
-          String(changedCount),
-        ),
-      );
-      setTimeout(() => handleHardRefresh(), 1500);
+      const successMessage = (
+        t.backup?.importSuccess || "Restored {{count}} items."
+      ).replace("{{count}}", String(changedCount));
+      setMessage(successMessage);
+      showImportSuccessToast({
+        changedCount,
+        insertedIds: undoIds,
+        labels: {
+          importedCount: t.backup?.importSuccess || "Restored {{count}} items.",
+          undo: t.backup?.undo || "Undo This Import",
+          undoSuccess: t.backup?.undoSuccess || "Undo success.",
+          undoFailed: t.backup?.error || "Undo failed.",
+        },
+        onUndoComplete: () => {
+          setLastImportedIds([]);
+          setStatus("success");
+          setMessage(t.backup?.undoSuccess || "Undo success.");
+        },
+      });
     } catch (e) {
       setStatus("error");
       setMessage(t.backup?.error || "Import failed.");
-      setLoading(false);
     } finally {
+      setLoading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
@@ -295,15 +284,20 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     setMessage(t.backup?.processing || "Reverting...");
 
     try {
-      await dataBackupService.undoImport(lastImportedIds);
-      localStorage.removeItem(UNDO_STORAGE_KEY);
-      setLastImportedIds([]);
+      await undoStoredImport(
+        lastImportedIds,
+        {
+          undoSuccess: t.backup?.undoSuccess || "Undo success.",
+          undoFailed: t.backup?.error || "Undo failed.",
+        },
+        () => setLastImportedIds([]),
+      );
       setStatus("success");
       setMessage(t.backup?.undoSuccess || "Revert successful.");
-      setTimeout(() => handleHardRefresh(), 1000);
     } catch (e) {
       setStatus("error");
       setMessage(t.backup?.error || "Revert failed.");
+    } finally {
       setLoading(false);
     }
   };
@@ -573,12 +567,6 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
                               </p>
                             </div>
                           </div>
-                          <button
-                            onClick={handleDismissUndo}
-                            className={`btn btn-sm btn-circle btn-ghost ${styles.card.textSecondary} hover:bg-base-100 hover:text-error`}
-                          >
-                            <Trash2 size={16} />
-                          </button>
                         </div>
 
                         <button

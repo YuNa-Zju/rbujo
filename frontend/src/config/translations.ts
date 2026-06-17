@@ -382,9 +382,9 @@ export const translations = {
       decrypting: "正在恢复数据...",
       exportSuccess: "成功导出 {{count}} 条记录。",
       exportMdSuccess: "Markdown 导出成功。",
-      importSuccess: "已恢复 {{count}} 条记录，即将刷新...",
+      importSuccess: "已恢复 {{count}} 条记录。",
       externalImportReading: "正在读取备份文件...",
-      externalImportSuccess: "已导入 {{count}} 条记录，即将刷新...",
+      externalImportSuccess: "已导入 {{count}} 条记录。",
       externalImportError: "导入失败，请检查备份文件。",
       error: "操作失败",
 
@@ -392,8 +392,8 @@ export const translations = {
       importedCount: "本次新增 {{count}} 条记录",
       dismiss: "忽略",
       undo: "撤回本次导入",
-      undoDesc: "撤回后页面将自动刷新",
-      undoSuccess: "撤回成功，正在刷新...",
+      undoDesc: "撤回后会自动更新当前页面",
+      undoSuccess: "撤回成功。",
 
       // Confirm Dialog
       deleteConfirmTitle: "确认撤回导入？",
@@ -821,9 +821,9 @@ export const translations = {
       decrypting: "Restoring data...",
       exportSuccess: "Exported {{count}} entries.",
       exportMdSuccess: "Markdown exported successfully.",
-      importSuccess: "Restored {{count}} items. Refreshing...",
+      importSuccess: "Restored {{count}} items.",
       externalImportReading: "Reading backup file...",
-      externalImportSuccess: "Imported {{count}} entries. Refreshing...",
+      externalImportSuccess: "Imported {{count}} entries.",
       externalImportError: "Import failed. Please check the backup file.",
       error: "Operation failed.",
 
@@ -831,8 +831,8 @@ export const translations = {
       importedCount: "{{count}} entries added",
       dismiss: "Dismiss",
       undo: "Undo This Import",
-      undoDesc: "Page will refresh after undo.",
-      undoSuccess: "Undo success. Refreshing...",
+      undoDesc: "The current page will update after undo.",
+      undoSuccess: "Undo success.",
 
       // Confirm Dialog
       deleteConfirmTitle: "Undo Import?",
