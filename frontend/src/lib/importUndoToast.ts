@@ -13,7 +13,7 @@ type ImportUndoLabels = {
 };
 
 type ImportSuccessToastOptions = {
-  changedCount: number;
+  importedCount: number;
   insertedIds: string[];
   labels: ImportUndoLabels;
   onUndoComplete?: () => void;
@@ -80,7 +80,7 @@ export const undoStoredImport = async (
 };
 
 export const showImportSuccessToast = ({
-  changedCount,
+  importedCount,
   insertedIds,
   labels,
   onUndoComplete,
@@ -100,5 +100,5 @@ export const showImportSuccessToast = ({
     };
   }
 
-  toast.success(formatCount(labels.importedCount, changedCount), options);
+  toast.success(formatCount(labels.importedCount, importedCount), options);
 };

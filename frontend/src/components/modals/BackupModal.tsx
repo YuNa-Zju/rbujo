@@ -123,6 +123,7 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
   const [lastImportedIds, setLastImportedIds] = useState<string[]>([]);
+  const [pendingUndoIds, setPendingUndoIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const closeModal = () => {
@@ -133,6 +134,11 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
   const syncLastImportedIds = useCallback(() => {
     setLastImportedIds(readStoredImportUndoIds());
   }, []);
+
+  const closeUndoConfirm = () => {
+    setPendingUndoIds([]);
+    setShowConfirm(false);
+  };
 
   // --- 初始化 ---
   useEffect(() => {
@@ -146,17 +152,22 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
       setStatus("idle");
       setMessage("");
       setShowConfirm(false);
-    } else if (!showConfirm) {
+      setPendingUndoIds([]);
+    }
+  }, [open, syncLastImportedIds]);
+
+  useEffect(() => {
+    if (!open && !showConfirm) {
       setIsOpen(false);
     }
-  }, [open, showConfirm, syncLastImportedIds]);
+  }, [open, showConfirm]);
 
   // --- ESC 关闭 ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (showConfirm && !loading) {
-          setShowConfirm(false);
+          closeUndoConfirm();
           return;
         }
         if (isOpen && !loading) {
@@ -241,16 +252,16 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     try {
       const res = await dataBackupService.importData(file);
       const newIds = res.insertedIds || [];
-      const changedCount = res.count + res.updated_count;
+      const importedCount = res.count;
       const undoIds = recordImportUndoIds(newIds);
       setLastImportedIds(undoIds);
       setStatus("success");
       const successMessage = (
         t.backup?.importSuccess || "Restored {{count}} items."
-      ).replace("{{count}}", String(changedCount));
+      ).replace("{{count}}", String(importedCount));
       setMessage(successMessage);
       showImportSuccessToast({
-        changedCount,
+        importedCount,
         insertedIds: undoIds,
         labels: {
           importedCount: t.backup?.importSuccess || "Restored {{count}} items.",
@@ -260,6 +271,7 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
         },
         onUndoComplete: () => {
           setLastImportedIds([]);
+          setPendingUndoIds([]);
           setStatus("success");
           setMessage(t.backup?.undoSuccess || "Undo success.");
         },
@@ -275,22 +287,32 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
 
   const handleUndoClick = () => {
     if (lastImportedIds.length === 0) return;
+    setPendingUndoIds(lastImportedIds);
     setShowConfirm(true);
   };
 
   const executeUndo = async () => {
+    const idsToUndo = pendingUndoIds.length > 0 ? pendingUndoIds : lastImportedIds;
+    if (idsToUndo.length === 0) {
+      closeUndoConfirm();
+      return;
+    }
+
     setLoading(true);
     setShowConfirm(false);
     setMessage(t.backup?.processing || "Reverting...");
 
     try {
       await undoStoredImport(
-        lastImportedIds,
+        idsToUndo,
         {
           undoSuccess: t.backup?.undoSuccess || "Undo success.",
           undoFailed: t.backup?.error || "Undo failed.",
         },
-        () => setLastImportedIds([]),
+        () => {
+          setLastImportedIds([]);
+          setPendingUndoIds([]);
+        },
       );
       setStatus("success");
       setMessage(t.backup?.undoSuccess || "Revert successful.");
@@ -299,6 +321,7 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
       setMessage(t.backup?.error || "Revert failed.");
     } finally {
       setLoading(false);
+      setPendingUndoIds([]);
     }
   };
 
@@ -590,13 +613,16 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
         {showConfirm && (
           <ConfirmDialog
             isOpen={showConfirm}
-            onClose={() => setShowConfirm(false)}
+            onClose={closeUndoConfirm}
             onConfirm={executeUndo}
             loading={loading}
             title={t.backup?.deleteConfirmTitle || "Undo Import?"}
             desc={(
               t.backup?.deleteConfirm || "This will delete {{count}} entries."
-            ).replace("{{count}}", String(lastImportedIds.length))}
+            ).replace(
+              "{{count}}",
+              String(pendingUndoIds.length || lastImportedIds.length),
+            )}
             confirmText={t.backup?.confirmUndo || "Yes, Delete"}
           />
         )}

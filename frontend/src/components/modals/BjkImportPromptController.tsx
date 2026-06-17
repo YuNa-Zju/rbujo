@@ -117,7 +117,7 @@ export default function BjkImportPromptController() {
         new Uint8Array(file.bytes),
       );
       const insertedIds = result.insertedIds || [];
-      const changedCount = result.count + result.updated_count;
+      const importedCount = result.count;
       const undoIds = recordImportUndoIds(insertedIds);
 
       await entryService.clearPendingBjkImport(pending.token);
@@ -125,10 +125,10 @@ export default function BjkImportPromptController() {
       setImportStatus("success");
       const successMessage = (
         t.backup?.externalImportSuccess || "Imported {{count}} entries."
-      ).replace("{{count}}", String(changedCount));
+      ).replace("{{count}}", String(importedCount));
       setMessage(successMessage);
       showImportSuccessToast({
-        changedCount,
+        importedCount,
         insertedIds: undoIds,
         labels: {
           importedCount:

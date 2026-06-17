@@ -84,7 +84,8 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
   assert.match(controllerSource, /statusRef/);
   assert.match(controllerSource, /statusRef\.current === "loading"/);
   assert.match(controllerSource, /dataBackupService\.importBjkArchive/);
-  assert.match(controllerSource, /result\.count \+ result\.updated_count/);
+  assert.match(controllerSource, /const importedCount = result\.count/);
+  assert.doesNotMatch(controllerSource, /result\.count \+ result\.updated_count/);
   assert.match(controllerSource, /recordImportUndoIds/);
   assert.match(controllerSource, /showImportSuccessToast/);
   assert.match(entryServiceSource, /takePendingBjkImport/);
@@ -149,10 +150,15 @@ test("backup modal header keeps title and close button aligned", async () => {
   assert.match(source, /truncate/);
   assert.match(source, /styles\.modal\.closeBtn.*shrink-0/);
   assert.match(source, /aria-label=\{t\.common\?\.close/);
-  assert.match(source, /res\.count \+ res\.updated_count/);
+  assert.match(source, /const importedCount = res\.count/);
+  assert.doesNotMatch(source, /res\.count \+ res\.updated_count/);
   assert.match(source, /readStoredImportUndoIds/);
   assert.match(source, /undoStoredImport/);
   assert.match(source, /setLastImportedIds\(\[\]\)/);
+  assert.match(source, /pendingUndoIds/);
+  assert.match(source, /setPendingUndoIds\(lastImportedIds\)/);
+  assert.match(source, /const idsToUndo = pendingUndoIds\.length > 0 \? pendingUndoIds : lastImportedIds/);
+  assert.doesNotMatch(source, /\[open, showConfirm, syncLastImportedIds\]/);
 });
 
 test("backup imports keep an undoable record and refresh views without full reload", async () => {
@@ -201,6 +207,8 @@ test("backup imports keep an undoable record and refresh views without full relo
   assert.match(importUndoSource, /const IMPORT_UNDO_STORAGE_KEY = "bujo_last_import_ids"/);
   assert.match(importUndoSource, /toast\.success/);
   assert.match(importUndoSource, /options\.action = \{/);
+  assert.match(importUndoSource, /importedCount: number/);
+  assert.match(importUndoSource, /formatCount\(labels\.importedCount, importedCount\)/);
   assert.match(importUndoSource, /dataBackupService\.undoImport/);
   assert.match(importUndoSource, /entryEventBus\.emit\("entry:delete"/);
   assert.match(importUndoSource, /entryEventBus\.emit\("entry:reload_needed"/);
