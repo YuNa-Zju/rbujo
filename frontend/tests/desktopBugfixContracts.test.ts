@@ -272,6 +272,10 @@ test("future log month dragging uses an explicit compact arrange mode", async ()
   assert.match(source, /getBoundingClientRect\(\)\.width/);
   assert.match(source, /FutureCompactEntryCard/);
   assert.match(source, /getSmartSummary/);
+  assert.match(source, /btn btn-sm btn-circle border shadow-sm/);
+  assert.match(source, /btn-primary text-primary-content border-primary/);
+  assert.doesNotMatch(source, /bg-stone-900 text-white/);
+  assert.doesNotMatch(source, /bg-white text-stone-950/);
   assert.match(source, /dragMode/);
   assert.match(source, /t\.futureLog\.arrangeMonths/);
   assert.match(source, /t\.futureLog\.finishArrange/);

@@ -708,14 +708,10 @@ const FutureLogModal = ({ onClose }: Props) => {
             {futureLogMode === "planning" && (
               <button
                 type="button"
-                className={`btn btn-sm h-10 rounded-full border px-4 shadow-sm gap-2 transition-all active:scale-95 ${
+                className={`btn btn-sm btn-circle border shadow-sm transition-all duration-300 ${
                   isMonthDragMode
-                    ? isDark
-                      ? "bg-white text-stone-950 border-white"
-                      : "bg-stone-900 text-white border-stone-900"
-                    : isDark
-                      ? "bg-white/10 hover:bg-white/20 border-white/10 text-stone-200"
-                      : "bg-white/80 hover:bg-white border-orange-100 text-stone-600"
+                    ? "btn-primary text-primary-content border-primary"
+                    : "bg-base-100 text-base-content/70 border-base-200 hover:bg-base-200"
                 }`}
                 onClick={() => setIsMonthDragMode((current) => !current)}
                 title={
@@ -734,11 +730,6 @@ const FutureLogModal = ({ onClose }: Props) => {
                 ) : (
                   <ArrowDownUp size={16} strokeWidth={2.5} />
                 )}
-                <span className="hidden sm:inline font-bold">
-                  {isMonthDragMode
-                    ? t.futureLog.finishArrange
-                    : t.futureLog.arrangeMonths}
-                </span>
               </button>
             )}
 
