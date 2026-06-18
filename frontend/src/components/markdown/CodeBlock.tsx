@@ -108,7 +108,8 @@ export default function CodeBlock({
           }
         `}
         style={{
-          fontFamily: "'JetBrains Mono', 'LXGW WenKai Screen', monospace",
+          fontFamily:
+            "'Maple Mono NF CN', 'SFMono-Regular', Menlo, Consolas, monospace",
         }}
         {...props}
       >
@@ -170,7 +171,7 @@ export default function CodeBlock({
             style: {
               fontSize: "14px",
               fontFamily:
-                "'JetBrains Mono', 'LXGW WenKai Screen', 'Fira Code', Consolas, monospace",
+                "'Maple Mono NF CN', 'SFMono-Regular', Menlo, Consolas, monospace",
               backgroundColor: "transparent",
             },
           }}

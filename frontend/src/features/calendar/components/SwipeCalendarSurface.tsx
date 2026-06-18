@@ -160,7 +160,7 @@ export default function SwipeCalendarSurface({
       onWheel={handleWheel}
       animate={{ height: viewMode === "week" ? WEEK_SURFACE_HEIGHT : MONTH_SURFACE_HEIGHT }}
       transition={{ type: "spring", stiffness: 420, damping: 38 }}
-      className="relative w-full overflow-hidden rounded-[2rem] border border-base-200/80 bg-base-100/80 shadow-[0_18px_55px_rgba(15,23,42,0.08)]"
+      className="calendar-swipe-surface relative w-full overflow-hidden rounded-[2rem] border border-base-200/80 bg-base-100/80 shadow-[0_18px_55px_rgba(15,23,42,0.08)]"
       style={{ perspective: 1100 }}
     >
       <div className="relative h-full">
@@ -187,8 +187,8 @@ export default function SwipeCalendarSurface({
                 CALENDAR_CARD_RADIUS_CLASS,
                 "absolute left-1/2 top-6 -translate-x-1/2 border bg-base-100 p-4 shadow-[0_18px_44px_rgba(15,23,42,0.10)]",
                 isCurrentPage
-                  ? "z-20 border-base-200/90"
-                  : "z-0 cursor-pointer border-base-200/60 bg-base-200/25",
+                  ? "calendar-page-card-current z-20 border-transparent ring-0"
+                  : "calendar-page-card-side z-0 cursor-pointer border-base-200/60 bg-base-200/25",
               )}
               style={{
                 width: CALENDAR_CARD_WIDTH_STYLE,

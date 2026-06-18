@@ -349,23 +349,83 @@ test("archive toast offers undo and permanent delete actions", async () => {
     import.meta.dirname,
     "../src/components/modals/cmdk/EntryActionView.tsx",
   );
+  const indexCssPath = path.resolve(import.meta.dirname, "../src/index.css");
   const archiveToastSource = await readFile(archiveToastPath, "utf8");
   const entryActionsSource = await readFile(entryActionsPath, "utf8");
   const cmdkEntryActionSource = await readFile(cmdkEntryActionPath, "utf8");
+  const indexCss = await readFile(indexCssPath, "utf8");
 
   assert.doesNotMatch(archiveToastSource, /toast\.custom/);
   assert.match(archiveToastSource, /toast\.success/);
   assert.match(archiveToastSource, /deletePermanently/);
-  assert.match(archiveToastSource, /options\.action = \{/);
-  assert.match(archiveToastSource, /options\.cancel = \{/);
+  assert.doesNotMatch(archiveToastSource, /options\.action = \{/);
+  assert.doesNotMatch(archiveToastSource, /options\.cancel = \{/);
+  assert.match(archiveToastSource, /createElement\(\s*"button"[\s\S]*labels\.deletePermanently/);
+  assert.match(archiveToastSource, /createElement\(\s*"button"[\s\S]*labels\.undo/);
+  assert.match(archiveToastSource, /archiveToastDeleteButtonClass/);
+  assert.match(archiveToastSource, /archiveToastUndoButtonClass/);
+  assert.match(archiveToastSource, /archiveToastContentClass/);
+  assert.doesNotMatch(archiveToastSource, /archiveToastShellStyle/);
+  assert.doesNotMatch(archiveToastSource, /width:\s*"min\(26rem, calc\(100vw - 2rem\)\)"/);
+  assert.doesNotMatch(archiveToastSource, /color-mix\(in srgb, var\(--b1\) 94%, #111827\)/);
   assert.doesNotMatch(archiveToastSource, /border-error\/30/);
   assert.doesNotMatch(archiveToastSource, /w-\[min\(calc\(100vw-2rem\),42rem\)\]/);
+  assert.doesNotMatch(archiveToastSource, /boxShadow:\s*"0 10px 24px rgba\(239, 68, 68, 0\.32\)"/);
+  assert.match(indexCss, /\.archive-undo-toast-delete[\s\S]*background-color: #ef4444 !important/);
+  assert.match(indexCss, /\.archive-undo-toast-delete[\s\S]*box-shadow: none !important/);
+  assert.match(indexCss, /\.archive-undo-toast-content[\s\S]*flex: 1 1 auto/);
+  assert.match(indexCss, /\.archive-undo-toast-button[\s\S]*height: 1\.75rem/);
+  assert.match(indexCss, /var\(--color-base-content\)/);
+  assert.doesNotMatch(indexCss, /var\(--bc\)/);
   assert.match(archiveToastSource, /entryService\.delete\(archivedEntry\.id,\s*true\)/);
   assert.match(archiveToastSource, /entryEventBus\.emit\("entry:delete", archivedEntry\.id\)/);
   assert.match(archiveToastSource, /entryEventBus\.emit\("entry:create", restored\)/);
   assert.match(archiveToastSource, /entryEventBus\.emit\("entry:reload_needed"\)/);
   assert.match(entryActionsSource, /deletePermanently:\s*t\.archivePage\?\.deletePermanently/);
   assert.match(cmdkEntryActionSource, /deletePermanently:\s*t\.archivePage\?\.deletePermanently/);
+});
+
+test("bundled fonts keep only compressed regular local fallbacks", async () => {
+  const indexCssPath = path.resolve(import.meta.dirname, "../src/index.css");
+  const indexHtmlPath = path.resolve(import.meta.dirname, "../index.html");
+  const indexCss = await readFile(indexCssPath, "utf8");
+  const indexHtml = await readFile(indexHtmlPath, "utf8");
+
+  assert.match(indexCss, /LXGWWENKAI-REGULAR\.woff2/);
+  assert.match(indexCss, /MapleMonoNFCN-Regular\.woff2/);
+  assert.match(indexHtml, /lxgw-wenkai-webfont@1\.7\.0\/lxgwwenkai-light\.css/);
+  assert.match(indexHtml, /lxgw-wenkai-webfont@1\.7\.0\/lxgwwenkai-bold\.css/);
+  assert.doesNotMatch(indexCss, /LXGWWENKAI-LIGHT\.TTF/);
+  assert.doesNotMatch(indexCss, /LXGWWENKAI-MEDIUM\.TTF/);
+  assert.doesNotMatch(indexCss, /LXGWWENKAI-REGULAR\.TTF/);
+});
+
+test("dark calendar current page card has a distinct border and shadow", async () => {
+  const calendarSurfacePath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/components/SwipeCalendarSurface.tsx",
+  );
+  const indexCssPath = path.resolve(import.meta.dirname, "../src/index.css");
+  const source = await readFile(calendarSurfacePath, "utf8");
+  const indexCss = await readFile(indexCssPath, "utf8");
+
+  assert.match(source, /calendar-swipe-surface/);
+  assert.match(source, /calendar-page-card-current/);
+  assert.match(source, /calendar-page-card-side/);
+  assert.match(source, /border-transparent/);
+  assert.match(source, /ring-0/);
+  assert.doesNotMatch(source, /border-base-200\/90 ring-1 ring-base-content\/5/);
+  assert.doesNotMatch(source, /dark:border-primary\/35/);
+  assert.doesNotMatch(source, /dark:ring-1/);
+  assert.doesNotMatch(source, /dark:ring-white\/10/);
+  assert.doesNotMatch(source, /dark:shadow-\[0_24px_70px_rgba\(0,0,0,0\.46\)/);
+  assert.doesNotMatch(source, /dark:bg-base-200\/10/);
+  assert.match(indexCss, /\.calendar-page-card-current[\s\S]*background-color: #242b33/);
+  assert.match(indexCss, /\.calendar-page-card-current[\s\S]*border-color: rgba\(129, 140, 248, 0\.34\)/);
+  assert.match(indexCss, /\.calendar-page-card-current[\s\S]*isolation: isolate/);
+  assert.match(indexCss, /\.calendar-page-card-side[\s\S]*background-color: #111820/);
+  assert.match(indexCss, /\.calendar-page-card-side[\s\S]*filter: brightness\(0\.56\) saturate\(0\.72\)/);
+  assert.doesNotMatch(indexCss, /\.calendar-page-card-current[\s\S]*color-mix\(in srgb, var\(--b1\)/);
 });
 
 test("business modals are mounted through the global modal host", async () => {

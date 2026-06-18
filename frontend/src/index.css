@@ -178,6 +178,71 @@ body {
   filter: saturate(1.12) brightness(1.12);
 }
 
+.archive-undo-toast-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.archive-undo-toast-button {
+  align-items: center;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  height: 1.75rem;
+  justify-content: center;
+  line-height: 1;
+  padding: 0 1rem;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.archive-undo-toast-cancel {
+  background-color: color-mix(in srgb, var(--color-base-content) 10%, transparent);
+  color: var(--color-base-content);
+}
+
+.archive-undo-toast-cancel:hover {
+  background-color: color-mix(in srgb, var(--color-base-content) 15%, transparent);
+}
+
+.archive-undo-toast-delete {
+  background-color: #ef4444 !important;
+  box-shadow: none !important;
+  color: #ffffff !important;
+}
+
+.archive-undo-toast-delete:hover {
+  background-color: #dc2626 !important;
+}
+
+[data-theme="dark"] .calendar-swipe-surface {
+  background-color: #151b22;
+  border-color: rgba(148, 163, 184, 0.08);
+}
+
+[data-theme="dark"] .calendar-page-card-current {
+  background-color: #242b33;
+  border-color: rgba(129, 140, 248, 0.34);
+  box-shadow:
+    0 24px 72px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(199, 210, 254, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  isolation: isolate;
+}
+
+[data-theme="dark"] .calendar-page-card-side {
+  background-color: #111820;
+  border-color: rgba(148, 163, 184, 0.06);
+  filter: brightness(0.56) saturate(0.72);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+}
+
 @media (min-width: 640px) {
   .tag-search-modal-surface {
     -webkit-mask-image: -webkit-radial-gradient(white, black);
@@ -289,23 +354,27 @@ dialog.image-preview-modal[open]::backdrop {
 
 @font-face {
   font-family: "LXGW WenKai";
-  src: url("/fonts/LXGWWENKAI-LIGHT.TTF") format("truetype");
-  font-weight: 300;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: "LXGW WenKai";
-  src: url("/fonts/LXGWWENKAI-REGULAR.TTF") format("truetype");
+  src: url("/fonts/LXGWWENKAI-REGULAR.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
+  font-display: swap;
 }
 
 @font-face {
-  font-family: "LXGW WenKai";
-  src: url("/fonts/LXGWWENKAI-MEDIUM.TTF") format("truetype");
-  font-weight: 500;
+  font-family: "Maple Mono NF CN";
+  src: url("/fonts/MapleMonoNFCN-Regular.woff2") format("woff2");
+  font-weight: 400;
   font-style: normal;
+  font-display: swap;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family:
+    "Maple Mono NF CN", "SFMono-Regular", "Menlo", "Monaco", "Consolas",
+    monospace;
 }
 
 @keyframes cmdk-backdrop-enter {

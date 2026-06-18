@@ -1,11 +1,8 @@
 // src/components/markdown/markdownStyles.ts
 
 export const CUSTOM_MARKDOWN_STYLES = `
-  @import url('https://npm.elemecdn.com/lxgw-wenkai-screen-webfont/style.css');
-  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
-
   .prose-custom-scale {
-    font-family: 'LXGW WenKai Screen', 'LXGW WenKai', sans-serif !important;
+    font-family: 'LXGW WenKai', sans-serif !important;
     width: 100%;
   }
   .prose-custom-scale .katex,
@@ -191,7 +188,7 @@ export const CUSTOM_MARKDOWN_STYLES = `
     border-radius: 0.4em !important;
     font-size: 0.85em !important;
     font-weight: 500 !important;
-    font-family: 'JetBrains Mono', monospace !important;
+    font-family: 'Maple Mono NF CN', 'SFMono-Regular', Menlo, Consolas, monospace !important;
     border: none !important;
     box-shadow: none !important;
     vertical-align: baseline;
