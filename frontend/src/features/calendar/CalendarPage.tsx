@@ -4,8 +4,6 @@ import { createPortal } from "react-dom";
 import { format } from "date-fns";
 import { zhCN, enUS } from "date-fns/locale";
 import {
-  ChevronLeft,
-  ChevronRight,
   Plus,
   MapPin,
   ArrowDownUp,
@@ -229,20 +227,6 @@ export default function CalendarPage() {
           </motion.div>
 
           <div className="flex-none flex items-center gap-0.5">
-            <div className="hidden md:flex items-center bg-base-200/50 rounded-full p-0.5 border border-base-content/5 mr-2">
-              <button
-                className="btn btn-ghost btn-circle btn-xs hover:bg-base-300"
-                onClick={() => handleNav("prev")}
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <button
-                className="btn btn-ghost btn-circle btn-xs hover:bg-base-300"
-                onClick={() => handleNav("next")}
-              >
-                <ChevronRight size={18} />
-              </button>
-            </div>
             <button
               className="btn btn-sm btn-ghost text-primary gap-1 px-2"
               onClick={() => handleJumpToDate(new Date())}
@@ -328,7 +312,7 @@ export default function CalendarPage() {
                         {format(selectedDate, "MMM d, EEEE", {
                           locale: dateLocale,
                         })}{" "}
-                        <ChevronRight size={18} className="opacity-30" />
+                        <span className="text-base-content/30">›</span>
                       </>
                     )}
                   </h2>

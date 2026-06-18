@@ -13,7 +13,6 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
 import { EscModalWrapper } from "../common/EscModalWrapper";
@@ -240,9 +239,7 @@ function AttachmentMaintenanceModal({
     });
   }, []);
 
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
+  return (
     <EscModalWrapper
       id="AttachmentMaintenanceModal"
       isOpen={open}
@@ -448,8 +445,7 @@ function AttachmentMaintenanceModal({
           </div>
         )}
       </AnimatePresence>
-    </EscModalWrapper>,
-    document.body,
+    </EscModalWrapper>
   );
 }
 

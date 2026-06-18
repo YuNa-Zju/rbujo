@@ -347,6 +347,10 @@ export const entryService = {
     return invoke<string[]>("list_tags");
   },
 
+  renameTag: async (oldName: string, newName: string) => {
+    return invoke<number>("rename_tag", { oldName, newName });
+  },
+
   getFutureLog: async () => {
     const data = await invoke<any>("get_future_log", {
       includeArchived: false,
@@ -482,6 +486,15 @@ export const entryService = {
     const dateStr = new Date().toISOString().split("T")[0];
     return invoke<string | null>("export_markdown_archive_to_file", {
       suggestedFilename: `bujo_obsidian_${dateStr}.zip`,
+    });
+  },
+
+  downloadBjkBackup: async (bytes: number[] | Uint8Array) => {
+    const dateStr = new Date().toISOString().split("T")[0];
+    const payload = bytes instanceof Uint8Array ? Array.from(bytes) : bytes;
+    return invoke<string | null>("export_bjk_archive_to_file", {
+      bytes: payload,
+      suggestedFilename: `bujo_backup_${dateStr}.bjk`,
     });
   },
 

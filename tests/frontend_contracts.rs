@@ -406,17 +406,22 @@ fn tag_pills_use_data_theme_dark_styles() {
 #[test]
 fn add_entry_tag_suggestions_support_keyboard_selection() {
     let source = read_file("frontend/src/components/modals/AddEntryModal.tsx");
+    let tag_input_source = read_file("frontend/src/components/shared/TagInput.tsx");
 
     assert!(
         source.contains("highlightedTagSuggestionIndex"),
         "AddEntryModal should track the highlighted tag suggestion"
     );
     assert!(
-        source.contains("ArrowDown") && source.contains("ArrowUp"),
+        source.contains("<TagInput"),
+        "AddEntryModal should render the shared tag input"
+    );
+    assert!(
+        tag_input_source.contains("ArrowDown") && tag_input_source.contains("ArrowUp"),
         "AddEntryModal tag input should support arrow-key suggestion navigation"
     );
     assert!(
-        source.contains("aria-selected"),
+        tag_input_source.contains("aria-selected"),
         "AddEntryModal should expose the highlighted suggestion to assistive technologies"
     );
 }

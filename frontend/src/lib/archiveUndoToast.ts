@@ -1,4 +1,3 @@
-import { createElement } from "react";
 import { toast } from "sonner";
 import { entryService } from "../services/entryService";
 import { entryEventBus } from "./entryEventBus";
@@ -67,53 +66,19 @@ async function deleteArchivedEntryPermanently(
 export function showArchiveUndoToast(archivedEntry: any, labels: ArchiveUndoLabels) {
   const toastId = `archive-${archivedEntry.id}`;
 
-  toast.custom(
-    () =>
-      createElement(
-        "div",
-        {
-          className:
-            "flex w-[min(calc(100vw-2rem),42rem)] items-center gap-4 rounded-full border border-base-content/10 bg-base-100/95 px-5 py-3 text-base-content shadow-2xl backdrop-blur-xl",
-          role: "status",
-        },
-        createElement(
-          "span",
-          {
-            className: "min-w-0 flex-1 truncate text-sm font-medium tracking-tight",
-          },
-          labels.archived,
-        ),
-        createElement(
-          "div",
-          {
-            className: "ml-auto flex shrink-0 items-center gap-2",
-          },
-          createElement(
-            "button",
-            {
-              type: "button",
-              className:
-                "rounded-full border border-error/30 bg-error/15 px-4 py-1.5 text-xs font-semibold text-error transition-colors hover:bg-error hover:text-error-content",
-              onClick: () =>
-                deleteArchivedEntryPermanently(archivedEntry, toastId, labels),
-            },
-            labels.deletePermanently,
-          ),
-          createElement(
-            "button",
-            {
-              type: "button",
-              className:
-                "rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-primary-content shadow-sm shadow-primary/20 transition-colors hover:bg-primary/90",
-              onClick: () => restoreArchivedEntry(archivedEntry, toastId, labels),
-            },
-            labels.undo,
-          ),
-        ),
-      ),
-    {
-      id: toastId,
-      duration: 7000,
-    },
-  );
+  const options: any = {
+    id: toastId,
+    duration: 7000,
+  };
+  options.action = {
+    label: labels.undo,
+    onClick: () => restoreArchivedEntry(archivedEntry, toastId, labels),
+  };
+  options.cancel = {
+    label: labels.deletePermanently,
+    onClick: () =>
+      deleteArchivedEntryPermanently(archivedEntry, toastId, labels),
+  };
+
+  toast.success(labels.archived, options);
 }

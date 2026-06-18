@@ -257,6 +257,8 @@ struct BjkBackupObject {
 #[derive(Debug, Deserialize)]
 struct BjkManifestPayload {
     path: Option<String>,
+    sha256: Option<String>,
+    uncompressed_bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1570,6 +1572,98 @@ impl LocalBackend {
             .collect()
     }
 
+    pub async fn rename_tag(&self, old_name: String, new_name: String) -> AppResult<usize> {
+        let old_name = normalize_tag(&old_name)
+            .ok_or_else(|| AppError::BadRequest("Invalid old tag".to_string()))?;
+        let new_name = normalize_tag(&new_name)
+            .ok_or_else(|| AppError::BadRequest("Invalid new tag".to_string()))?;
+        let same_tag_key = old_name.eq_ignore_ascii_case(&new_name);
+
+        let affected_entries = sqlx::query_as::<_, Entry>(&format!(
+            r#"
+            {ENTRY_SELECT}
+            JOIN entry_tags ON entry_tags.entry_id = entries.id
+              AND entry_tags.owner_id = entries.owner_id
+            JOIN tags ON tags.id = entry_tags.tag_id
+              AND tags.owner_id = entries.owner_id
+            WHERE entries.owner_id = ? AND lower(tags.name) = lower(?)
+            ORDER BY entries.created_at ASC
+            "#
+        ))
+        .bind(self.owner_id)
+        .bind(&old_name)
+        .fetch_all(&self.pool)
+        .await?;
+
+        if affected_entries.is_empty() {
+            return Ok(0);
+        }
+
+        let mut sync_dates = Vec::new();
+        let mut affects_future = false;
+        if same_tag_key {
+            sqlx::query("UPDATE tags SET name = ? WHERE owner_id = ? AND lower(name) = lower(?)")
+                .bind(&new_name)
+                .bind(self.owner_id)
+                .bind(&old_name)
+                .execute(&self.pool)
+                .await?;
+            for entry in &affected_entries {
+                self.index_entry(entry).await?;
+                sync_dates.push(entry.target_date.clone());
+                affects_future |= entry_affects_future_markdown(entry);
+            }
+            self.sync_daily_markdown_for_date_values(sync_dates).await;
+            if affects_future {
+                let _ = self.write_future_markdown_files().await;
+            }
+            return Ok(affected_entries.len());
+        }
+
+        for entry in &affected_entries {
+            let next_tags = self
+                .get_entry_tags(&entry.id)
+                .await?
+                .into_iter()
+                .map(|tag| {
+                    if tag.eq_ignore_ascii_case(&old_name) {
+                        new_name.clone()
+                    } else {
+                        tag
+                    }
+                })
+                .collect::<Vec<_>>();
+            self.set_entry_tags(&entry.id, next_tags).await?;
+            self.index_entry(entry).await?;
+            sync_dates.push(entry.target_date.clone());
+            affects_future |= entry_affects_future_markdown(entry);
+        }
+
+        sqlx::query(
+            r#"
+            DELETE FROM tags
+            WHERE owner_id = ?
+              AND lower(name) = lower(?)
+              AND NOT EXISTS (
+                SELECT 1 FROM entry_tags
+                WHERE entry_tags.owner_id = tags.owner_id
+                  AND entry_tags.tag_id = tags.id
+              )
+            "#,
+        )
+        .bind(self.owner_id)
+        .bind(&old_name)
+        .execute(&self.pool)
+        .await?;
+
+        self.sync_daily_markdown_for_date_values(sync_dates).await;
+        if affects_future {
+            let _ = self.write_future_markdown_files().await;
+        }
+
+        Ok(affected_entries.len())
+    }
+
     pub async fn rebuild_search_index(&self) -> AppResult<usize> {
         let entries = sqlx::query_as::<_, Entry>(&format!(
             "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
@@ -1616,11 +1710,6 @@ impl LocalBackend {
             let tags = item.tags.clone();
             let mut imported = normalize_import_entry(item, self.owner_id)?;
             let imported_affects_future = entry_affects_future_markdown(&imported);
-            affects_future |= imported_affects_future;
-            if imported_affects_future && !imported_future_markdown {
-                self.import_future_markdown_files_if_changed().await?;
-                imported_future_markdown = true;
-            }
             let existing_owner: Option<i64> =
                 sqlx::query_scalar("SELECT owner_id FROM entries WHERE id = ?")
                     .bind(&imported.id)
@@ -1630,12 +1719,28 @@ impl LocalBackend {
             if let Some(owner_id) = existing_owner {
                 if owner_id == self.owner_id {
                     let previous = self.fetch_entry(&imported.id).await.ok();
+                    if let Some(previous_entry) = previous.as_ref() {
+                        let previous_tags = self.get_entry_tags(&imported.id).await?;
+                        let previous_fingerprint = entry_export_manifest_fingerprint(
+                            &export_schema_from_entry(previous_entry.clone(), previous_tags),
+                        );
+                        let imported_fingerprint = entry_export_manifest_fingerprint(
+                            &export_schema_from_entry(imported.clone(), tags.clone()),
+                        );
+                        if previous_fingerprint == imported_fingerprint {
+                            skipped_count += 1;
+                            continue;
+                        }
+                    }
                     let previous_affects_future =
                         previous.as_ref().is_some_and(entry_affects_future_markdown);
-                    if previous_affects_future && !imported_future_markdown {
+                    if (previous_affects_future || imported_affects_future)
+                        && !imported_future_markdown
+                    {
                         self.import_future_markdown_files_if_changed().await?;
                         imported_future_markdown = true;
                     }
+                    affects_future |= imported_affects_future;
                     affects_future |= previous.as_ref().is_some_and(entry_affects_future_markdown);
                     self.save_entry(&imported).await?;
                     self.set_entry_tags(&imported.id, tags).await?;
@@ -1644,6 +1749,11 @@ impl LocalBackend {
                     sync_dates.push(imported.target_date.clone());
                     updated_count += 1;
                 } else {
+                    if imported_affects_future && !imported_future_markdown {
+                        self.import_future_markdown_files_if_changed().await?;
+                        imported_future_markdown = true;
+                    }
+                    affects_future |= imported_affects_future;
                     imported.id = Uuid::new_v4().to_string();
                     self.insert_entry(&imported).await?;
                     self.set_entry_tags(&imported.id, tags).await?;
@@ -1664,6 +1774,11 @@ impl LocalBackend {
                     skipped_count += 1;
                     continue;
                 }
+                if imported_affects_future && !imported_future_markdown {
+                    self.import_future_markdown_files_if_changed().await?;
+                    imported_future_markdown = true;
+                }
+                affects_future |= imported_affects_future;
                 let id = imported.id.clone();
                 self.insert_entry(&imported).await?;
                 self.set_entry_tags(&imported.id, tags).await?;
@@ -3962,6 +4077,39 @@ fn export_schema_from_entry(entry: Entry, tags: Vec<String>) -> EntryExportSchem
     }
 }
 
+fn entry_export_manifest_fingerprint(entry: &EntryExportSchema) -> String {
+    let tags = manifest_index_tags(&entry.tags);
+    sha256_hex(
+        serde_json::json!({
+            "id": entry.id,
+            "content": entry.content,
+            "entry_type": entry.entry_type,
+            "status": entry.status,
+            "created_at": entry.created_at,
+            "target_date": entry.target_date,
+            "target_month": entry.target_month,
+            "is_future": entry.is_future,
+            "source_entry_id": entry.source_entry_id,
+            "position": entry.position,
+            "from_date": entry.from_date,
+            "migrated_to_date": entry.migrated_to_date,
+            "migrated_to_month": entry.migrated_to_month,
+            "archived_at": entry.archived_at,
+            "chain_root_id": entry.chain_root_id,
+            "migrated_to_entry_id": entry.migrated_to_entry_id,
+            "tags": tags,
+        })
+        .to_string()
+        .as_bytes(),
+    )
+}
+
+fn manifest_index_tags(tags: &[String]) -> Vec<String> {
+    let mut tags = normalize_tags(tags.to_vec());
+    tags.sort_by(|left, right| left.to_lowercase().cmp(&right.to_lowercase()));
+    tags
+}
+
 fn validate_entry_type(value: &str) -> AppResult<String> {
     let value = value.trim().to_ascii_lowercase();
     if matches!(value.as_str(), TYPE_TASK | TYPE_IDEA | TYPE_EVENT) {
@@ -4922,6 +5070,62 @@ fn parse_bjk_archive(bytes: &[u8]) -> AppResult<BjkBackupObject> {
     }
 }
 
+fn validate_bjk_manifest(manifest: &BjkManifest) -> AppResult<()> {
+    if manifest.format != BJK_FORMAT {
+        return Err(AppError::BadRequest(
+            "Invalid BJK package format".to_string(),
+        ));
+    }
+    if manifest.container_version != BJK_CONTAINER_VERSION {
+        return Err(AppError::BadRequest(format!(
+            "Unsupported BJK container version: {}",
+            manifest.container_version
+        )));
+    }
+    if let Some(payload) = manifest.payload.as_ref() {
+        if payload
+            .sha256
+            .as_deref()
+            .is_some_and(|value| !is_sha256_hex(value))
+        {
+            return Err(AppError::BadRequest("Invalid BJK payload hash".to_string()));
+        }
+        if payload
+            .uncompressed_bytes
+            .is_some_and(|bytes| bytes > MAX_BJK_PAYLOAD_BYTES)
+        {
+            return Err(AppError::BadRequest(
+                "BJK backup payload is too large".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn bjk_manifest_payload_path(manifest: &BjkManifest) -> String {
+    manifest
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.path.clone())
+        .unwrap_or_else(|| BJK_PAYLOAD_PATH.to_string())
+}
+
+fn validate_bjk_payload_bytes(manifest: &BjkManifest, payload_bytes: &[u8]) -> AppResult<()> {
+    let Some(expected_hash) = manifest
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.sha256.as_deref())
+    else {
+        return Ok(());
+    };
+    let actual_hash = sha256_hex(payload_bytes);
+    if actual_hash.eq_ignore_ascii_case(expected_hash) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest("Invalid BJK payload hash".to_string()))
+    }
+}
+
 fn parse_bjk_zip(bytes: &[u8]) -> AppResult<BjkBackupObject> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
         .map_err(|_| AppError::BadRequest("Invalid BJK zip container".to_string()))?;
@@ -4938,22 +5142,9 @@ fn parse_bjk_zip(bytes: &[u8]) -> AppResult<BjkBackupObject> {
 
     let manifest: BjkManifest = serde_json::from_str(&manifest_text)
         .map_err(|_| AppError::BadRequest("Invalid BJK manifest".to_string()))?;
-    if manifest.format != BJK_FORMAT {
-        return Err(AppError::BadRequest(
-            "Invalid BJK package format".to_string(),
-        ));
-    }
-    if manifest.container_version != BJK_CONTAINER_VERSION {
-        return Err(AppError::BadRequest(format!(
-            "Unsupported BJK container version: {}",
-            manifest.container_version
-        )));
-    }
+    validate_bjk_manifest(&manifest)?;
 
-    let payload_path = manifest
-        .payload
-        .and_then(|payload| payload.path)
-        .unwrap_or_else(|| BJK_PAYLOAD_PATH.to_string());
+    let payload_path = bjk_manifest_payload_path(&manifest);
     let mut payload = archive.by_name(&payload_path).map_err(|_| {
         AppError::BadRequest(format!("Invalid BJK package: missing {payload_path}"))
     })?;
@@ -4967,6 +5158,7 @@ fn parse_bjk_zip(bytes: &[u8]) -> AppResult<BjkBackupObject> {
     payload
         .read_to_end(&mut payload_bytes)
         .map_err(|error| AppError::Internal(error.to_string()))?;
+    validate_bjk_payload_bytes(&manifest, &payload_bytes)?;
     parse_gzipped_backup_object(&payload_bytes)
 }
 

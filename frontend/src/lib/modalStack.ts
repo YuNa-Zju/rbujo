@@ -20,8 +20,11 @@ class ModalStackManager {
    * @param onClose 关闭回调函数
    */
   push = (id: string, onClose: CloseHandler) => {
-    // 避免重复入栈
-    if (this.stack.includes(id)) return;
+    // 避免重复入栈，但保持关闭回调同步到最新状态
+    if (this.stack.includes(id)) {
+      this.handlers.set(id, onClose);
+      return;
+    }
     this.stack.push(id);
     this.handlers.set(id, onClose);
     // console.log("Modal Stack Push:", this.stack);
@@ -37,18 +40,23 @@ class ModalStackManager {
     // console.log("Modal Stack Remove:", this.stack);
   };
 
+  peek = () => this.stack[this.stack.length - 1] ?? null;
+
+  closeTop = () => {
+    const topId = this.peek();
+    if (!topId) return false;
+    const handler = this.handlers.get(topId);
+    if (!handler) return false;
+    handler();
+    return true;
+  };
+
   private handleKeyDown = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
 
     // 如果栈里有弹窗
     if (this.stack.length > 0) {
-      // 1. 获取栈顶（最后打开的）ID
-      const topId = this.stack[this.stack.length - 1];
-
-      // 2. 获取对应的关闭函数
-      const handler = this.handlers.get(topId);
-
-      if (handler) {
+      if (this.peek()) {
         // 3. ✅ 关键：阻止事件冒泡和默认行为
         // 这样底层的弹窗或者是其他监听了 ESC 的组件就不会收到事件了
         e.stopImmediatePropagation();
@@ -56,7 +64,7 @@ class ModalStackManager {
         e.preventDefault();
 
         // 4. 执行关闭
-        handler();
+        this.closeTop();
       }
     }
   };

@@ -309,6 +309,8 @@ export const translations = {
       scanning: "正在扫描您的日记...",
       noEntries: "未找到相关条目",
       tryDifferent: "尝试搜索其他标签或关键词。",
+      rename: "双击重命名标签",
+      renameFailed: "重命名失败",
     },
     command: {
       placeholder: "搜索...",
@@ -750,6 +752,8 @@ export const translations = {
       scanning: "Scanning your journal...",
       noEntries: "No entries found",
       tryDifferent: "Try a different tag or keyword.",
+      rename: "Double click to rename",
+      renameFailed: "Rename failed",
     },
     command: {
       placeholder: "Type a command or search...",

@@ -1,5 +1,4 @@
 import { useCallback, useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Download,
@@ -29,6 +28,7 @@ import {
   showImportSuccessToast,
   undoStoredImport,
 } from "../../lib/importUndoToast";
+import { EscModalWrapper } from "../common/EscModalWrapper";
 
 interface BackupModalProps {
   open: boolean;
@@ -185,12 +185,16 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     setStatus("idle");
     setMessage(t.backup?.encrypting || "Preparing data...");
     try {
-      const res = await dataBackupService.exportData();
+      const exported = await dataBackupService.exportData();
+      if (!exported.success) {
+        setMessage("");
+        return;
+      }
       setStatus("success");
       setMessage(
         (t.backup?.exportSuccess || "Exported {{count}} items.").replace(
           "{{count}}",
-          String(res.count),
+          String(exported.count),
         ),
       );
     } catch (e) {
@@ -371,8 +375,8 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
     </motion.button>
   );
 
-  return createPortal(
-    <>
+  return (
+    <EscModalWrapper id="BackupModal" isOpen={isOpen} onClose={closeModal}>
       <AnimatePresence>
         {isOpen && (
           <div className="fixed inset-0 z-[6000] flex items-center justify-center isolation-isolate p-4 sm:p-0">
@@ -609,25 +613,32 @@ export default function BackupModal({ open, onClose }: BackupModalProps) {
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {showConfirm && (
-          <ConfirmDialog
-            isOpen={showConfirm}
-            onClose={closeUndoConfirm}
-            onConfirm={executeUndo}
-            loading={loading}
-            title={t.backup?.deleteConfirmTitle || "Undo Import?"}
-            desc={(
-              t.backup?.deleteConfirm || "This will delete {{count}} entries."
-            ).replace(
-              "{{count}}",
-              String(pendingUndoIds.length || lastImportedIds.length),
-            )}
-            confirmText={t.backup?.confirmUndo || "Yes, Delete"}
-          />
-        )}
-      </AnimatePresence>
-    </>,
-    document.body,
+      <EscModalWrapper
+        id="BackupUndoConfirm"
+        isOpen={showConfirm}
+        onClose={() => {
+          if (!loading) closeUndoConfirm();
+        }}
+      >
+        <AnimatePresence>
+          {showConfirm && (
+            <ConfirmDialog
+              isOpen={showConfirm}
+              onClose={closeUndoConfirm}
+              onConfirm={executeUndo}
+              loading={loading}
+              title={t.backup?.deleteConfirmTitle || "Undo Import?"}
+              desc={(
+                t.backup?.deleteConfirm || "This will delete {{count}} entries."
+              ).replace(
+                "{{count}}",
+                String(pendingUndoIds.length || lastImportedIds.length),
+              )}
+              confirmText={t.backup?.confirmUndo || "Yes, Delete"}
+            />
+          )}
+        </AnimatePresence>
+      </EscModalWrapper>
+    </EscModalWrapper>
   );
 }

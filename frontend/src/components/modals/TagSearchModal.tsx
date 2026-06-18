@@ -8,6 +8,8 @@ import { useTagCache } from "../../context/TagCacheContext";
 import { ReadOnlyContext } from "../../context/ReadOnlyContext";
 import { useAppTheme } from "../../hooks/useAppTheme"; // ✅ 1. 引入 AppTheme
 import { EscModalWrapper } from "../common/EscModalWrapper"; // ✅ 2. 引入 EscWrapper
+import { entryService } from "../../services/entryService";
+import { entryEventBus } from "../../lib/entryEventBus";
 
 interface TagSearchModalProps {
   tag: string | null;
@@ -64,17 +66,27 @@ const TagSearchModal = ({ tag: activeTag, onClose }: TagSearchModalProps) => {
   // ✅ 3. 获取主题样式
   const { styles, isDark, colors } = useAppTheme();
 
-  const { cache, prefetch, getCachedResults } = useTagCache();
+  const { cache, prefetch, getCachedResults, refreshTags, clearCache } =
+    useTagCache();
 
   // isActive 控制 AnimatePresence 的挂载/卸载
   const [isActive, setIsActive] = useState(false);
+  const [currentTag, setCurrentTag] = useState(activeTag || "");
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState(activeTag || "");
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [renameError, setRenameError] = useState("");
   const pendingJumpRef = useRef<{ date: string | null } | null>(null);
 
-  const results = activeTag ? cache[activeTag] || [] : [];
-  const loading = activeTag ? !cache[activeTag] : false;
+  const results = currentTag ? cache[currentTag] || [] : [];
+  const loading = currentTag ? !cache[currentTag] : false;
 
   useEffect(() => {
     if (activeTag) {
+      setCurrentTag(activeTag);
+      setRenameDraft(activeTag);
+      setRenaming(false);
+      setRenameError("");
       setIsActive(true);
       if (!getCachedResults(activeTag)) {
         prefetch(activeTag);
@@ -100,6 +112,58 @@ const TagSearchModal = ({ tag: activeTag, onClose }: TagSearchModalProps) => {
     handleClose();
   };
 
+  const normalizeRenameTag = (value: string) =>
+    value
+      .trim()
+      .replace(/^#+/, "")
+      .replace(/^[,，;；:：\s]+|[,，;；:：\s]+$/g, "");
+
+  const startRenaming = () => {
+    setRenameDraft(currentTag);
+    setRenameError("");
+    setRenaming(true);
+  };
+
+  const cancelRenaming = () => {
+    setRenameDraft(currentTag);
+    setRenameError("");
+    setRenaming(false);
+  };
+
+  const saveRename = async () => {
+    const nextTag = normalizeRenameTag(renameDraft);
+    if (!nextTag || nextTag === currentTag) {
+      cancelRenaming();
+      return;
+    }
+
+    setRenameSaving(true);
+    setRenameError("");
+    try {
+      await entryService.renameTag(currentTag, nextTag);
+      setCurrentTag(nextTag);
+      setRenameDraft(nextTag);
+      setRenaming(false);
+      clearCache();
+      await refreshTags();
+      await prefetch(nextTag);
+      entryEventBus.emit("entry:reload_needed");
+    } catch (error) {
+      console.error("Rename tag failed", error);
+      setRenameError(t.tag?.renameFailed || "Rename failed");
+    } finally {
+      setRenameSaving(false);
+    }
+  };
+
+  const handleStackClose = () => {
+    if (renaming) {
+      cancelRenaming();
+      return;
+    }
+    handleClose();
+  };
+
   // ✅ 4. 移除手动的 keydown 和 entryEventBus 监听
   // 因为 EscModalWrapper 会自动处理 ESC 和 CLOSE_MODALS 事件
 
@@ -110,7 +174,7 @@ const TagSearchModal = ({ tag: activeTag, onClose }: TagSearchModalProps) => {
     <EscModalWrapper
       id="TagSearchModal"
       isOpen={!!activeTag}
-      onClose={handleClose}
+      onClose={handleStackClose}
     >
       <div className="fixed inset-0 z-[5050] flex flex-col justify-end sm:justify-center items-center isolation-isolate pointer-events-none">
         <AnimatePresence>
@@ -163,11 +227,36 @@ const TagSearchModal = ({ tag: activeTag, onClose }: TagSearchModalProps) => {
                           >
                             <Hash size={20} strokeWidth={2.5} />
                           </motion.div>
-                          <h3
-                            className={`font-serif font-bold text-2xl tracking-tight flex items-center gap-2 ${styles.modal.title}`}
-                          >
-                            {activeTag}
-                          </h3>
+                          {renaming ? (
+                            <input
+                              value={renameDraft}
+                              onChange={(event) =>
+                                setRenameDraft(event.target.value)
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void saveRename();
+                                }
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelRenaming();
+                                }
+                              }}
+                              onBlur={cancelRenaming}
+                              disabled={renameSaving}
+                              autoFocus
+                              className={`min-w-0 rounded-xl border border-primary/20 bg-base-100/70 px-3 py-1.5 font-serif text-2xl font-bold outline-none focus:border-primary ${styles.modal.title}`}
+                            />
+                          ) : (
+                            <h3
+                              className={`font-serif font-bold text-2xl tracking-tight flex items-center gap-2 cursor-text rounded-xl px-1 -mx-1 ${styles.modal.title}`}
+                              onDoubleClick={startRenaming}
+                              title={t.tag?.rename || "Double click to rename"}
+                            >
+                              {currentTag}
+                            </h3>
+                          )}
                         </div>
                         <p
                           className={`text-xs font-medium pl-14 ${styles.modal.subtitle}`}
@@ -176,6 +265,11 @@ const TagSearchModal = ({ tag: activeTag, onClose }: TagSearchModalProps) => {
                             ? t.tag?.searching
                             : `${results.length} ${t.tag?.results}`}
                         </p>
+                        {renameError && (
+                          <p className="pl-14 text-xs font-semibold text-error">
+                            {renameError}
+                          </p>
+                        )}
                       </div>
                       <button
                         onClick={handleClose}

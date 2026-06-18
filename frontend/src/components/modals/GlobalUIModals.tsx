@@ -13,7 +13,7 @@ import TimelineModal, { type TimelineModalRef } from "./TimelineModal";
 // 3. 设置/系统类弹窗
 import BackupModal from "./BackupModal";
 
-export default function GlobalUIModals() {
+export function LegacyGlobalUIModals() {
   const {
     search,
     closeSearch,

@@ -1,9 +1,12 @@
 import { type RefObject } from "react";
 import { CalendarClock, X, Sparkles, CalendarDays } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
+import { EscModalWrapper } from "../common/EscModalWrapper";
 
 interface Props {
   dialogRef: RefObject<HTMLDialogElement | null>;
+  isOpen: boolean;
+  onClose: () => void;
   futureMonth: string;
   setFutureMonth: (month: string) => void;
   onConfirm: (isSomeday: boolean) => void;
@@ -12,6 +15,8 @@ interface Props {
 
 export default function FutureModal({
   dialogRef,
+  isOpen,
+  onClose,
   futureMonth,
   setFutureMonth,
   onConfirm,
@@ -22,10 +27,18 @@ export default function FutureModal({
   const isSomeday = !futureMonth;
 
   return (
+    <EscModalWrapper
+      id="FutureModal"
+      isOpen={isOpen}
+      onClose={onClose}
+      mountWhenClosed
+      portal={false}
+    >
     <dialog
       ref={dialogRef}
       className="modal modal-bottom sm:modal-middle"
       onClick={(e) => e.stopPropagation()}
+      onClose={onClose}
     >
       <div className="modal-box p-6 rounded-t-3xl sm:rounded-3xl shadow-2xl bg-base-100">
         {/* Header */}
@@ -173,5 +186,6 @@ export default function FutureModal({
         <button>close</button>
       </form>
     </dialog>
+    </EscModalWrapper>
   );
 }

@@ -1,19 +1,17 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import CalendarPage from "./features/calendar/CalendarPage";
-import DailyPage from "./features/daily/DailyPage";
-import ArchivePage from "./features/archive/ArchivePage";
+import { lazy, Suspense } from "react";
 import { EntryModalProvider } from "./context/EntryModalContext";
-import GlobalEntryModals from "./components/modals/GlobalEntryModals";
-import GlobalUIModals from "./components/modals/GlobalUIModals";
-import GlobalCommandPalette from "./components/modals/cmdk/GlobalCommandPalette";
 import { ModalControllerProvider } from "./context/ModalControllerContext";
 import { Toaster } from "sonner";
-import UpdateCheckController from "./components/modals/UpdateCheckController";
-import VersionInfoController from "./components/modals/VersionInfoController";
-import AttachmentMaintenanceController from "./components/modals/AttachmentMaintenanceController";
-import BjkImportPromptController from "./components/modals/BjkImportPromptController";
 import NativeMenuBridge from "./components/NativeMenuBridge";
-import SettingsModalController from "./components/modals/SettingsModalController";
+
+const GlobalModalHost = lazy(() => import("./components/modals/GlobalModalHost"));
+const GlobalCommandPalette = lazy(
+  () => import("./components/modals/cmdk/GlobalCommandPalette"),
+);
+const CalendarPage = lazy(() => import("./features/calendar/CalendarPage"));
+const DailyPage = lazy(() => import("./features/daily/DailyPage"));
+const ArchivePage = lazy(() => import("./features/archive/ArchivePage"));
 
 export default function App() {
   return (
@@ -21,22 +19,22 @@ export default function App() {
       <BrowserRouter>
         <ModalControllerProvider>
           <NativeMenuBridge />
-          <GlobalCommandPalette />
+          <Suspense fallback={null}>
+            <GlobalCommandPalette />
+          </Suspense>
 
-          <Routes>
-            <Route path="/" element={<CalendarPage />} />
-            <Route path="/daily/:dateStr" element={<DailyPage />} />
-            <Route path="/archive" element={<ArchivePage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={null}>
+            <Routes>
+              <Route path="/" element={<CalendarPage />} />
+              <Route path="/daily/:dateStr" element={<DailyPage />} />
+              <Route path="/archive" element={<ArchivePage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
 
-          <GlobalEntryModals />
-          <GlobalUIModals />
-          <UpdateCheckController />
-          <VersionInfoController />
-          <AttachmentMaintenanceController />
-          <SettingsModalController />
-          <BjkImportPromptController />
+          <Suspense fallback={null}>
+            <GlobalModalHost />
+          </Suspense>
           <Toaster
             position="bottom-center"
             expand={false}

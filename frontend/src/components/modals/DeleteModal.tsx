@@ -1,9 +1,12 @@
 import type { RefObject } from "react";
 import { Trash2, Archive } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
+import { EscModalWrapper } from "../common/EscModalWrapper";
 
 interface Props {
   dialogRef: RefObject<HTMLDialogElement | null>;
+  isOpen: boolean;
+  onClose: () => void;
   isTask: boolean;
   isSoftDeleteAvailable: boolean;
   onSoftDelete: () => void;
@@ -12,6 +15,8 @@ interface Props {
 
 export default function DeleteModal({
   dialogRef,
+  isOpen,
+  onClose,
   isTask,
   isSoftDeleteAvailable,
   onSoftDelete,
@@ -20,10 +25,18 @@ export default function DeleteModal({
   const { t } = useTranslation();
 
   return (
+    <EscModalWrapper
+      id="DeleteModal"
+      isOpen={isOpen}
+      onClose={onClose}
+      mountWhenClosed
+      portal={false}
+    >
     <dialog
       ref={dialogRef}
       className="modal modal-bottom sm:modal-middle"
       onClick={(e) => e.stopPropagation()}
+      onClose={onClose}
     >
       <div className="modal-box p-6 rounded-t-3xl sm:rounded-3xl shadow-2xl">
         <h3 className="font-bold text-xl mb-6 text-error flex items-center gap-2">
@@ -86,5 +99,6 @@ export default function DeleteModal({
         <button>close</button>
       </form>
     </dialog>
+    </EscModalWrapper>
   );
 }
