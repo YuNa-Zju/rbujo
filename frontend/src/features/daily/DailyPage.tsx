@@ -241,7 +241,19 @@ export default function DailyPage() {
         return {
           ...prev,
           [dStr]: list.map((i: any) =>
-            i.id === updated.id ? { ...i, ...updated } : i,
+            i.id === updated.id
+              ? (() => {
+                  const merged = { ...i, ...updated };
+                  if (
+                    Object.prototype.hasOwnProperty.call(updated, "content") &&
+                    updated.content !== i.content &&
+                    !Object.prototype.hasOwnProperty.call(updated, "summary")
+                  ) {
+                    delete merged.summary;
+                  }
+                  return merged;
+                })()
+              : i,
           ),
         };
       });

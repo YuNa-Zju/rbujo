@@ -13,7 +13,7 @@ import { useTranslation } from "../../../hooks/useTranslation";
 
 interface YearGridProps {
   currentDate: Date;
-  entries: any[];
+  overviewMap: Record<string, any[]>;
   onDateClick: (date: Date) => void;
   onMonthClick: (date: Date) => void;
 }
@@ -30,7 +30,7 @@ const itemVariants = {
 
 export default function YearGrid({
   currentDate,
-  entries,
+  overviewMap,
   onDateClick,
   onMonthClick,
 }: YearGridProps) {
@@ -44,17 +44,6 @@ export default function YearGrid({
       }),
     [currentDate],
   );
-
-  const entryMap = useMemo(() => {
-    const map = new Map<string, any[]>();
-    entries.forEach((e) => {
-      if (e.target_date) {
-        if (!map.has(e.target_date)) map.set(e.target_date, []);
-        map.get(e.target_date)?.push(e);
-      }
-    });
-    return map;
-  }, [entries]);
 
   return (
     <motion.div
@@ -70,7 +59,7 @@ export default function YearGrid({
           <MonthHeatmapCard
             key={monthDate.toISOString()}
             monthDate={monthDate}
-            entryMap={entryMap}
+            overviewMap={overviewMap}
             locale={dateLocale}
             onDateClick={onDateClick}
             onMonthClick={onMonthClick}
@@ -83,7 +72,7 @@ export default function YearGrid({
 
 function MonthHeatmapCard({
   monthDate,
-  entryMap,
+  overviewMap,
   locale,
   onDateClick,
   onMonthClick,
@@ -101,7 +90,7 @@ function MonthHeatmapCard({
 
   const monthActivity = days.reduce((acc: number, day: Date) => {
     const dateStr = format(day, "yyyy-MM-dd");
-    return acc + (entryMap.get(dateStr)?.length || 0);
+    return acc + (overviewMap[dateStr]?.length || 0);
   }, 0);
 
   return (
@@ -132,7 +121,7 @@ function MonthHeatmapCard({
         <div className="h-8 w-full flex rounded-lg overflow-hidden bg-base-200/30 ring-1 ring-base-200/60">
           {days.map((day: Date) => {
             const dateStr = format(day, "yyyy-MM-dd");
-            const count = entryMap.get(dateStr)?.length || 0;
+            const count = overviewMap[dateStr]?.length || 0;
             const isTodayFlag = isToday(day);
 
             // Opacity Logic: 0.3 ~ 1.0 based on activity

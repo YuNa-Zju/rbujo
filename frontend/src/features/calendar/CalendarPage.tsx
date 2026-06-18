@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { format } from "date-fns";
@@ -24,8 +24,9 @@ import { uiEvents } from "../../lib/uiEvents";
 // ✅ 引入新组件
 import HeaderActionTrigger from "./components/HeaderActionTrigger";
 
-import CalendarGrid from "./components/StandardGrid";
 import YearGrid from "./components/YearGrid";
+import SwipeCalendarSurface from "./components/SwipeCalendarSurface";
+import DailySheetCard from "./components/DailySheetCard";
 import DraggableEntryCard, {
   EntryCard,
 } from "../../components/DraggableEntryCard";
@@ -60,6 +61,7 @@ export default function CalendarPage() {
   const {
     currentDate,
     selectedDate,
+    navDirection,
     viewMode,
     setViewMode,
     setLastViewMode,
@@ -74,7 +76,7 @@ export default function CalendarPage() {
   const {
     dailyCache,
     overviewCache,
-    yearEntries,
+    yearOverview,
     loadingList,
     handleSilentRefresh,
     setDailyCache,
@@ -95,35 +97,28 @@ export default function CalendarPage() {
     }
   }, [location, navigate]);
 
-  const touchStartX = useRef<number | null>(null);
-  const touchStartY = useRef<number | null>(null);
-
-  const onTouchStart = (e: React.TouchEvent) => {
-    touchStartX.current = e.targetTouches[0].clientX;
-    touchStartY.current = e.targetTouches[0].clientY;
+  const collapseCalendar = () => {
+    if (viewMode !== "month") return;
+    setCurrentDate(selectedDate);
+    setLastViewMode("month");
+    setViewMode("week");
   };
 
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (!touchStartX.current || !touchStartY.current) return;
-    const dX = touchStartX.current - e.changedTouches[0].clientX;
-    const dY = touchStartY.current - e.changedTouches[0].clientY;
-    if (Math.abs(dX) > Math.abs(dY)) {
-      if (Math.abs(dX) > 50) handleNav(dX > 0 ? "next" : "prev");
-    } else {
-      if (Math.abs(dY) > 50) {
-        if (dY > 0 && viewMode === "month") {
-          setCurrentDate(selectedDate);
-          setLastViewMode("month");
-          setViewMode("week");
-        } else if (dY < 0 && viewMode === "week") {
-          setCurrentDate(selectedDate);
-          setLastViewMode("week");
-          setViewMode("month");
-        }
-      }
+  const expandCalendar = () => {
+    if (viewMode !== "week") return;
+    setCurrentDate(selectedDate);
+    setLastViewMode("week");
+    setViewMode("month");
+  };
+
+  const toggleCalendarHeight = () => {
+    if (viewMode === "month") {
+      collapseCalendar();
+      return;
     }
-    touchStartX.current = null;
-    touchStartY.current = null;
+    if (viewMode === "week") {
+      expandCalendar();
+    }
   };
 
   const sensors = useSensors(
@@ -264,27 +259,27 @@ export default function CalendarPage() {
           {viewMode !== "year" && (
             <motion.div
               layout
-              key={`calendar-grid-${viewMode}`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, ease: "easeInOut" }}
-              className="border-b border-base-200/50 overflow-hidden"
-              onTouchStart={onTouchStart}
-              onTouchEnd={onTouchEnd}
+              key="card-stack-calendar"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
+              className="px-4 pt-3 pb-2"
             >
-              <CalendarGrid
-                viewMode={viewMode as any}
+              <SwipeCalendarSurface
+                viewMode={viewMode as "month" | "week"}
                 currentDate={currentDate}
                 selectedDate={selectedDate}
                 overviewCache={overviewCache}
                 onDateClick={handleDateClick}
+                onNavigate={handleNav}
+                navDirection={navDirection}
               />
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-      <div className="flex-1 relative w-full h-full min-h-0 bg-base-100 flex flex-col overflow-hidden">
+      <div className="flex-1 relative w-full h-full min-h-0 bg-base-100 flex flex-col overflow-hidden px-4 pb-4">
         <AnimatePresence mode="wait">
           {viewMode === "year" ? (
             <motion.div
@@ -297,7 +292,7 @@ export default function CalendarPage() {
             >
               <YearGrid
                 currentDate={currentDate}
-                entries={yearEntries}
+                overviewMap={yearOverview}
                 onDateClick={handleDateClick}
                 onMonthClick={handleMonthClick}
               />
@@ -309,198 +304,200 @@ export default function CalendarPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
               transition={{ duration: 0.2 }}
-              className="flex flex-col h-full w-full"
+              className="flex h-full w-full min-h-0 flex-col"
             >
-              <div className="flex-none z-40 px-4 py-3 border-b border-base-content/5 bg-base-100/80 flex justify-between items-center transition-all backdrop-blur-md h-[56px]">
-                <h2
-                  className="text-2xl font-serif font-bold text-base-content cursor-pointer flex items-center gap-2 capitalize truncate"
-                  onClick={() =>
-                    navigate(`/daily/${format(selectedDate, "yyyy-MM-dd")}`)
-                  }
-                >
-                  {isManualSorting ? (
-                    <span className="text-primary flex items-center gap-2 text-xl">
-                      <ArrowDownUp size={20} /> Sorting...
-                    </span>
-                  ) : (
-                    <>
-                      {format(selectedDate, "MMM d, EEEE", {
-                        locale: dateLocale,
-                      })}{" "}
-                      <ChevronRight size={18} className="opacity-30" />
-                    </>
-                  )}
-                </h2>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-circle bg-base-100 border shadow-sm"
-                    onClick={handleOpenSelectedMarkdown}
-                    disabled={openSelectedMarkdown}
-                    title={t.daily.openMarkdown || "Open Markdown in default editor"}
-                    aria-label={
-                      t.daily.openMarkdown || "Open Markdown in default editor"
+              <DailySheetCard
+                viewMode={viewMode as "month" | "week"}
+                isManualSorting={isManualSorting}
+                onCollapseCalendar={collapseCalendar}
+                onExpandCalendar={expandCalendar}
+                onToggleCalendar={toggleCalendarHeight}
+                title={
+                  <h2
+                    className="flex min-w-0 cursor-pointer items-center gap-2 truncate font-serif text-2xl font-bold capitalize text-base-content"
+                    onClick={() =>
+                      navigate(`/daily/${format(selectedDate, "yyyy-MM-dd")}`)
                     }
                   >
-                    <FilePenLine size={16} />
-                  </button>
-                  {currentDailyEntries.length > 1 && (
-                  <button
-                    className={`btn btn-sm btn-circle border shadow-sm transition-all ${isManualSorting ? "btn-primary" : "bg-base-100"}`}
-                    onClick={() => setIsManualSorting(!isManualSorting)}
-                  >
                     {isManualSorting ? (
-                      <Check size={16} />
+                      <span className="flex items-center gap-2 text-xl text-primary">
+                        <ArrowDownUp size={20} /> Sorting...
+                      </span>
                     ) : (
-                      <ArrowDownUp size={16} />
+                      <>
+                        {format(selectedDate, "MMM d, EEEE", {
+                          locale: dateLocale,
+                        })}{" "}
+                        <ChevronRight size={18} className="opacity-30" />
+                      </>
                     )}
-                  </button>
-                  )}
-                </div>
-              </div>
-
-              <div
-                className={`flex-1 px-4 overscroll-contain w-full ${
-                  currentDailyEntries.length === 0
-                    ? "overflow-hidden"
-                    : "overflow-y-auto no-scrollbar"
-                } ${currentDailyEntries.length > 0 ? "pb-32" : "pb-4"}`}
-                onScroll={(e) => e.stopPropagation()}
-              >
-                <div className="h-4 w-full shrink-0" />
-
-                {loadingList ? (
-                  <div className="flex justify-center py-10">
-                    <span className="loading loading-dots loading-md text-gray-400"></span>
-                  </div>
-                ) : (
-                  <DndContext
-                    sensors={sensors}
-                    collisionDetection={closestCenter}
-                    measuring={{
-                      droppable: { strategy: MeasuringStrategy.Always },
-                    }}
-                    onDragStart={handleDragStart}
-                    onDragEnd={handleDragEnd}
-                    modifiers={[restrictToVerticalAxis]}
-                    autoScroll={{
-                      threshold: { x: 0, y: 0.1 },
-                      acceleration: 20,
-                    }}
-                  >
-                    <SortableContext
-                      items={currentDailyEntries.map((e: any) => e.id)}
-                      strategy={verticalListSortingStrategy}
-                      disabled={!isManualSorting}
-                    >
-                      {currentDailyEntries.map((entry: any) => (
-                        <DraggableEntryCard
-                          key={entry.id}
-                          entry={entry}
-                          refresh={handleSilentRefresh}
-                          isDragEnabled={isManualSorting}
-                          forceCollapse={isManualSorting}
-                        />
-                      ))}
-                    </SortableContext>
-
-                    {createPortal(
-                      <DragOverlay
-                        dropAnimation={{
-                          sideEffects: defaultDropAnimationSideEffects({
-                            styles: { active: { opacity: "0.3" } },
-                          }),
-                          duration: 200,
-                          easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)",
-                        }}
-                        zIndex={1000}
-                        className="pointer-events-none"
-                      >
-                        {activeItem && (
-                          <div
-                            style={{
-                              width: dragWidth ? `${dragWidth}px` : "100%",
-                              backgroundColor: "var(--b1)",
-                              borderRadius: "0.75rem",
-                              boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
-                            }}
-                          >
-                            <EntryCard
-                              entry={activeItem}
-                              refresh={() => {}}
-                              isOverlay
-                              forceCollapse
-                              isDragEnabled={true}
-                              disableOverflowCheck={true}
-                            />
-                          </div>
-                        )}
-                      </DragOverlay>,
-                      document.body,
-                    )}
-                  </DndContext>
-                )}
-
-                {!loadingList && currentDailyEntries.length === 0 && (
-                  <div className="h-full w-full flex flex-col p-1 animate-in fade-in zoom-in duration-500">
+                  </h2>
+                }
+                actions={
+                  <>
                     <button
-                      // ✅ 触发新建笔记 (传入当前日期)
+                      type="button"
+                      className="btn btn-sm btn-circle border bg-base-100 shadow-sm"
+                      onClick={handleOpenSelectedMarkdown}
+                      disabled={openSelectedMarkdown}
+                      title={
+                        t.daily.openMarkdown || "Open Markdown in default editor"
+                      }
+                      aria-label={
+                        t.daily.openMarkdown || "Open Markdown in default editor"
+                      }
+                    >
+                      <FilePenLine size={16} />
+                    </button>
+                    {currentDailyEntries.length > 1 && (
+                      <button
+                        className={`btn btn-sm btn-circle border shadow-sm transition-all ${
+                          isManualSorting ? "btn-primary" : "bg-base-100"
+                        }`}
+                        onClick={() => setIsManualSorting(!isManualSorting)}
+                      >
+                        {isManualSorting ? (
+                          <Check size={16} />
+                        ) : (
+                          <ArrowDownUp size={16} />
+                        )}
+                      </button>
+                    )}
+                  </>
+                }
+                footer={
+                  !isManualSorting && currentDailyEntries.length > 0 ? (
+                    <button
+                      className="btn btn-primary h-11 w-full rounded-full text-base font-bold shadow-[0_12px_20px_rgba(99,102,241,0.24)] active:scale-[0.98]"
                       onClick={() =>
                         uiEvents.emit("OPEN_ADD_ENTRY", {
                           date: selectedDate,
                           mode: "daily",
                         })
                       }
-                      className="group flex-1 w-full border-2 border-dashed border-base-300 rounded-4xl flex flex-col items-center justify-center gap-5 transition-all duration-300 hover:border-primary/30 hover:bg-base-200/30 active:scale-[0.99] cursor-pointer min-h-[200px]"
                     >
-                      <div className="relative">
-                        <div className="relative w-20 h-20 bg-base-200 rounded-full flex items-center justify-center group-hover:bg-base-100 group-hover:shadow-sm transition-all duration-300 border border-transparent group-hover:border-base-200">
-                          <Plus
-                            size={32}
-                            strokeWidth={1.5}
-                            className="text-base-content/30 group-hover:text-primary transition-colors duration-300 group-hover:scale-110 transform"
-                          />
-                        </div>
-                      </div>
-                      <div className="text-center space-y-1">
-                        <h3 className="font-serif italic text-2xl text-base-content/40 group-hover:text-base-content/70 transition-colors duration-300">
-                          {t.calendar?.emptyState || "The page is empty."}
-                        </h3>
-                      </div>
+                      <Plus size={22} />
+                      <span>{t.calendar.newEntry}</span>
                     </button>
-                  </div>
-                )}
-              </div>
+                  ) : null
+                }
+              >
+                <div
+                  className={`h-full w-full overscroll-contain px-4 ${
+                    currentDailyEntries.length === 0
+                      ? "overflow-hidden"
+                      : "overflow-y-auto no-scrollbar"
+                  } ${currentDailyEntries.length > 0 ? "pb-4" : "pb-4"}`}
+                  onScroll={(e) => e.stopPropagation()}
+                >
+                  <div className="h-4 w-full shrink-0" />
+
+                  {loadingList ? (
+                    <div className="flex justify-center py-10">
+                      <span className="loading loading-dots loading-md text-gray-400"></span>
+                    </div>
+                  ) : (
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      measuring={{
+                        droppable: { strategy: MeasuringStrategy.Always },
+                      }}
+                      onDragStart={handleDragStart}
+                      onDragEnd={handleDragEnd}
+                      modifiers={[restrictToVerticalAxis]}
+                      autoScroll={{
+                        threshold: { x: 0, y: 0.1 },
+                        acceleration: 20,
+                      }}
+                    >
+                      <SortableContext
+                        items={currentDailyEntries.map((e: any) => e.id)}
+                        strategy={verticalListSortingStrategy}
+                        disabled={!isManualSorting}
+                      >
+                        {currentDailyEntries.map((entry: any) => (
+                          <DraggableEntryCard
+                            key={entry.id}
+                            entry={entry}
+                            refresh={handleSilentRefresh}
+                            isDragEnabled={isManualSorting}
+                            forceCollapse={isManualSorting}
+                          />
+                        ))}
+                      </SortableContext>
+
+                      {createPortal(
+                        <DragOverlay
+                          dropAnimation={{
+                            sideEffects: defaultDropAnimationSideEffects({
+                              styles: { active: { opacity: "0.3" } },
+                            }),
+                            duration: 200,
+                            easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)",
+                          }}
+                          zIndex={1000}
+                          className="pointer-events-none"
+                        >
+                          {activeItem && (
+                            <div
+                              style={{
+                                width: dragWidth ? `${dragWidth}px` : "100%",
+                                backgroundColor: "var(--b1)",
+                                borderRadius: "0.75rem",
+                                boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
+                              }}
+                            >
+                              <EntryCard
+                                entry={activeItem}
+                                refresh={() => {}}
+                                isOverlay
+                                forceCollapse
+                                isDragEnabled={true}
+                                disableOverflowCheck={true}
+                              />
+                            </div>
+                          )}
+                        </DragOverlay>,
+                        document.body,
+                      )}
+                    </DndContext>
+                  )}
+
+                  {!loadingList && currentDailyEntries.length === 0 && (
+                    <div className="flex h-full w-full flex-col p-1 animate-in fade-in zoom-in duration-500">
+                      <button
+                        onClick={() =>
+                          uiEvents.emit("OPEN_ADD_ENTRY", {
+                            date: selectedDate,
+                            mode: "daily",
+                          })
+                        }
+                        className="group flex min-h-[200px] flex-1 cursor-pointer flex-col items-center justify-center gap-5 rounded-[2rem] border-2 border-dashed border-base-300 transition-all duration-300 hover:border-primary/30 hover:bg-base-200/30 active:scale-[0.99]"
+                      >
+                        <div className="relative">
+                          <div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-transparent bg-base-200 transition-all duration-300 group-hover:border-base-200 group-hover:bg-base-100 group-hover:shadow-sm">
+                            <Plus
+                              size={32}
+                              strokeWidth={1.5}
+                              className="text-base-content/30 transition-colors duration-300 group-hover:scale-110 group-hover:text-primary"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1 text-center">
+                          <h3 className="font-serif text-2xl italic text-base-content/40 transition-colors duration-300 group-hover:text-base-content/70">
+                            {t.calendar?.emptyState || "The page is empty."}
+                          </h3>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </DailySheetCard>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-      <AnimatePresence>
-        {viewMode !== "year" &&
-          !isManualSorting &&
-          currentDailyEntries.length > 0 && (
-            <motion.div
-              initial={{ y: 100 }}
-              animate={{ y: 0 }}
-              exit={{ y: 100 }}
-              className="absolute bottom-0 left-0 right-0 p-4 bg-linear-to-t from-base-100 via-base-100/90 to-transparent z-50 pointer-events-none flex justify-center items-end h-32 pb-8"
-            >
-              <button
-                className="pointer-events-auto btn btn-primary w-full max-w-sm rounded-full text-lg h-14 gap-2 active:scale-95 transition-transform"
-                // ✅ 触发新建笔记
-                onClick={() =>
-                  uiEvents.emit("OPEN_ADD_ENTRY", {
-                    date: selectedDate,
-                    mode: "daily",
-                  })
-                }
-              >
-                <Plus size={24} />{" "}
-                <span className="font-bold">{t.calendar.newEntry}</span>
-              </button>
-            </motion.div>
-          )}
-      </AnimatePresence>
     </div>
   );
 }

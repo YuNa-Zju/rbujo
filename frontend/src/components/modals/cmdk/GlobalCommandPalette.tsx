@@ -409,7 +409,8 @@ export default function GlobalCommandPalette() {
                       const theme =
                         ENTRY_THEME[entry.entry_type as EntryType] ||
                         ENTRY_THEME.task;
-                      const { text, meta } = getSmartSummary(entry.content);
+                      const { text, meta } =
+                        entry.summary || getSmartSummary(entry.content);
                       const entryTags = Array.isArray(entry.tags)
                         ? entry.tags.join(" ")
                         : "";

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose};
@@ -16,15 +17,16 @@ use zip::write::SimpleFileOptions;
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    DeletedEntryInfo, Entry, EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
-    STATUS_CANCELLED, STATUS_COMPLETED, STATUS_MIGRATED_FORWARD, STATUS_MIGRATED_FUTURE,
-    STATUS_OPEN, TYPE_EVENT, TYPE_IDEA, TYPE_TASK,
+    DayOverviewDto, DeletedEntryInfo, Entry, EntryExportSchema, EntryResponse, EntrySummaryDto,
+    ImportResponseDto, ReopenResponse, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_MIGRATED_FORWARD,
+    STATUS_MIGRATED_FUTURE, STATUS_OPEN, TYPE_EVENT, TYPE_IDEA, TYPE_TASK,
 };
 
 const LOCAL_USERNAME: &str = "local";
 const LOCAL_PASSWORD_PLACEHOLDER: &str = "local_desktop_profile";
 const EMBEDDING_DIMS: usize = 256;
 const MARKDOWN_WORKSPACE_SETTING_KEY: &str = "markdown_workspace_path";
+const MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY: &str = "markdown_workspace_bookmark";
 const ATTACHMENT_DIR: &str = "attachments";
 const LEGACY_UPLOAD_DIR: &str = "uploads";
 const FUTURE_MARKDOWN_SOMEDAY_KEY: &str = "future:someday";
@@ -35,6 +37,8 @@ const BJK_MANIFEST_PATH: &str = "manifest.json";
 const BJK_PAYLOAD_PATH: &str = "data/backup.json.gz";
 const MAX_BJK_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_BJK_PAYLOAD_BYTES: u64 = 256 * 1024 * 1024;
+const SUMMARY_CACHE_LIMIT: usize = 2048;
+const OVERVIEW_CACHE_LIMIT: usize = 256;
 
 const ENTRY_SELECT: &str = r#"
     SELECT entries.id AS id, entries.content AS content, entries.entry_type AS entry_type,
@@ -54,6 +58,8 @@ pub struct LocalBackend {
     pool: SqlitePool,
     app_dir: PathBuf,
     owner_id: i64,
+    summary_cache: Arc<Mutex<HashMap<String, EntrySummaryDto>>>,
+    overview_cache: Arc<Mutex<HashMap<String, HashMap<String, Vec<DayOverviewDto>>>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +102,7 @@ pub struct SearchOptions {
     pub include_archived: bool,
     #[serde(default)]
     pub entry_type: Vec<String>,
+    pub status: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     pub start_date: Option<String>,
@@ -111,6 +118,7 @@ impl Default for SearchOptions {
             mode: SearchMode::Text,
             include_archived: false,
             entry_type: Vec::new(),
+            status: None,
             tags: Vec::new(),
             start_date: None,
             end_date: None,
@@ -168,6 +176,7 @@ pub struct DailyMarkdownFile {
 pub struct MarkdownWorkspace {
     pub absolute_path: String,
     pub is_default: bool,
+    pub has_persisted_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -463,6 +472,8 @@ impl LocalBackend {
             pool,
             app_dir,
             owner_id,
+            summary_cache: Arc::new(Mutex::new(HashMap::new())),
+            overview_cache: Arc::new(Mutex::new(HashMap::new())),
         };
         backend.migrate_legacy_uploads_to_attachments().await?;
         Ok(backend)
@@ -483,26 +494,55 @@ impl LocalBackend {
             .await?
             .map(PathBuf::from);
         let path = configured.unwrap_or_else(|| default_path.clone());
+        let bookmark = self
+            .get_setting(MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY)
+            .await?;
+        if let Some(bookmark) = bookmark.as_deref() {
+            let _ = crate::macos_security_scope::restore_access(bookmark);
+        }
         Ok(MarkdownWorkspace {
             absolute_path: path.to_string_lossy().to_string(),
             is_default: path == default_path,
+            has_persisted_access: bookmark.is_some(),
         })
     }
 
     pub async fn set_markdown_workspace(&self, path: PathBuf) -> AppResult<MarkdownWorkspace> {
+        self.set_markdown_workspace_authorization(path, None).await
+    }
+
+    pub async fn set_markdown_workspace_authorization(
+        &self,
+        path: PathBuf,
+        bookmark: Option<String>,
+    ) -> AppResult<MarkdownWorkspace> {
         if path.as_os_str().is_empty() {
             return Err(AppError::BadRequest(
                 "Markdown workspace path cannot be empty".to_string(),
             ));
         }
 
+        let bookmark = bookmark.filter(|bookmark| !bookmark.trim().is_empty());
         let current_path = self.markdown_workspace_path().await?;
+        if let Some(bookmark) = bookmark.as_deref() {
+            let _ = crate::macos_security_scope::restore_access(bookmark);
+        }
         if !same_path(&current_path, &path) {
             self.move_markdown_workspace(&current_path, &path).await?;
         }
 
         self.set_setting(MARKDOWN_WORKSPACE_SETTING_KEY, &path.to_string_lossy())
             .await?;
+        match bookmark {
+            Some(bookmark) => {
+                self.set_setting(MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY, &bookmark)
+                    .await?;
+            }
+            _ => {
+                self.delete_setting(MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY)
+                    .await?;
+            }
+        }
         tokio::fs::create_dir_all(path.join(ATTACHMENT_DIR))
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
@@ -555,6 +595,15 @@ impl LocalBackend {
         .bind(now_string())
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    async fn delete_setting(&self, key: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM app_settings WHERE owner_id = ? AND key = ?")
+            .bind(self.owner_id)
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -902,6 +951,7 @@ impl LocalBackend {
         .bind(self.owner_id)
         .execute(&self.pool)
         .await?;
+        self.clear_overview_cache();
 
         let entry = self.fetch_entry(&id).await?;
         self.set_entry_tags(&id, tags).await?;
@@ -1058,6 +1108,7 @@ impl LocalBackend {
             .bind(self.owner_id)
             .execute(&self.pool)
             .await?;
+        self.clear_overview_cache();
         self.cleanup_upload_references_if_unused(removed_upload_refs)
             .await?;
         self.sync_daily_markdown_for_date_values(sync_dates).await;
@@ -1224,8 +1275,12 @@ impl LocalBackend {
         &self,
         month: String,
         include_archived: bool,
-    ) -> AppResult<HashMap<String, Vec<serde_json::Value>>> {
+    ) -> AppResult<HashMap<String, Vec<DayOverviewDto>>> {
         let month = validate_month(&month)?;
+        let cache_key = format!("month:{include_archived}:{month}");
+        if let Some(cached) = self.cached_overview(&cache_key) {
+            return Ok(cached);
+        }
         let archive_filter = if include_archived {
             ""
         } else {
@@ -1246,15 +1301,16 @@ impl LocalBackend {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut overview: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+        let mut overview: HashMap<String, Vec<DayOverviewDto>> = HashMap::new();
         for row in rows {
             let date: String = row.try_get("target_date")?;
-            overview.entry(date).or_default().push(serde_json::json!({
-                "id": row.try_get::<String, _>("id")?,
-                "type": row.try_get::<String, _>("entry_type")?,
-                "status": row.try_get::<String, _>("status")?,
-            }));
+            overview.entry(date).or_default().push(DayOverviewDto {
+                id: row.try_get::<String, _>("id")?,
+                entry_type: row.try_get::<String, _>("entry_type")?,
+                status: row.try_get::<String, _>("status")?,
+            });
         }
+        self.store_overview_cache(cache_key, &overview);
         Ok(overview)
     }
 
@@ -1285,6 +1341,7 @@ impl LocalBackend {
                 .execute(&self.pool)
                 .await?;
         }
+        self.clear_overview_cache();
         self.sync_daily_markdown_for_date_values(sync_dates).await;
         if affects_future {
             let _ = self.write_future_markdown_files().await;
@@ -2398,6 +2455,7 @@ impl LocalBackend {
             .bind(self.owner_id)
             .execute(&self.pool)
             .await?;
+        self.clear_overview_cache();
         self.cleanup_upload_references_if_unused(removed_upload_refs)
             .await?;
         Ok(sync_dates)
@@ -3133,9 +3191,13 @@ impl LocalBackend {
         start_date: String,
         end_date: String,
         include_archived: bool,
-    ) -> AppResult<Vec<serde_json::Value>> {
+    ) -> AppResult<HashMap<String, Vec<DayOverviewDto>>> {
         let start_date = validate_date(&start_date)?;
         let end_date = validate_date(&end_date)?;
+        let cache_key = format!("range:{include_archived}:{start_date}:{end_date}");
+        if let Some(cached) = self.cached_overview(&cache_key) {
+            return Ok(cached);
+        }
         let archive_filter = if include_archived {
             ""
         } else {
@@ -3150,7 +3212,7 @@ impl LocalBackend {
               AND target_date <= ?
               AND status NOT IN ('forward', 'future')
               {archive_filter}
-            ORDER BY target_date ASC, position ASC
+            ORDER BY target_date ASC, position ASC, created_at DESC
             "#
         ))
         .bind(self.owner_id)
@@ -3158,16 +3220,17 @@ impl LocalBackend {
         .bind(end_date)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(serde_json::json!({
-                    "id": row.try_get::<String, _>("id")?,
-                    "target_date": row.try_get::<String, _>("target_date")?,
-                    "entry_type": row.try_get::<String, _>("entry_type")?,
-                    "status": row.try_get::<String, _>("status")?,
-                }))
-            })
-            .collect()
+        let mut overview: HashMap<String, Vec<DayOverviewDto>> = HashMap::new();
+        for row in rows {
+            let date: String = row.try_get("target_date")?;
+            overview.entry(date).or_default().push(DayOverviewDto {
+                id: row.try_get::<String, _>("id")?,
+                entry_type: row.try_get::<String, _>("entry_type")?,
+                status: row.try_get::<String, _>("status")?,
+            });
+        }
+        self.store_overview_cache(cache_key, &overview);
+        Ok(overview)
     }
 
     async fn search_candidates(&self, options: &SearchOptions) -> AppResult<Vec<Entry>> {
@@ -3188,6 +3251,10 @@ impl LocalBackend {
                 vec!["?"; entry_types.len()].join(", ")
             ));
             bindings.extend(entry_types);
+        }
+        if let Some(status) = options.status.as_deref() {
+            sql.push_str(" AND status = ?");
+            bindings.push(validate_status(status)?);
         }
         if let Some(start_date) = options.start_date.as_deref() {
             sql.push_str(" AND target_date >= ?");
@@ -3367,8 +3434,9 @@ impl LocalBackend {
     }
 
     async fn response_from_entry(&self, entry: Entry) -> AppResult<EntryResponse> {
+        let summary = self.summary_for_content(&entry.content);
         let tags = self.get_entry_tags(&entry.id).await?;
-        let mut response = EntryResponse::from(entry);
+        let mut response = EntryResponse::from_entry_with_summary(entry, summary);
         response.tags = tags;
         if let Some(next_id) = response.migrated_to_entry_id.clone() {
             response.migrated_to_archived_at = sqlx::query_scalar::<_, Option<String>>(
@@ -3381,6 +3449,46 @@ impl LocalBackend {
             .flatten();
         }
         Ok(response)
+    }
+
+    fn summary_for_content(&self, content: &str) -> EntrySummaryDto {
+        let key = sha256_hex(content.as_bytes());
+        if let Ok(cache) = self.summary_cache.lock()
+            && let Some(summary) = cache.get(&key)
+        {
+            return summary.clone();
+        }
+
+        let summary = EntrySummaryDto::from_markdown(content);
+        if let Ok(mut cache) = self.summary_cache.lock() {
+            if cache.len() >= SUMMARY_CACHE_LIMIT {
+                cache.clear();
+            }
+            cache.insert(key, summary.clone());
+        }
+        summary
+    }
+
+    fn cached_overview(&self, key: &str) -> Option<HashMap<String, Vec<DayOverviewDto>>> {
+        self.overview_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(key).cloned())
+    }
+
+    fn store_overview_cache(&self, key: String, overview: &HashMap<String, Vec<DayOverviewDto>>) {
+        if let Ok(mut cache) = self.overview_cache.lock() {
+            if cache.len() >= OVERVIEW_CACHE_LIMIT {
+                cache.clear();
+            }
+            cache.insert(key, overview.clone());
+        }
+    }
+
+    fn clear_overview_cache(&self) {
+        if let Ok(mut cache) = self.overview_cache.lock() {
+            cache.clear();
+        }
     }
 
     async fn restore_parent_after_child_removal(
@@ -3488,6 +3596,7 @@ impl LocalBackend {
             .bind(self.owner_id)
             .execute(&self.pool)
             .await?;
+        self.clear_overview_cache();
         Ok(())
     }
 
@@ -3530,6 +3639,7 @@ impl LocalBackend {
         .bind(entry.owner_id)
         .execute(&self.pool)
         .await?;
+        self.clear_overview_cache();
         Ok(())
     }
 
@@ -3563,6 +3673,7 @@ impl LocalBackend {
         .bind(&entry.migrated_to_entry_id)
         .execute(&self.pool)
         .await?;
+        self.clear_overview_cache();
         Ok(())
     }
 

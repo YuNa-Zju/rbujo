@@ -189,6 +189,51 @@ test("update install flow reports download progress in the update dialog", async
   assert.match(updateSource, /isIndeterminate/);
 });
 
+test("timeline views load the full scheduled task set instead of a 60 day preview", async () => {
+  const modalPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/TimelineModal.tsx",
+  );
+  const pagePath = path.resolve(
+    import.meta.dirname,
+    "../src/features/timeline/TimelinePage.tsx",
+  );
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const modalSource = await readFile(modalPath, "utf8");
+  const pageSource = await readFile(pagePath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+
+  for (const source of [modalSource, pageSource]) {
+    assert.doesNotMatch(source, /addDays\(today,\s*60\)/);
+    assert.doesNotMatch(source, /end_date:\s*format\(endDate/);
+    assert.match(
+      source,
+      /entryService\.search\(\{\s*q:\s*query,\s*entry_type:\s*\["task"\],\s*status:\s*"open",\s*limit:\s*TIMELINE_SEARCH_LIMIT,\s*\}\)/,
+    );
+  }
+
+  assert.match(
+    await readFile(
+      path.resolve(import.meta.dirname, "../src/services/entryService.ts"),
+      "utf8",
+    ),
+    /status:\s*params\.status \?\? null/,
+  );
+  assert.match(modalSource, /const TIMELINE_SEARCH_LIMIT = 10000/);
+  assert.match(pageSource, /const TIMELINE_SEARCH_LIMIT = 10000/);
+  assert.match(translationsSource, /全部待办概览/);
+  assert.match(translationsSource, /All Scheduled Tasks/);
+  assert.match(translationsSource, /所有待办已显示/);
+  assert.match(translationsSource, /All scheduled tasks shown/);
+  assert.doesNotMatch(
+    translationsSource,
+    /未来 60 天|Next 60 Days|next 60 days|60 天预览|End of 60 days/,
+  );
+});
+
 test("backup modal header keeps title and close button aligned", async () => {
   const backupPath = path.resolve(
     import.meta.dirname,
@@ -269,10 +314,15 @@ test("backup imports keep an undoable record and refresh views without full relo
     journalDataSource,
     /entryEventBus\.on\("entry:invalidate_overview_cache", handleInvalidateOverviewCache\)/,
   );
-  assert.match(journalDataSource, /cacheStorage\.clearOverview/);
+  assert.doesNotMatch(journalDataSource, /cacheStorage\.clearOverview/);
+  assert.doesNotMatch(journalDataSource, /cacheStorage\.loadOverview/);
   assert.match(
     journalDataSource,
-    /const handleSilentRefresh = useCallback\(\(\) => \{[\s\S]*viewMode === "year"[\s\S]*entryService[\s\S]*\.getRangeOverview/,
+    /const refreshYearOverview = useCallback\(async \(\) => \{[\s\S]*entryService\.getRangeOverview/,
+  );
+  assert.match(
+    journalDataSource,
+    /const handleSilentRefresh = useCallback\(\(\) => \{[\s\S]*viewMode === "year"[\s\S]*refreshYearOverview/,
   );
   assert.match(dailyPageSource, /entryEventBus\.on\("entry:reload_needed", refreshCurrentDate\)/);
   assert.doesNotMatch(translationsSource, /即将刷新/);

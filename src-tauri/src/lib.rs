@@ -10,7 +10,7 @@ use rbullet_journal::local::{
     ResolvedUpload, SearchOptions, SearchResult, StoredUpload, UploadBackup, UploadInput,
 };
 use rbullet_journal::models::{
-    EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
+    DayOverviewDto, EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
 };
 use serde::Serialize;
 use tauri::{
@@ -359,13 +359,12 @@ async fn get_month_overview(
     state: State<'_, DesktopState>,
     month: String,
     include_archived: bool,
-) -> Result<serde_json::Value, String> {
-    let overview = state
+) -> Result<std::collections::HashMap<String, Vec<DayOverviewDto>>, String> {
+    state
         .backend
         .get_month_overview(month, include_archived)
         .await
-        .map_err(to_error)?;
-    serde_json::to_value(overview).map_err(|error| error.to_string())
+        .map_err(to_error)
 }
 
 #[tauri::command]
@@ -374,7 +373,7 @@ async fn get_range_overview(
     start_date: String,
     end_date: String,
     include_archived: bool,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<std::collections::HashMap<String, Vec<DayOverviewDto>>, String> {
     state
         .backend
         .get_range_overview(start_date, end_date, include_archived)
@@ -600,9 +599,11 @@ async fn choose_markdown_workspace(
     let path = folder_path
         .into_path()
         .map_err(|_| "Selected markdown workspace is not a local folder".to_string())?;
+    let bookmark =
+        rbullet_journal::macos_security_scope::create_bookmark(&path).map_err(to_error)?;
     state
         .backend
-        .set_markdown_workspace(path)
+        .set_markdown_workspace_authorization(path, bookmark)
         .await
         .map(Some)
         .map_err(to_error)

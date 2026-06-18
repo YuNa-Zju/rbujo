@@ -8,7 +8,9 @@ import {
   subYears,
   addYears,
   startOfMonth,
-  startOfWeek,
+  endOfMonth,
+  getDate,
+  setDate,
   isSameMonth,
   isValid,
   parseISO,
@@ -16,6 +18,12 @@ import {
 import { useLocation } from "react-router-dom";
 
 type ViewMode = "year" | "month" | "week";
+type NavDirection = "prev" | "next" | null;
+
+function clampDayToMonth(date: Date, preferredDay: number) {
+  const maxDay = getDate(endOfMonth(date));
+  return setDate(date, Math.min(preferredDay, maxDay));
+}
 
 export function useCalendarState() {
   const location = useLocation();
@@ -40,6 +48,7 @@ export function useCalendarState() {
     () => (localStorage.getItem("calendar_view_mode") as ViewMode) || "month",
   );
   const [lastViewMode, setLastViewMode] = useState<ViewMode>(viewMode);
+  const [navDirection, setNavDirection] = useState<NavDirection>(null);
 
   // 处理路由传参跳转
   useEffect(() => {
@@ -51,6 +60,7 @@ export function useCalendarState() {
       if (isValid(target)) {
         setSelectedDate(target);
         setCurrentDate(target);
+        setNavDirection(null);
         sessionStorage.setItem(
           "calendar_focus_date",
           format(target, "yyyy-MM-dd"),
@@ -70,6 +80,7 @@ export function useCalendarState() {
   // --- Actions ---
 
   const handleDateClick = (day: Date) => {
+    setNavDirection(null);
     setSelectedDate(day);
     sessionStorage.setItem("calendar_focus_date", format(day, "yyyy-MM-dd"));
 
@@ -88,6 +99,7 @@ export function useCalendarState() {
   };
 
   const handleMonthClick = (monthDate: Date) => {
+    setNavDirection(null);
     setCurrentDate(monthDate);
     const firstDay = startOfMonth(monthDate);
     setSelectedDate(firstDay);
@@ -100,6 +112,7 @@ export function useCalendarState() {
   };
 
   const handleNav = (direction: "prev" | "next") => {
+    setNavDirection(direction);
     let fn;
     if (viewMode === "year") fn = direction === "prev" ? subYears : addYears;
     else if (viewMode === "month")
@@ -107,22 +120,26 @@ export function useCalendarState() {
     else fn = direction === "prev" ? subWeeks : addWeeks;
 
     const newDate = fn(currentDate, 1);
-    setCurrentDate(newDate);
 
-    if (viewMode !== "year") {
-      const newSelected =
-        viewMode === "month"
-          ? startOfMonth(newDate)
-          : startOfWeek(newDate, { weekStartsOn: 1 });
-      setSelectedDate(newSelected);
-      sessionStorage.setItem(
-        "calendar_focus_date",
-        format(newSelected, "yyyy-MM-dd"),
-      );
+    if (viewMode === "year") {
+      setCurrentDate(newDate);
+      return;
     }
+
+    const newSelected =
+      viewMode === "month"
+        ? clampDayToMonth(newDate, getDate(selectedDate))
+        : fn(selectedDate, 1);
+    setCurrentDate(newSelected);
+    setSelectedDate(newSelected);
+    sessionStorage.setItem(
+      "calendar_focus_date",
+      format(newSelected, "yyyy-MM-dd"),
+    );
   };
 
   const handleJumpToDate = (targetDate: Date) => {
+    setNavDirection(null);
     setCurrentDate(targetDate);
     setSelectedDate(targetDate);
     sessionStorage.setItem(
@@ -132,6 +149,7 @@ export function useCalendarState() {
   };
 
   const toggleViewMode = () => {
+    setNavDirection(null);
     if (viewMode === "year") {
       setViewMode(lastViewMode || "month");
     } else {
@@ -143,6 +161,7 @@ export function useCalendarState() {
   return {
     currentDate,
     selectedDate,
+    navDirection,
     viewMode,
     setViewMode, // 暴露给手势操作使用
     lastViewMode,

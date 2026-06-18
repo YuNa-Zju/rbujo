@@ -139,7 +139,7 @@ export default function EntryActionView({
 
           <div className="flex-1 min-w-0">
             <p className="text-lg font-medium text-base-content/80 line-clamp-3 font-lxgw leading-relaxed italic">
-              {getSmartSummary(entry.content).text}
+              {(entry.summary || getSmartSummary(entry.content)).text}
             </p>
             <p className="text-xs text-base-content/30 mt-2 font-mono flex items-center gap-2">
               <span>ID: {entry.id.slice(0, 8)}</span>

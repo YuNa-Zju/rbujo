@@ -41,6 +41,7 @@ interface Props {
   isTagClickable?: boolean;
   entryType?: string;
   readOnly?: boolean;
+  uploadReferences?: string[];
 }
 
 // 辅助函数：查找真正的滚动容器
@@ -120,6 +121,7 @@ export default function MarkdownViewer({
   isTagClickable = true,
   entryType = "task",
   readOnly = false,
+  uploadReferences: backendUploadReferences,
 }: Props) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -140,10 +142,12 @@ export default function MarkdownViewer({
 
   const isTogglingRef = useRef(false);
 
-  const uploadReferences = useMemo(
-    () => collectUploadRelativePaths(content),
-    [content],
-  );
+  const uploadReferences = useMemo(() => {
+    const localReferences = collectUploadRelativePaths(content);
+    if (!backendUploadReferences?.length) return localReferences;
+    if (localReferences.length === 0) return backendUploadReferences;
+    return Array.from(new Set([...backendUploadReferences, ...localReferences]));
+  }, [backendUploadReferences, content]);
 
   useEffect(() => {
     let cancelled = false;

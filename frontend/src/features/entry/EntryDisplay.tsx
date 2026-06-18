@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import MarkdownViewer from "../../components/MarkdownViewer";
 import { useTranslation } from "../../hooks/useTranslation";
-import { getSmartSummary } from "../../utils/markdownUtils";
+import { getSmartSummary, type EntrySummary } from "../../utils/markdownUtils";
 
 interface Props {
   content: string;
@@ -21,6 +21,7 @@ interface Props {
   isTask?: boolean;
   // ✅ 新增：接收 entryType 以支持动态主题色 (task/idea/event)
   entryType?: string;
+  backendSummary?: EntrySummary;
   forceCollapse?: boolean;
   disableOverflowCheck?: boolean;
   onDoubleClick?: () => void;
@@ -35,6 +36,7 @@ export default function EntryDisplay({
   status,
   isTask = false,
   entryType = "task", // ✅ 默认值为 task
+  backendSummary,
   forceCollapse,
   disableOverflowCheck,
   onDoubleClick,
@@ -51,7 +53,7 @@ export default function EntryDisplay({
 
   // 2. 摘要生成逻辑
   const summary = useMemo(() => {
-    const result = getSmartSummary(content);
+    const result = backendSummary || getSmartSummary(content);
     let finalText = result.text;
 
     // 如果没有纯文本，给一个友好的占位符
@@ -65,7 +67,7 @@ export default function EntryDisplay({
       text: finalText,
       meta: result.meta,
     };
-  }, [content, t]);
+  }, [backendSummary, content, t]);
 
   // 3. 折叠模式 (显示摘要和图标)
   if (forceCollapse) {
@@ -129,6 +131,7 @@ export default function EntryDisplay({
         onTaskToggle={onTaskToggle}
         isTagClickable={isTagClickable}
         readOnly={readOnly || showDoneStyle}
+        uploadReferences={backendSummary?.uploadReferences}
       />
     </div>
   );

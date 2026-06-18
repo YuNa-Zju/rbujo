@@ -206,6 +206,61 @@ async fn native_tag_search_is_case_insensitive() {
 }
 
 #[tokio::test]
+async fn search_status_filter_applies_before_limit() {
+    let dir = temp_app_dir("search-status-limit");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let completed = backend
+        .create_entry(CreateEntryInput {
+            content: "已完成但日期更晚".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-07-01".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec![],
+        })
+        .await
+        .unwrap();
+    let open = backend
+        .create_entry(CreateEntryInput {
+            content: "未完成但日期更早".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-01".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec![],
+        })
+        .await
+        .unwrap();
+
+    backend
+        .update_entry(
+            completed.id,
+            EntryPatch {
+                status: Some("completed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let results = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            entry_type: vec!["task".to_string()],
+            status: Some("open".to_string()),
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].entry.id, open.id);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn native_tag_list_reads_tags_without_entry_search() {
     let dir = temp_app_dir("native-tag-list");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -260,6 +315,150 @@ async fn native_tag_list_reads_tags_without_entry_search() {
 
     let tags = backend.list_tags().await.unwrap();
     assert_eq!(tags, vec!["AI", "数学", "课程"]);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn entry_responses_include_backend_markdown_summary() {
+    let dir = temp_app_dir("backend-summary");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content:
+                "#tag\n\n- [ ] ![Diagram](asset://localhost/%2FUsers%2Fme%2Fattachments%2Fdiagram.png)\n\n[Doc](attachments/doc.pdf)\n\n`code` $x$"
+                    .to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(entry.summary.text, "[图片] Diagram");
+    assert!(entry.summary.meta.has_image);
+    assert!(entry.summary.meta.has_checklist);
+    assert!(entry.summary.meta.has_link);
+    assert!(entry.summary.meta.has_code);
+    assert!(entry.summary.meta.has_math);
+    assert!(entry.summary.meta.has_tag);
+    assert_eq!(
+        entry.summary.upload_references,
+        vec![
+            "attachments/diagram.png".to_string(),
+            "attachments/doc.pdf".to_string()
+        ]
+    );
+
+    let daily = backend.get_daily_log("2026-06-18", false).await.unwrap();
+    assert_eq!(daily[0].summary.text, "[图片] Diagram");
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn overview_commands_return_backend_grouped_day_dots() {
+    let dir = temp_app_dir("backend-overview");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let created = backend
+        .create_entry(CreateEntryInput {
+            content: "overview dot".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let month = backend
+        .get_month_overview("2026-06".to_string(), false)
+        .await
+        .unwrap();
+    assert_eq!(month["2026-06-18"][0].id, created.id);
+    assert_eq!(month["2026-06-18"][0].entry_type, "event");
+    assert_eq!(month["2026-06-18"][0].status, "open");
+
+    backend
+        .update_entry(
+            created.id.clone(),
+            EntryPatch {
+                status: Some("completed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let updated_month = backend
+        .get_month_overview("2026-06".to_string(), false)
+        .await
+        .unwrap();
+    assert_eq!(updated_month["2026-06-18"][0].status, "completed");
+
+    let range = backend
+        .get_range_overview("2026-06-01".to_string(), "2026-06-30".to_string(), false)
+        .await
+        .unwrap();
+    assert_eq!(range["2026-06-18"][0].id, created.id);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn range_overview_order_matches_daily_log_order() {
+    let dir = temp_app_dir("range-overview-order");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let older = backend
+        .create_entry(CreateEntryInput {
+            content: "older item".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let newer = backend
+        .create_entry(CreateEntryInput {
+            content: "newer item".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    sqlx::query("UPDATE entries SET position = 0, created_at = ? WHERE id = ?")
+        .bind("2026-06-18 08:00:00")
+        .bind(&older.id)
+        .execute(backend.db())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE entries SET position = 0, created_at = ? WHERE id = ?")
+        .bind("2026-06-18 09:00:00")
+        .bind(&newer.id)
+        .execute(backend.db())
+        .await
+        .unwrap();
+
+    let daily = backend.get_daily_log("2026-06-18", false).await.unwrap();
+    let range = backend
+        .get_range_overview("2026-06-01".to_string(), "2026-06-30".to_string(), false)
+        .await
+        .unwrap();
+
+    let daily_ids: Vec<&str> = daily.iter().map(|entry| entry.id.as_str()).collect();
+    let dot_ids: Vec<&str> = range["2026-06-18"]
+        .iter()
+        .map(|dot| dot.id.as_str())
+        .collect();
+    assert_eq!(dot_ids, daily_ids);
 
     fs::remove_dir_all(dir).ok();
 }
@@ -829,6 +1028,64 @@ async fn markdown_workspace_switch_moves_attachments_with_project_folder() {
     );
 
     fs::remove_dir_all(workspace).ok();
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_workspace_persists_selected_folder_authorization() {
+    let dir = temp_app_dir("workspace-bookmark");
+    let workspace = temp_app_dir("workspace-bookmark-target");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+
+    let selected = backend
+        .set_markdown_workspace_authorization(
+            workspace.clone(),
+            Some("bookmark-data-for-selected-folder".to_string()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(selected.absolute_path, workspace.to_string_lossy());
+    assert!(selected.has_persisted_access);
+
+    let reopened = LocalBackend::open(dir.clone()).await.unwrap();
+    let persisted = reopened.get_markdown_workspace().await.unwrap();
+    assert_eq!(persisted.absolute_path, workspace.to_string_lossy());
+    assert!(persisted.has_persisted_access);
+
+    fs::remove_dir_all(workspace).ok();
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn markdown_workspace_clears_authorization_when_no_bookmark_is_saved() {
+    let dir = temp_app_dir("workspace-bookmark-clear");
+    let first_workspace = temp_app_dir("workspace-bookmark-clear-first");
+    let second_workspace = temp_app_dir("workspace-bookmark-clear-second");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+
+    backend
+        .set_markdown_workspace_authorization(
+            first_workspace.clone(),
+            Some("old-bookmark".to_string()),
+        )
+        .await
+        .unwrap();
+    let updated = backend
+        .set_markdown_workspace_authorization(second_workspace.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(updated.absolute_path, second_workspace.to_string_lossy());
+    assert!(!updated.has_persisted_access);
+
+    let reopened = LocalBackend::open(dir.clone()).await.unwrap();
+    let persisted = reopened.get_markdown_workspace().await.unwrap();
+    assert_eq!(persisted.absolute_path, second_workspace.to_string_lossy());
+    assert!(!persisted.has_persisted_access);
+
+    fs::remove_dir_all(first_workspace).ok();
+    fs::remove_dir_all(second_workspace).ok();
     fs::remove_dir_all(dir).ok();
 }
 
