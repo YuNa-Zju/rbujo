@@ -1,3 +1,4 @@
+import { createElement } from "react";
 import { toast } from "sonner";
 import { entryService } from "../services/entryService";
 import { entryEventBus } from "./entryEventBus";
@@ -11,6 +12,11 @@ type ArchiveUndoLabels = {
   deleted: string;
   deleteFailed: string;
 };
+
+const archiveToastUndoButtonClass = "archive-undo-toast-cancel";
+const archiveToastDeleteButtonClass = "archive-undo-toast-delete";
+const archiveToastButtonClass = "archive-undo-toast-button";
+const archiveToastContentClass = "archive-undo-toast-content";
 
 async function restoreArchivedEntry(
   archivedEntry: any,
@@ -69,16 +75,29 @@ export function showArchiveUndoToast(archivedEntry: any, labels: ArchiveUndoLabe
   const options: any = {
     id: toastId,
     duration: 7000,
+    classNames: {
+      content: archiveToastContentClass,
+    },
   };
-  options.action = {
-    label: labels.undo,
-    onClick: () => restoreArchivedEntry(archivedEntry, toastId, labels),
-  };
-  options.cancel = {
-    label: labels.deletePermanently,
-    onClick: () =>
-      deleteArchivedEntryPermanently(archivedEntry, toastId, labels),
-  };
+  options.cancel = createElement(
+    "button",
+    {
+      type: "button",
+      className: `${archiveToastButtonClass} ${archiveToastUndoButtonClass}`,
+      onClick: () => restoreArchivedEntry(archivedEntry, toastId, labels),
+    },
+    labels.undo,
+  );
+  options.action = createElement(
+    "button",
+    {
+      type: "button",
+      className: `${archiveToastButtonClass} ${archiveToastDeleteButtonClass}`,
+      onClick: () =>
+        deleteArchivedEntryPermanently(archivedEntry, toastId, labels),
+    },
+    labels.deletePermanently,
+  );
 
   toast.success(labels.archived, options);
 }

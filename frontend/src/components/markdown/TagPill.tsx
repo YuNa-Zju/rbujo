@@ -47,7 +47,7 @@ export const TagPill = ({
       <Hash size={9} className="opacity-50" strokeWidth={2.5} />
       <span
         style={{
-          fontFamily: "'LXGW WenKai Screen', sans-serif",
+          fontFamily: "'LXGW WenKai', sans-serif",
           letterSpacing: "0.02em",
         }}
       >

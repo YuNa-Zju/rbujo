@@ -46,6 +46,8 @@ export default function App() {
                 title: "!text-sm !font-medium !tracking-tight",
                 actionButton:
                   "!rounded-full !bg-primary !px-4 !py-1.5 !text-xs !font-semibold !text-primary-content hover:!bg-primary/90",
+                cancelButton:
+                  "!rounded-full !bg-base-content/10 !px-4 !py-1.5 !text-xs !font-semibold !text-base-content hover:!bg-base-content/15",
                 success: "!rounded-full !border-success/20 !bg-success/10 !text-success",
                 error: "!rounded-full !border-error/20 !bg-error/10 !text-error",
               },
