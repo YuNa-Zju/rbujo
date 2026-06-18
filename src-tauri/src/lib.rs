@@ -454,6 +454,19 @@ async fn list_tags(state: State<'_, DesktopState>) -> Result<Vec<String>, String
 }
 
 #[tauri::command]
+async fn rename_tag(
+    state: State<'_, DesktopState>,
+    old_name: String,
+    new_name: String,
+) -> Result<usize, String> {
+    state
+        .backend
+        .rename_tag(old_name, new_name)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn store_upload(
     state: State<'_, DesktopState>,
     filename: String,
@@ -668,6 +681,37 @@ async fn export_markdown_archive_to_file(
         .file()
         .set_file_name(&suggested_filename)
         .add_filter("ZIP Archive", &["zip"]);
+    if let Ok(download_dir) = app.path().download_dir() {
+        dialog = dialog.set_directory(download_dir);
+    }
+    let Some(file_path) = dialog.blocking_save_file() else {
+        return Ok(None);
+    };
+    let path = file_path
+        .into_path()
+        .map_err(|_| "Selected export path is not a local file".to_string())?;
+    tokio::fs::write(&path, bytes).await.map_err(to_error)?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+async fn export_bjk_archive_to_file(
+    app: AppHandle,
+    bytes: Vec<u8>,
+    suggested_filename: String,
+) -> Result<Option<String>, String> {
+    if bytes.len() as u64 > MAX_BJK_IMPORT_BYTES {
+        return Err("BJK archive is too large".to_string());
+    }
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return Err("Invalid BJK archive".to_string());
+    }
+    let suggested_filename = safe_export_filename(&suggested_filename, "bujo_backup.bjk", "bjk");
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_file_name(&suggested_filename)
+        .add_filter("BuJo Backup", &["bjk"]);
     if let Ok(download_dir) = app.path().download_dir() {
         dialog = dialog.set_directory(download_dir);
     }
@@ -1030,6 +1074,7 @@ pub fn run() {
             search_entries,
             rebuild_search_index,
             list_tags,
+            rename_tag,
             store_upload,
             store_upload_path,
             list_uploads,
@@ -1047,6 +1092,7 @@ pub fn run() {
             cleanup_all_unused_uploads,
             export_markdown_archive,
             export_markdown_archive_to_file,
+            export_bjk_archive_to_file,
             get_all_entries_for_backup,
             import_entries,
             import_bjk_archive,
@@ -1062,14 +1108,19 @@ fn to_error(error: impl std::fmt::Display) -> String {
 }
 
 fn safe_export_archive_filename(value: &str) -> String {
+    safe_export_filename(value, "bujo_obsidian_export.zip", "zip")
+}
+
+fn safe_export_filename(value: &str, fallback: &str, extension: &str) -> String {
     let mut filename = value.trim().replace(['/', '\\'], "_");
     if filename.is_empty() {
-        filename = "bujo_obsidian_export.zip".to_string();
+        filename = fallback.to_string();
     }
-    if filename.to_ascii_lowercase().ends_with(".zip") {
+    let suffix = format!(".{extension}");
+    if filename.to_ascii_lowercase().ends_with(&suffix) {
         filename
     } else {
-        format!("{filename}.zip")
+        format!("{filename}{suffix}")
     }
 }
 

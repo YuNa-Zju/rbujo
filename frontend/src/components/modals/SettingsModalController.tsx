@@ -9,8 +9,8 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 
+import { EscModalWrapper } from "../common/EscModalWrapper";
 import { useTheme } from "../../hooks/useTheme";
 import { useTranslation } from "../../hooks/useTranslation";
 import { uiEvents } from "../../lib/uiEvents";
@@ -131,7 +131,8 @@ export default function SettingsModalController() {
     void action();
   };
 
-  return createPortal(
+  return (
+    <EscModalWrapper id="SettingsModal" isOpen={open} onClose={close}>
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
       role="dialog"
@@ -218,7 +219,7 @@ export default function SettingsModalController() {
           </SettingsSection>
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
+    </EscModalWrapper>
   );
 }

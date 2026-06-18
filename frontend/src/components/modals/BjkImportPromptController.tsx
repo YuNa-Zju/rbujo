@@ -2,7 +2,6 @@ import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "framer-motion";
 import { FileArchive, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 
 import { EscModalWrapper } from "../common/EscModalWrapper";
 import { useAppTheme } from "../../hooks/useAppTheme";
@@ -147,7 +146,7 @@ export default function BjkImportPromptController() {
   const description = (t.backup?.externalImportDesc || "Import {{filename}}?")
     .replace("{{filename}}", filename);
 
-  return createPortal(
+  return (
     <EscModalWrapper id="BjkImportPrompt" isOpen={open} onClose={close}>
       <AnimatePresence>
         {open && (
@@ -263,7 +262,6 @@ export default function BjkImportPromptController() {
           </div>
         )}
       </AnimatePresence>
-    </EscModalWrapper>,
-    document.body,
+    </EscModalWrapper>
   );
 }

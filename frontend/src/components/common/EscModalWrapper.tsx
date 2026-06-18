@@ -1,6 +1,4 @@
-import { useEffect } from "react";
-import { modalStack } from "../../lib/modalStack";
-import { uiEvents, type CloseModalsPayload } from "../../lib/uiEvents";
+import { ModalFrame } from "./ModalFrame";
 
 interface EscModalWrapperProps {
   /** 弹窗的唯一 ID，用于栈管理 (必须唯一，如 'SearchModal') */
@@ -13,6 +11,10 @@ interface EscModalWrapperProps {
   children: React.ReactNode;
   /** 是否监听全局关闭事件 (默认 true) */
   listenGlobalClose?: boolean;
+  /** 原生 dialog 这类组件需要常驻 DOM，打开时再进入 ESC 栈 */
+  mountWhenClosed?: boolean;
+  /** 是否 portal 到 body，默认 true */
+  portal?: boolean;
 }
 
 export const EscModalWrapper = ({
@@ -21,36 +23,17 @@ export const EscModalWrapper = ({
   onClose,
   children,
   listenGlobalClose = true,
-}: EscModalWrapperProps) => {
-  // 1. 处理 ESC 栈逻辑
-  useEffect(() => {
-    if (isOpen) {
-      modalStack.push(id, onClose);
-    } else {
-      modalStack.remove(id);
-    }
-
-    // 组件卸载时保险起见移除
-    return () => {
-      modalStack.remove(id);
-    };
-  }, [isOpen, onClose, id]);
-
-  // 2. 处理全局总线关闭信号 (uiEvents.emit('CLOSE_MODALS'))
-  useEffect(() => {
-    if (!listenGlobalClose || !isOpen) return;
-
-    const handleGlobalClose = (payload?: CloseModalsPayload) => {
-      // 如果 payload 指定了排除列表，且当前 ID 在排除列表中，则不关闭
-      if (payload?.except?.includes(id)) return;
-      onClose();
-    };
-
-    uiEvents.on("CLOSE_MODALS", handleGlobalClose);
-    return () => {
-      uiEvents.off("CLOSE_MODALS", handleGlobalClose);
-    };
-  }, [isOpen, onClose, id, listenGlobalClose]);
-
-  return <>{children}</>;
-};
+  mountWhenClosed = false,
+  portal = true,
+}: EscModalWrapperProps) => (
+  <ModalFrame
+    id={id}
+    isOpen={isOpen}
+    onClose={onClose}
+    listenGlobalClose={listenGlobalClose}
+    mountWhenClosed={mountWhenClosed}
+    portal={portal}
+  >
+    {children}
+  </ModalFrame>
+);

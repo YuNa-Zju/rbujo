@@ -48,6 +48,10 @@ test("desktop bundle registers bjk backup file association", async () => {
 
 test("double-clicked bjk files open an import confirmation flow", async () => {
   const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const hostPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/GlobalModalHost.tsx",
+  );
   const controllerPath = path.resolve(
     import.meta.dirname,
     "../src/components/modals/BjkImportPromptController.tsx",
@@ -63,14 +67,17 @@ test("double-clicked bjk files open an import confirmation flow", async () => {
   const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
 
   const appSource = await readFile(appPath, "utf8");
+  const hostSource = await readFile(hostPath, "utf8");
   const controllerSource = await readFile(controllerPath, "utf8");
   const entryServiceSource = await readFile(entryServicePath, "utf8");
   const backupServiceSource = await readFile(backupServicePath, "utf8");
   const libSource = await readFile(libPath, "utf8");
 
-  assert.match(appSource, /BjkImportPromptController/);
-  assert.match(controllerSource, /createPortal/);
-  assert.match(controllerSource, /document\.body/);
+  assert.match(appSource, /GlobalModalHost/);
+  assert.match(hostSource, /BjkImportPromptController/);
+  assert.match(controllerSource, /EscModalWrapper/);
+  assert.doesNotMatch(controllerSource, /createPortal/);
+  assert.doesNotMatch(controllerSource, /document\.body/);
   assert.match(controllerSource, /listen(?:<[^>]+>)?\("file:open-bjk"/);
   assert.match(controllerSource, /takePendingBjkImport/);
   assert.match(controllerSource, /importPendingBjkArchive/);
@@ -346,17 +353,217 @@ test("archive toast offers undo and permanent delete actions", async () => {
   const entryActionsSource = await readFile(entryActionsPath, "utf8");
   const cmdkEntryActionSource = await readFile(cmdkEntryActionPath, "utf8");
 
-  assert.match(archiveToastSource, /toast\.custom/);
+  assert.doesNotMatch(archiveToastSource, /toast\.custom/);
+  assert.match(archiveToastSource, /toast\.success/);
   assert.match(archiveToastSource, /deletePermanently/);
-  assert.match(archiveToastSource, /ml-auto flex shrink-0 items-center gap-2/);
-  assert.match(archiveToastSource, /border-error\/30/);
-  assert.match(archiveToastSource, /bg-primary/);
+  assert.match(archiveToastSource, /options\.action = \{/);
+  assert.match(archiveToastSource, /options\.cancel = \{/);
+  assert.doesNotMatch(archiveToastSource, /border-error\/30/);
+  assert.doesNotMatch(archiveToastSource, /w-\[min\(calc\(100vw-2rem\),42rem\)\]/);
   assert.match(archiveToastSource, /entryService\.delete\(archivedEntry\.id,\s*true\)/);
   assert.match(archiveToastSource, /entryEventBus\.emit\("entry:delete", archivedEntry\.id\)/);
   assert.match(archiveToastSource, /entryEventBus\.emit\("entry:create", restored\)/);
   assert.match(archiveToastSource, /entryEventBus\.emit\("entry:reload_needed"\)/);
   assert.match(entryActionsSource, /deletePermanently:\s*t\.archivePage\?\.deletePermanently/);
   assert.match(cmdkEntryActionSource, /deletePermanently:\s*t\.archivePage\?\.deletePermanently/);
+});
+
+test("business modals are mounted through the global modal host", async () => {
+  const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const hostPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/GlobalModalHost.tsx",
+  );
+  const framePath = path.resolve(
+    import.meta.dirname,
+    "../src/components/common/ModalFrame.tsx",
+  );
+  const stackPath = path.resolve(import.meta.dirname, "../src/lib/modalStack.ts");
+  const oldGlobalUiPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/GlobalUIModals.tsx",
+  );
+  const oldGlobalEntryPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/GlobalEntryModals.tsx",
+  );
+
+  const appSource = await readFile(appPath, "utf8");
+  const hostSource = await readFile(hostPath, "utf8");
+  const frameSource = await readFile(framePath, "utf8");
+  const stackSource = await readFile(stackPath, "utf8");
+  const oldGlobalUiSource = await readFile(oldGlobalUiPath, "utf8").catch(
+    () => "",
+  );
+  const oldGlobalEntrySource = await readFile(oldGlobalEntryPath, "utf8").catch(
+    () => "",
+  );
+
+  assert.match(appSource, /GlobalModalHost/);
+  assert.doesNotMatch(appSource, /GlobalUIModals/);
+  assert.doesNotMatch(appSource, /GlobalEntryModals/);
+  assert.doesNotMatch(hostSource, /void ModalFrame/);
+  assert.match(hostSource, /AddEntryModal/);
+  assert.match(hostSource, /SearchModal/);
+  assert.match(hostSource, /TagSearchModal/);
+  assert.match(hostSource, /isOpen=\{migrateModalOpen\}/);
+  assert.match(hostSource, /isOpen=\{futureModalOpen\}/);
+  assert.match(hostSource, /isOpen=\{deleteModalOpen\}/);
+  assert.match(hostSource, /UpdateCheckController/);
+  assert.match(frameSource, /createPortal/);
+  assert.match(frameSource, /document\.body/);
+  assert.match(frameSource, /modalStack\.push/);
+  assert.match(frameSource, /modalStack\.remove/);
+  assert.match(stackSource, /closeTop/);
+  assert.match(stackSource, /peek/);
+  assert.doesNotMatch(oldGlobalUiSource, /export default function GlobalUIModals/);
+  assert.doesNotMatch(oldGlobalEntrySource, /export default function GlobalEntryModals/);
+});
+
+test("global modal host is split from the initial app chunk", async () => {
+  const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const appSource = await readFile(appPath, "utf8");
+
+  assert.match(appSource, /lazy\(\(\) => import\("\.\/components\/modals\/GlobalModalHost"\)\)/);
+  assert.match(appSource, /lazy\([\s\S]*import\("\.\/components\/modals\/cmdk\/GlobalCommandPalette"\)[\s\S]*\)/);
+  assert.match(appSource, /lazy\(\(\) => import\("\.\/features\/calendar\/CalendarPage"\)\)/);
+  assert.match(appSource, /lazy\(\(\) => import\("\.\/features\/daily\/DailyPage"\)\)/);
+  assert.match(appSource, /lazy\(\(\) => import\("\.\/features\/archive\/ArchivePage"\)\)/);
+  assert.match(appSource, /<Suspense fallback=\{null\}>/);
+});
+
+test("business modal files do not portal themselves to body", async () => {
+  const businessModalPaths = [
+    "../src/components/modals/BjkImportPromptController.tsx",
+    "../src/components/modals/BackupModal.tsx",
+    "../src/components/modals/TagSearchModal.tsx",
+    "../src/components/modals/AttachmentMaintenanceController.tsx",
+    "../src/components/modals/SettingsModalController.tsx",
+    "../src/components/modals/UpdateCheckController.tsx",
+    "../src/components/modals/VersionInfoController.tsx",
+    "../src/components/modals/TimelineModal.tsx",
+    "../src/components/modals/SearchModal.tsx",
+    "../src/components/modals/AddEntryModal.tsx",
+    "../src/components/modals/MigrateModal.tsx",
+    "../src/components/modals/FutureModal.tsx",
+    "../src/components/modals/DeleteModal.tsx",
+  ];
+
+  for (const relativePath of businessModalPaths) {
+    const source = await readFile(
+      path.resolve(import.meta.dirname, relativePath),
+      "utf8",
+    );
+    assert.doesNotMatch(
+      source,
+      /createPortal\([\s\S]*document\.body/,
+      `${relativePath} should rely on GlobalModalHost/ModalFrame`,
+    );
+  }
+
+  const futureLogSource = await readFile(
+    path.resolve(import.meta.dirname, "../src/components/modals/FutureLogModal.tsx"),
+    "utf8",
+  );
+  assert.match(futureLogSource, /<EscModalWrapper[\s\S]*id="FutureLogModal"/);
+  assert.match(futureLogSource, /createPortal\([\s\S]*<DragOverlay/);
+});
+
+test("nested backup confirmation is registered as its own modal stack layer", async () => {
+  const backupPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/BackupModal.tsx",
+  );
+  const source = await readFile(backupPath, "utf8");
+
+  assert.match(source, /id="BackupModal"/);
+  assert.match(source, /id="BackupUndoConfirm"/);
+  assert.match(source, /isOpen=\{showConfirm\}/);
+  assert.match(source, /if \(!loading\) closeUndoConfirm\(\)/);
+});
+
+test("home calendar uses card gestures instead of header arrow buttons", async () => {
+  const calendarPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/CalendarPage.tsx",
+  );
+  const swipePath = path.resolve(
+    import.meta.dirname,
+    "../src/features/calendar/components/SwipeCalendarSurface.tsx",
+  );
+  const calendarSource = await readFile(calendarPath, "utf8");
+  const swipeSource = await readFile(swipePath, "utf8");
+
+  assert.doesNotMatch(calendarSource, /ChevronLeft/);
+  assert.doesNotMatch(calendarSource, /ChevronRight/);
+  assert.doesNotMatch(calendarSource, /handleNav\("prev"\)/);
+  assert.doesNotMatch(calendarSource, /handleNav\("next"\)/);
+  assert.match(swipeSource, /deltaY/);
+  assert.match(swipeSource, /Math\.abs\(event\.deltaY\)/);
+  assert.match(swipeSource, /onNavigate\(event\.deltaY > 0 \? "next" : "prev"\)/);
+});
+
+test("tag suggestions share keyboard scrolling behavior", async () => {
+  const tagInputPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/shared/TagInput.tsx",
+  );
+  const addEntryPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/AddEntryModal.tsx",
+  );
+  const searchPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/SearchModal.tsx",
+  );
+  const tagInputSource = await readFile(tagInputPath, "utf8");
+  const addEntrySource = await readFile(addEntryPath, "utf8");
+  const searchSource = await readFile(searchPath, "utf8");
+
+  assert.match(tagInputSource, /scrollIntoView\(\{\s*block:\s*"nearest"/);
+  assert.match(tagInputSource, /aria-activedescendant/);
+  assert.match(tagInputSource, /role="listbox"/);
+  assert.match(tagInputSource, /ArrowDown/);
+  assert.match(tagInputSource, /ArrowUp/);
+  assert.match(addEntrySource, /<TagInput/);
+  assert.match(searchSource, /<TagInput/);
+});
+
+test("tag search title supports double click rename through invoke", async () => {
+  const tagSearchPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/TagSearchModal.tsx",
+  );
+  const entryServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/entryService.ts",
+  );
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const tagSearchSource = await readFile(tagSearchPath, "utf8");
+  const entryServiceSource = await readFile(entryServicePath, "utf8");
+  const libSource = await readFile(libPath, "utf8");
+
+  assert.match(tagSearchSource, /onDoubleClick/);
+  assert.match(tagSearchSource, /renameTag/);
+  assert.match(tagSearchSource, /setRenaming/);
+  assert.match(tagSearchSource, /refreshTags/);
+  assert.match(entryServiceSource, /renameTag/);
+  assert.match(entryServiceSource, /rename_tag/);
+  assert.match(libSource, /async fn rename_tag/);
+  assert.match(libSource, /rename_tag,/);
+});
+
+test("cancel action does not use overflowing daisy tooltip text", async () => {
+  const entryActionsPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/entry/EntryActions.tsx",
+  );
+  const source = await readFile(entryActionsPath, "utf8");
+
+  assert.doesNotMatch(source, /tooltip-error/);
+  assert.doesNotMatch(source, /data-tip=\{t\.entry\?\.softDelete/);
+  assert.match(source, /aria-label=\{t\.entry\?\.softDelete/);
+  assert.match(source, /title=\{t\.entry\?\.softDelete/);
 });
 
 test("entry editing reuses the add-entry modal including future options", async () => {
@@ -458,7 +665,8 @@ test("markdown workspace controls live in the unified storage panel", async () =
   assert.match(storageSource, /chooseMarkdownWorkspace/);
   assert.match(storageSource, /getMarkdownWorkspace/);
   assert.match(storageSource, /openMarkdownWorkspace/);
-  assert.match(storageSource, /createPortal/);
+  assert.match(storageSource, /EscModalWrapper/);
+  assert.doesNotMatch(storageSource, /createPortal/);
   assert.match(storageSource, /DailyRootPathCard/);
   assert.match(storageSource, /labels\.changePath/);
   assert.match(storageSource, /labels\.openFolder/);
@@ -536,6 +744,10 @@ test("command palette uses stable non-looping keyboard navigation", async () => 
 test("desktop shell does not keep a tray background app or today widget window", async () => {
   const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
   const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const hostPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/GlobalModalHost.tsx",
+  );
   const capabilityPath = path.resolve(
     import.meta.dirname,
     "../../src-tauri/capabilities/default.json",
@@ -829,6 +1041,36 @@ test("markdown archive export uses native save dialog with downloads default", a
   assert.match(backupSource, /const exported = await entryService\.downloadBackup/);
 });
 
+test("bjk export uses native save dialog with downloads default", async () => {
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const entryServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/entryService.ts",
+  );
+  const backupServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/dataBackupService.ts",
+  );
+  const backupPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/BackupModal.tsx",
+  );
+  const libSource = await readFile(libPath, "utf8");
+  const entryServiceSource = await readFile(entryServicePath, "utf8");
+  const backupServiceSource = await readFile(backupServicePath, "utf8");
+  const backupSource = await readFile(backupPath, "utf8");
+
+  assert.match(libSource, /export_bjk_archive_to_file/);
+  assert.match(libSource, /add_filter\("BuJo Backup", &\["bjk"\]\)/);
+  assert.match(libSource, /download_dir/);
+  assert.match(libSource, /bytes\.starts_with\(b"PK\\x03\\x04"\)/);
+  assert.match(entryServiceSource, /downloadBjkBackup/);
+  assert.match(entryServiceSource, /export_bjk_archive_to_file/);
+  assert.match(backupServiceSource, /entryService\.downloadBjkBackup/);
+  assert.doesNotMatch(backupServiceSource, /a\.download = `bujo_backup_/);
+  assert.match(backupSource, /const exported = await dataBackupService\.exportData/);
+});
+
 test("desktop attachment commands are exposed for portable uploads", async () => {
   const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
   const configPath = path.resolve(
@@ -836,6 +1078,10 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
     "../../src-tauri/tauri.conf.json",
   );
   const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
+  const hostPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/GlobalModalHost.tsx",
+  );
   const menuPath = path.resolve(
     import.meta.dirname,
     "../src/features/calendar/components/UserMenu.tsx",
@@ -880,6 +1126,7 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   const source = await readFile(libPath, "utf8");
   const config = JSON.parse(await readFile(configPath, "utf8"));
   const appSource = await readFile(appPath, "utf8");
+  const hostSource = await readFile(hostPath, "utf8");
   const menuSource = await readFile(menuPath, "utf8");
   const markdownViewerSource = await readFile(markdownViewerPath, "utf8");
   const entryServiceSource = await readFile(entryServicePath, "utf8");
@@ -905,7 +1152,8 @@ test("desktop attachment commands are exposed for portable uploads", async () =>
   assert.match(source, /cleanup_unused_uploads/);
   assert.match(source, /cleanup_all_unused_uploads/);
   assert.match(uiEventsSource, /OPEN_ATTACHMENT_MAINTENANCE/);
-  assert.match(appSource, /AttachmentMaintenanceController/);
+  assert.match(appSource, /GlobalModalHost/);
+  assert.match(hostSource, /AttachmentMaintenanceController/);
   assert.match(menuSource, /OPEN_ATTACHMENT_MAINTENANCE/);
   assert.match(menuSource, /t\.attachmentMaintenance/);
   assert.match(translationsSource, /attachmentMaintenance/);

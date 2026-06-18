@@ -1,9 +1,12 @@
 import { type RefObject } from "react";
 import { ArrowRight, X, CalendarDays } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
+import { EscModalWrapper } from "../common/EscModalWrapper";
 
 interface Props {
   dialogRef: RefObject<HTMLDialogElement | null>;
+  isOpen: boolean;
+  onClose: () => void;
   dateInput: string;
   setDateInput: (date: string) => void;
   onConfirm: () => void;
@@ -12,6 +15,8 @@ interface Props {
 
 export default function MigrateModal({
   dialogRef,
+  isOpen,
+  onClose,
   dateInput,
   setDateInput,
   onConfirm,
@@ -20,10 +25,18 @@ export default function MigrateModal({
   const { t } = useTranslation();
 
   return (
+    <EscModalWrapper
+      id="MigrateModal"
+      isOpen={isOpen}
+      onClose={onClose}
+      mountWhenClosed
+      portal={false}
+    >
     <dialog
       ref={dialogRef}
       className="modal modal-bottom sm:modal-middle"
       onClick={(e) => e.stopPropagation()}
+      onClose={onClose}
     >
       <div className="modal-box p-6 rounded-t-3xl sm:rounded-3xl shadow-2xl bg-base-100">
         {/* Header - Info Theme (Blue) */}
@@ -134,5 +147,6 @@ export default function MigrateModal({
         <button>close</button>
       </form>
     </dialog>
+    </EscModalWrapper>
   );
 }

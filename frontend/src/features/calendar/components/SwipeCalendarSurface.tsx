@@ -134,7 +134,11 @@ export default function SwipeCalendarSurface({
   };
 
   const handleWheel = (event: WheelEvent<HTMLElement>) => {
-    if (Math.abs(event.deltaX) < Math.abs(event.deltaY) || Math.abs(event.deltaX) < 24) {
+    const horizontal = Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+      && Math.abs(event.deltaX) >= 24;
+    const vertical = Math.abs(event.deltaY) > Math.abs(event.deltaX)
+      && Math.abs(event.deltaY) >= 24;
+    if (!horizontal && !vertical) {
       return;
     }
     event.preventDefault();
@@ -143,6 +147,10 @@ export default function SwipeCalendarSurface({
       return;
     }
     lastWheelNavigationAt.current = now;
+    if (vertical) {
+      onNavigate(event.deltaY > 0 ? "next" : "prev");
+      return;
+    }
     onNavigate(event.deltaX > 0 ? "next" : "prev");
   };
 

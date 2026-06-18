@@ -193,8 +193,9 @@ export default function EntryActions({
           <li>
             <button
               onClick={handleAction(onCancel)}
-              className="tooltip tooltip-bottom tooltip-error p-2 rounded-lg hover:bg-error/10"
-              data-tip={t.entry?.softDelete || "Mark as Cancelled"}
+              className="p-2 rounded-lg hover:bg-error/10"
+              aria-label={t.entry?.softDelete || "Mark as Cancelled"}
+              title={t.entry?.softDelete || "Mark as Cancelled"}
             >
               <XCircle size={18} className="text-error" />
             </button>

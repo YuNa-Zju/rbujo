@@ -40,6 +40,46 @@ fn test_sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn test_sha256_hex_text(value: &str) -> String {
+    test_sha256_hex(value.as_bytes())
+}
+
+fn test_entry_fingerprint(entry: &serde_json::Value) -> String {
+    let mut tags = entry
+        .get("tags")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    tags.sort_by_key(|value| value.to_lowercase());
+    tags.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+
+    let canonical = serde_json::json!({
+        "id": entry.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "content": entry.get("content").cloned().unwrap_or(serde_json::Value::Null),
+        "entry_type": entry.get("entry_type").cloned().unwrap_or(serde_json::Value::Null),
+        "status": entry.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "created_at": entry.get("created_at").cloned().unwrap_or(serde_json::Value::Null),
+        "target_date": entry.get("target_date").cloned().unwrap_or(serde_json::Value::Null),
+        "target_month": entry.get("target_month").cloned().unwrap_or(serde_json::Value::Null),
+        "is_future": entry.get("is_future").cloned().unwrap_or(serde_json::Value::Null),
+        "source_entry_id": entry.get("source_entry_id").cloned().unwrap_or(serde_json::Value::Null),
+        "position": entry.get("position").cloned().unwrap_or(serde_json::Value::Null),
+        "from_date": entry.get("from_date").cloned().unwrap_or(serde_json::Value::Null),
+        "migrated_to_date": entry.get("migrated_to_date").cloned().unwrap_or(serde_json::Value::Null),
+        "migrated_to_month": entry.get("migrated_to_month").cloned().unwrap_or(serde_json::Value::Null),
+        "archived_at": entry.get("archived_at").cloned().unwrap_or(serde_json::Value::Null),
+        "chain_root_id": entry.get("chain_root_id").cloned().unwrap_or(serde_json::Value::Null),
+        "migrated_to_entry_id": entry.get("migrated_to_entry_id").cloned().unwrap_or(serde_json::Value::Null),
+        "tags": tags,
+    });
+    test_sha256_hex_text(&serde_json::to_string(&canonical).unwrap())
+}
+
 fn bjk_archive_bytes(backup: serde_json::Value) -> Vec<u8> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder
@@ -54,6 +94,98 @@ fn bjk_archive_bytes(backup: serde_json::Value) -> Vec<u8> {
             "path": "data/backup.json.gz",
             "media_type": "application/json",
             "compression": "gzip"
+        }
+    });
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    writer.start_file("manifest.json", options).unwrap();
+    writer
+        .write_all(serde_json::to_string(&manifest).unwrap().as_bytes())
+        .unwrap();
+    writer.start_file("data/backup.json.gz", options).unwrap();
+    writer.write_all(&payload).unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+fn indexed_bjk_archive_bytes(backup: serde_json::Value) -> Vec<u8> {
+    indexed_bjk_archive_bytes_with_manifest_backup(backup.clone(), backup)
+}
+
+fn indexed_bjk_archive_bytes_with_manifest_backup(
+    manifest_backup: serde_json::Value,
+    payload_backup: serde_json::Value,
+) -> Vec<u8> {
+    let backup_text = serde_json::to_string(&payload_backup).unwrap();
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(backup_text.as_bytes()).unwrap();
+    let payload = encoder.finish().unwrap();
+
+    let manifest_backup_text = serde_json::to_string(&manifest_backup).unwrap();
+    let mut manifest_encoder = GzEncoder::new(Vec::new(), Compression::default());
+    manifest_encoder
+        .write_all(manifest_backup_text.as_bytes())
+        .unwrap();
+    let manifest_payload = manifest_encoder.finish().unwrap();
+
+    let entries = manifest_backup["data"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let entries_index = entries
+        .iter()
+        .map(|entry| {
+            let tags = entry
+                .get("tags")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            serde_json::json!({
+                "id": entry["id"],
+                "fingerprint": test_entry_fingerprint(entry),
+                "content_sha256": test_sha256_hex_text(entry["content"].as_str().unwrap_or_default()),
+                "tags_sha256": test_sha256_hex_text(&serde_json::to_string(&tags).unwrap()),
+                "target_date": entry.get("target_date").cloned().unwrap_or(serde_json::Value::Null),
+                "target_month": entry.get("target_month").cloned().unwrap_or(serde_json::Value::Null),
+                "archived_at": entry.get("archived_at").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let attachments_index = manifest_backup["attachments"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|attachment| {
+            let bytes = attachment["bytes"].as_array().cloned().unwrap_or_default();
+            serde_json::json!({
+                "relative_path": attachment["relative_path"],
+                "filename": attachment["filename"],
+                "sha256": attachment["sha256"],
+                "size": bytes.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let manifest = serde_json::json!({
+            "format": "fun.yunazju.rbujo.bjk",
+            "container_version": 1,
+            "created_at": "2026-06-17T00:00:00Z",
+            "backup": {
+                "header": "BUJO_SECURE_BACKUP_V1",
+                "version": 2,
+                "timestamp": manifest_backup["timestamp"],
+                "count": entries.len(),
+                "attachments_count": attachments_index.len(),
+                "entries_index": entries_index,
+            "attachments_index": attachments_index
+        },
+        "payload": {
+            "path": "data/backup.json.gz",
+            "media_type": "application/json",
+            "compression": "gzip",
+            "sha256": test_sha256_hex(&manifest_payload),
+            "uncompressed_bytes": manifest_backup_text.len()
         }
     });
 
@@ -315,6 +447,83 @@ async fn native_tag_list_reads_tags_without_entry_search() {
 
     let tags = backend.list_tags().await.unwrap();
     assert_eq!(tags, vec!["AI", "数学", "课程"]);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn rename_tag_updates_all_entry_references_case_insensitively() {
+    let dir = temp_app_dir("native-tag-rename");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "需要重命名的标签".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["ACEE".to_string(), "课程".to_string()],
+        })
+        .await
+        .unwrap();
+
+    let renamed = backend
+        .rename_tag("acee".to_string(), "竞赛".to_string())
+        .await
+        .unwrap();
+    assert_eq!(renamed, 1);
+
+    let old_results = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            tags: vec!["ACEE".to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let new_results = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            tags: vec!["竞赛".to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert!(old_results.is_empty());
+    assert_eq!(new_results.len(), 1);
+    assert_eq!(new_results[0].entry.id, entry.id);
+    assert_eq!(backend.list_tags().await.unwrap(), vec!["竞赛", "课程"]);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn rename_tag_case_only_updates_markdown_references() {
+    let dir = temp_app_dir("native-tag-rename-case-only");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "大小写标签需要同步到 markdown".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["ACEE".to_string()],
+        })
+        .await
+        .unwrap();
+
+    let renamed = backend
+        .rename_tag("ACEE".to_string(), "acee".to_string())
+        .await
+        .unwrap();
+    assert_eq!(renamed, 1);
+    assert_eq!(backend.list_tags().await.unwrap(), vec!["acee"]);
+
+    let markdown = fs::read_to_string(dir.join("journal/Daily/2026/06/2026-06-18.md")).unwrap();
+    assert!(markdown.contains("#acee"));
+    assert!(!markdown.contains("#ACEE"));
 
     fs::remove_dir_all(dir).ok();
 }
@@ -3033,6 +3242,103 @@ async fn bjk_import_restores_attachments_and_rewrites_asset_urls() {
     assert!(
         Path::new(&uploads[0].absolute_path).starts_with(default_workspace_path(&dir)),
         "attachment should be stored in the markdown workspace"
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn indexed_bjk_import_skips_unchanged_entries_without_updating() {
+    let dir = temp_app_dir("bjk-import-skip-unchanged");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry_id = Uuid::new_v4().to_string();
+    let backup = serde_json::json!({
+        "header": "BUJO_SECURE_BACKUP_V1",
+        "version": 2,
+        "timestamp": 1781654400000u64,
+        "count": 1,
+        "attachments": [],
+        "data": [{
+            "id": entry_id,
+            "content": "无需重复导入的同步条目",
+            "entry_type": "task",
+            "status": "open",
+            "tags": ["同步", "BUJO"],
+            "created_at": "2026-06-17T00:00:00Z",
+            "target_date": "2026-06-17",
+            "target_month": null,
+            "is_future": false,
+            "source_entry_id": null,
+            "position": 0,
+            "from_date": null,
+            "migrated_to_date": null,
+            "migrated_to_month": null,
+            "archived_at": null,
+            "chain_root_id": null,
+            "migrated_to_entry_id": null
+        }]
+    });
+    let archive = indexed_bjk_archive_bytes(backup);
+
+    let first = backend
+        .import_bjk_archive_bytes(archive.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.inserted_count, 1);
+    assert_eq!(first.updated_count, 0);
+    assert_eq!(first.skipped_count, 0);
+
+    let second = backend.import_bjk_archive_bytes(archive).await.unwrap();
+    assert_eq!(second.inserted_count, 0);
+    assert_eq!(second.updated_count, 0);
+    assert_eq!(second.skipped_count, 1);
+    assert!(second.inserted_ids.is_empty());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn bjk_import_rejects_stale_manifest_payload_hash() {
+    let dir = temp_app_dir("bjk-import-stale-manifest-payload");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry_id = Uuid::new_v4().to_string();
+    let manifest_backup = serde_json::json!({
+        "header": "BUJO_SECURE_BACKUP_V1",
+        "version": 2,
+        "timestamp": 1781654400000u64,
+        "count": 1,
+        "attachments": [],
+        "data": [{
+            "id": entry_id,
+            "content": "manifest 中的旧内容",
+            "entry_type": "task",
+            "status": "open",
+            "tags": ["同步"],
+            "created_at": "2026-06-17T00:00:00Z",
+            "target_date": "2026-06-17",
+            "target_month": null,
+            "is_future": false,
+            "source_entry_id": null,
+            "position": 0,
+            "from_date": null,
+            "migrated_to_date": null,
+            "migrated_to_month": null,
+            "archived_at": null,
+            "chain_root_id": null,
+            "migrated_to_entry_id": null
+        }]
+    });
+    let payload_backup = {
+        let mut payload = manifest_backup.clone();
+        payload["data"][0]["content"] = serde_json::json!("payload 中的新内容");
+        payload
+    };
+    let archive = indexed_bjk_archive_bytes_with_manifest_backup(manifest_backup, payload_backup);
+
+    let err = backend.import_bjk_archive_bytes(archive).await.unwrap_err();
+    assert!(
+        err.to_string().contains("payload hash"),
+        "stale BJK manifest should be rejected before the indexed skip path"
     );
 
     fs::remove_dir_all(dir).ok();

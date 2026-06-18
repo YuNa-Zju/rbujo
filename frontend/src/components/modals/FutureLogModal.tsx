@@ -35,6 +35,7 @@ import { format } from "date-fns";
 import { entryService } from "../../services/entryService";
 import { zhCN, enUS } from "date-fns/locale";
 import { EntryCard } from "../DraggableEntryCard";
+import { EscModalWrapper } from "../common/EscModalWrapper";
 
 import {
   entryEventBus,
@@ -559,14 +560,6 @@ const FutureLogModal = ({ onClose }: Props) => {
   }, [handleClose]);
 
   useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleClose();
-    };
-    window.addEventListener("keydown", handleEsc);
-    return () => window.removeEventListener("keydown", handleEsc);
-  }, [handleClose]);
-
-  useEffect(() => {
     if (futureLogMode !== "planning") setIsMonthDragMode(false);
   }, [futureLogMode]);
 
@@ -634,6 +627,11 @@ const FutureLogModal = ({ onClose }: Props) => {
     : "grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 pb-10";
 
   return (
+    <EscModalWrapper
+      id="FutureLogModal"
+      isOpen={isActive}
+      onClose={handleClose}
+    >
     <div
       className={`fixed inset-0 z-[5000] flex flex-col justify-end sm:justify-center items-center isolation-isolate transition-all duration-500 ease-out ${
         isActive
@@ -881,48 +879,50 @@ const FutureLogModal = ({ onClose }: Props) => {
               })}
             </div>
 
-            {createPortal(
-              <DragOverlay zIndex={6000}>
-                {activeDragEntry && (
-                  <div
-                    className="cursor-grabbing"
-                    style={{
-                      width:
-                        activeDragWidth !== null
-                          ? activeDragWidth
-                          : undefined,
-                    }}
-                  >
-                    {isFutureArrangeMode ? (
-                      <EntryCard
-                        entry={activeDragEntry}
-                        isOverlay={true}
-                        isDragEnabled={true}
-                        refresh={() => {}}
-                        forceCollapse={true}
-                        disableOverflowCheck={true}
-                        readOnly={true}
-                      />
-                    ) : (
-                      <EntryCard
-                        entry={activeDragEntry}
-                        refresh={() => {}}
-                        isOverlay={true}
-                        isDragEnabled={true}
-                        forceCollapse={true}
-                        disableOverflowCheck={true}
-                        className={futureCardClass(isDark)}
-                      />
-                    )}
-                  </div>
-                )}
-              </DragOverlay>,
-              document.body,
-            )}
+            {typeof document !== "undefined" &&
+              createPortal(
+                <DragOverlay zIndex={6000}>
+                  {activeDragEntry && (
+                    <div
+                      className="cursor-grabbing"
+                      style={{
+                        width:
+                          activeDragWidth !== null
+                            ? activeDragWidth
+                            : undefined,
+                      }}
+                    >
+                      {isFutureArrangeMode ? (
+                        <EntryCard
+                          entry={activeDragEntry}
+                          isOverlay={true}
+                          isDragEnabled={true}
+                          refresh={() => {}}
+                          forceCollapse={true}
+                          disableOverflowCheck={true}
+                          readOnly={true}
+                        />
+                      ) : (
+                        <EntryCard
+                          entry={activeDragEntry}
+                          refresh={() => {}}
+                          isOverlay={true}
+                          isDragEnabled={true}
+                          forceCollapse={true}
+                          disableOverflowCheck={true}
+                          className={futureCardClass(isDark)}
+                        />
+                      )}
+                    </div>
+                  )}
+                </DragOverlay>,
+                document.body,
+              )}
           </DndContext>
         </div>
       </div>
     </div>
+    </EscModalWrapper>
   );
 };
 

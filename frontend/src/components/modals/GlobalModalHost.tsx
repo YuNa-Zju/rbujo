@@ -1,22 +1,65 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { entryService } from "../../services/entryService";
 import { entryEventBus, type MigratePayload } from "../../lib/entryEventBus";
 import { useModalController } from "../../context/ModalControllerContext";
 
+import AddEntryModal, { type AddEntryModalRef } from "./AddEntryModal";
+import SearchModal from "./SearchModal";
+import TagSearchModal from "./TagSearchModal";
+import FutureLogModal from "./FutureLogModal";
+import TimelineModal, { type TimelineModalRef } from "./TimelineModal";
+import BackupModal from "./BackupModal";
 import MigrateModal from "./MigrateModal";
 import FutureModal from "./FutureModal";
 import DeleteModal from "./DeleteModal";
+import UpdateCheckController from "./UpdateCheckController";
+import VersionInfoController from "./VersionInfoController";
+import AttachmentMaintenanceController from "./AttachmentMaintenanceController";
+import SettingsModalController from "./SettingsModalController";
+import BjkImportPromptController from "./BjkImportPromptController";
 
-export function LegacyGlobalEntryModals() {
-  const { entryActionRequest, clearEntryAction } = useModalController();
+export default function GlobalModalHost() {
+  const {
+    search,
+    closeSearch,
+    tagSearch,
+    closeTagSearch,
+    futureLogOpen,
+    closeFutureLog,
+    backupOpen,
+    closeBackup,
+    addEntryRequest,
+    entryActionRequest,
+    timelineRequestId,
+    clearEntryAction,
+  } = useModalController();
+
+  const addEntryRef = useRef<AddEntryModalRef>(null);
+  const timelineRef = useRef<TimelineModalRef>(null);
+  const migrateRef = useRef<HTMLDialogElement>(null);
+  const futureRef = useRef<HTMLDialogElement>(null);
+  const deleteRef = useRef<HTMLDialogElement>(null);
+
   const [selectedEntry, setSelectedEntry] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [dateInput, setDateInput] = useState("");
   const [futureMonth, setFutureMonth] = useState("");
 
-  const migrateRef = useRef<HTMLDialogElement>(null);
-  const futureRef = useRef<HTMLDialogElement>(null);
-  const deleteRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (addEntryRequest) {
+      addEntryRef.current?.showModal(addEntryRequest);
+    }
+  }, [addEntryRequest]);
+
+  useEffect(() => {
+    if (entryActionRequest?.kind === "edit") {
+      addEntryRef.current?.showModal({ entry: entryActionRequest.payload.entry });
+    }
+  }, [entryActionRequest]);
+
+  useEffect(() => {
+    if (timelineRequestId > 0) timelineRef.current?.open();
+  }, [timelineRequestId]);
 
   useEffect(() => {
     if (!entryActionRequest || entryActionRequest.kind === "edit") return;
@@ -44,37 +87,29 @@ export function LegacyGlobalEntryModals() {
 
     if (entryActionRequest.kind === "delete") {
       deleteRef.current?.showModal();
-      return;
     }
   }, [entryActionRequest]);
 
-  const handleClose = () => {
+  const handleCloseEntryAction = useCallback(() => {
     migrateRef.current?.close();
     futureRef.current?.close();
     deleteRef.current?.close();
     setTimeout(() => setSelectedEntry(null), 300);
     clearEntryAction();
-  };
+  }, [clearEntryAction]);
 
-  /**
-   * 1. 迁移逻辑 (Future -> Daily 或 Daily -> Daily)
-   */
   const handleMigrateConfirm = async () => {
     if (!selectedEntry || !dateInput) return;
     setLoading(true);
 
     try {
       if (selectedEntry.is_future) {
-        // --- 场景 A: 从 Future Log 迁移到某一天 ---
-        // 1. 先从 UI 移除 Future 条目
         entryEventBus.emit("entry:delete", selectedEntry.id);
-
         const response = await entryService.rescheduleFutureEntry(
           selectedEntry.id,
           dateInput,
         );
 
-        // 2. 🔴 三角形更新：通知最原始的 Daily 存根，它的去向从“未来”变更为“某天”
         if (selectedEntry.source_entry_id) {
           entryEventBus.emit("entry:update", {
             id: selectedEntry.source_entry_id,
@@ -84,7 +119,6 @@ export function LegacyGlobalEntryModals() {
           });
         }
 
-        // 3. 广播迁移事件：将 Future 条目转换为新的 Daily 条目
         const payload: MigratePayload = {
           source: { ...selectedEntry, status: "migrated_forward" },
           target: { ...response, is_future: false, status: "open" },
@@ -92,7 +126,6 @@ export function LegacyGlobalEntryModals() {
         };
         entryEventBus.emit("entry:migrate", payload);
       } else {
-        // --- 场景 B: Daily 之间的迁移 ---
         const result = await entryService.migrate(selectedEntry.id, dateInput);
         entryEventBus.emit("entry:migrate", {
           source: result.updated_source,
@@ -100,7 +133,7 @@ export function LegacyGlobalEntryModals() {
           date: dateInput,
         });
       }
-      handleClose();
+      handleCloseEntryAction();
     } catch (error) {
       console.error("Migrate failed:", error);
     } finally {
@@ -108,26 +141,19 @@ export function LegacyGlobalEntryModals() {
     }
   };
 
-  /**
-   * 2. 未来日志逻辑 (Daily -> Future 或 Future 修改月份)
-   */
   const handleFutureConfirm = async () => {
     if (!selectedEntry) return;
     setLoading(true);
-
-    // 逻辑 1: 如果月份为空，则为 SomeDay
     const targetMonth = futureMonth || null;
 
     try {
       let response;
       if (selectedEntry.is_future) {
-        // Future -> Future (修改月份)
         response = await entryService.moveFutureEntry(
           selectedEntry.id,
           targetMonth,
         );
 
-        // 同步更新本体
         if (selectedEntry.source_entry_id) {
           entryEventBus.emit("entry:update", {
             id: selectedEntry.source_entry_id,
@@ -136,46 +162,30 @@ export function LegacyGlobalEntryModals() {
         }
         entryEventBus.emit("entry:update", response);
       } else {
-        // Daily -> Future
-        response = await entryService.moveToFuture(
-          selectedEntry.id,
-          targetMonth,
-        );
-
-        // 逻辑 2 & 3: 处理存根与真身的渲染分离
+        response = await entryService.moveToFuture(selectedEntry.id, targetMonth);
         const movedEntry = response;
-
-        // A. 准备 Daily 存根 (Stub)
         const stubEntry = {
           ...selectedEntry,
           status: "migrated_future",
-          is_future: false, // 🔴 确保它留在 Daily 视图
+          is_future: false,
           target_month: targetMonth,
           date: selectedEntry.date || movedEntry.from_date,
         };
-
-        // B. 准备 Future 真身
         const futureEntry = {
           ...movedEntry,
-          is_future: true, // 🔴 确保它去往 Future 视图
+          is_future: true,
           target_month: targetMonth,
         };
 
-        // 发送状态变更给 Daily Log (更新存根图标)
         entryEventBus.emit("entry:status_change", stubEntry);
-
-        // 发送迁移指令：
-        // 这里的 payload 会被各自的列表组件根据 is_future 标志过滤处理
         entryEventBus.emit("entry:migrate", {
           source: stubEntry,
           target: futureEntry,
           date: targetMonth || "Someday",
         });
-
-        // 额外发送一个 create 确保 FutureLog 捕获新条目
         entryEventBus.emit("entry:create", futureEntry);
       }
-      handleClose();
+      handleCloseEntryAction();
     } catch (error) {
       console.error("Future action failed:", error);
     } finally {
@@ -196,7 +206,7 @@ export function LegacyGlobalEntryModals() {
           status: "cancelled",
         });
       }
-      handleClose();
+      handleCloseEntryAction();
     } catch (error) {
       console.error("Delete failed:", error);
     } finally {
@@ -210,10 +220,29 @@ export function LegacyGlobalEntryModals() {
 
   return (
     <>
+      <AddEntryModal ref={addEntryRef} />
+
+      {search.open && (
+        <SearchModal
+          isOpen={search.open}
+          initialQuery={search.initialQuery}
+          onClose={closeSearch}
+        />
+      )}
+
+      {futureLogOpen && <FutureLogModal onClose={closeFutureLog} />}
+
+      <TimelineModal ref={timelineRef} />
+
+      {tagSearch.open && (
+        <TagSearchModal tag={tagSearch.tag} onClose={closeTagSearch} />
+      )}
+
+      <BackupModal open={backupOpen} onClose={closeBackup} />
       <MigrateModal
         dialogRef={migrateRef}
         isOpen={migrateModalOpen}
-        onClose={handleClose}
+        onClose={handleCloseEntryAction}
         dateInput={dateInput}
         setDateInput={setDateInput}
         onConfirm={handleMigrateConfirm}
@@ -222,7 +251,7 @@ export function LegacyGlobalEntryModals() {
       <FutureModal
         dialogRef={futureRef}
         isOpen={futureModalOpen}
-        onClose={handleClose}
+        onClose={handleCloseEntryAction}
         futureMonth={futureMonth}
         setFutureMonth={setFutureMonth}
         onConfirm={handleFutureConfirm}
@@ -231,12 +260,17 @@ export function LegacyGlobalEntryModals() {
       <DeleteModal
         dialogRef={deleteRef}
         isOpen={deleteModalOpen}
-        onClose={handleClose}
+        onClose={handleCloseEntryAction}
         isTask={selectedEntry?.entry_type === "task"}
         isSoftDeleteAvailable={selectedEntry?.status === "open"}
         onSoftDelete={() => handleDeleteConfirm(false)}
         onHardDelete={() => handleDeleteConfirm(true)}
       />
+      <UpdateCheckController />
+      <VersionInfoController />
+      <AttachmentMaintenanceController />
+      <SettingsModalController />
+      <BjkImportPromptController />
     </>
   );
 }

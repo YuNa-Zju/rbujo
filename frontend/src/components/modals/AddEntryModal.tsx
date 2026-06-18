@@ -34,10 +34,10 @@ import {
   UploadCloud,
   Loader2,
   PenLine,
-  Hash,
-  Plus,
 } from "lucide-react";
 import { entryEventBus } from "../../lib/entryEventBus";
+import TagInput from "../shared/TagInput";
+import { EscModalWrapper } from "../common/EscModalWrapper";
 
 // ✅ 1. Update Open Options to include optional 'entry' for editing
 export interface AddEntryModalOpenOptions {
@@ -60,7 +60,6 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
     const dialogRef = useRef<HTMLDialogElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const editorDropRef = useRef<HTMLDivElement>(null);
-    const tagInputRef = useRef<HTMLInputElement>(null);
     const dragCounter = useRef(0);
 
     const { t } = useTranslation();
@@ -90,6 +89,12 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
       format(new Date(), "yyyy-MM"),
     );
     const [isUndetermined, setIsUndetermined] = useState(false);
+
+    const closeModal = useCallback(() => {
+      if (isUploading || loading) return;
+      setIsModalOpen(false);
+      dialogRef.current?.close();
+    }, [isUploading, loading]);
 
     useImperativeHandle(ref, () => ({
       showModal: (options = {}) => {
@@ -182,9 +187,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         });
       },
       close: () => {
-        if (isUploading || loading) return;
-        setIsModalOpen(false);
-        dialogRef.current?.close();
+        closeModal();
       },
     }));
 
@@ -393,43 +396,6 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
       return [...tags, pending];
     };
 
-    const handleTagKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "ArrowDown" && filteredTagSuggestions.length > 0) {
-        e.preventDefault();
-        setHighlightedTagSuggestionIndex((current) =>
-          current < 0 ? 0 : (current + 1) % filteredTagSuggestions.length,
-        );
-      } else if (e.key === "ArrowUp" && filteredTagSuggestions.length > 0) {
-        e.preventDefault();
-        setHighlightedTagSuggestionIndex((current) =>
-          current < 0
-            ? filteredTagSuggestions.length - 1
-            : (current - 1 + filteredTagSuggestions.length) %
-              filteredTagSuggestions.length,
-        );
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        addTag(
-          highlightedTagSuggestionIndex >= 0
-            ? filteredTagSuggestions[highlightedTagSuggestionIndex]
-            : tagDraft,
-        );
-      } else if (e.key === "," || e.key === "，") {
-        e.preventDefault();
-        addTag(tagDraft);
-      } else if (e.key === "Backspace" && !tagDraft && tags.length > 0) {
-        removeTag(tags[tags.length - 1]);
-      }
-    };
-
-    const handleTagButtonClick = () => {
-      if (tagDraft.trim()) {
-        addTag(tagDraft);
-        return;
-      }
-      tagInputRef.current?.focus();
-    };
-
     // --- Submit Logic (Create or Update) ---
     const handleSubmit = async () => {
       if (!content.trim()) return;
@@ -518,6 +484,13 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         : t.addEntry?.newEntryTitle || "New Entry";
 
     return (
+      <EscModalWrapper
+        id="AddEntryModal"
+        isOpen={isModalOpen}
+        onClose={closeModal}
+        mountWhenClosed
+        portal={false}
+      >
       <dialog
         ref={dialogRef}
         className="modal modal-bottom sm:modal-middle"
@@ -571,83 +544,19 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
             <div className="px-6 py-4 bg-base-100">
               <TypeSelector currentType={type} onChange={setType} />
 
-              <div className="relative mt-4 rounded-2xl border border-base-200/70 bg-base-200/25 px-3 py-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={handleTagButtonClick}
-                    className="btn btn-ghost btn-xs btn-circle text-base-content/45 hover:text-primary hover:bg-primary/10"
-                    aria-label="添加标签"
-                    title="添加标签"
-                  >
-                    {tagDraft.trim() ? (
-                      <Plus size={14} strokeWidth={2.5} />
-                    ) : (
-                      <Hash size={14} strokeWidth={2.5} />
-                    )}
-                  </button>
-                  {tags.map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => removeTag(tag)}
-                      className="inline-flex items-center gap-1 rounded-full border border-primary/10 bg-primary/10 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/15"
-                    >
-                      {tag}
-                      <X size={11} strokeWidth={2.5} />
-                    </button>
-                  ))}
-                  <input
-                    ref={tagInputRef}
-                    className="min-w-28 flex-1 bg-transparent text-sm outline-none placeholder:text-base-content/30"
-                    value={tagDraft}
-                    onChange={(e) => {
-                      setTagDraft(e.target.value);
-                      setHighlightedTagSuggestionIndex(-1);
-                    }}
-                    onKeyDown={handleTagKeyDown}
-                    onFocus={() => setTagInputFocused(true)}
-                    onBlur={() => {
-                      addTag(tagDraft);
-                      setTagInputFocused(false);
-                      setHighlightedTagSuggestionIndex(-1);
-                    }}
-                    placeholder="添加标签"
-                  />
-                </div>
-                {filteredTagSuggestions.length > 0 && (
-                  <div
-                    className="absolute left-3 right-3 top-full z-40 mt-2 max-h-44 overflow-y-auto rounded-xl border border-base-200 bg-base-100/95 p-1 shadow-xl backdrop-blur-md"
-                    role="listbox"
-                  >
-                    {filteredTagSuggestions.map((tag, index) => {
-                      const selected = index === highlightedTagSuggestionIndex;
-                      return (
-                        <button
-                          key={tag}
-                          type="button"
-                          role="option"
-                          aria-selected={selected}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onMouseEnter={() =>
-                            setHighlightedTagSuggestionIndex(index)
-                          }
-                          onClick={() => addTag(tag)}
-                          className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
-                            selected
-                              ? "bg-primary/10 text-primary"
-                              : "text-base-content/75 hover:bg-base-200/70"
-                          }`}
-                        >
-                          <Hash size={13} className="text-primary/70" />
-                          <span className="truncate">{tag}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              <TagInput
+                tags={tags}
+                draft={tagDraft}
+                suggestions={filteredTagSuggestions}
+                highlightedIndex={highlightedTagSuggestionIndex}
+                placeholder="添加标签"
+                onDraftChange={setTagDraft}
+                onFocusChange={setTagInputFocused}
+                onHighlightChange={setHighlightedTagSuggestionIndex}
+                onAddTag={addTag}
+                onRemoveTag={removeTag}
+                containerClassName="relative mt-4 rounded-2xl border border-base-200/70 bg-base-200/25 px-3 py-2"
+              />
 
               {mode === "future" && (
                 <div className="mt-4 pt-4 border-t border-base-200/50 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -754,6 +663,7 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
           <button disabled={isUploading || loading}>close</button>
         </form>
       </dialog>
+      </EscModalWrapper>
     );
   },
 );

@@ -4,7 +4,6 @@ import {
   useEffect,
   useCallback,
   useMemo,
-  type KeyboardEvent,
 } from "react";
 import {
   Search,
@@ -27,6 +26,7 @@ import { useAppTheme } from "../../hooks/useAppTheme"; // ✅ 1. 引入 AppTheme
 import { entryEventBus } from "../../lib/entryEventBus";
 import { EscModalWrapper } from "../common/EscModalWrapper"; // ✅ 2. 引入 EscWrapper
 import { useTagCache } from "../../context/TagCacheContext";
+import TagInput from "../shared/TagInput";
 
 interface Props {
   isOpen: boolean;
@@ -63,6 +63,8 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
   const [tagInputFocused, setTagInputFocused] = useState(false);
+  const [highlightedTagSuggestionIndex, setHighlightedTagSuggestionIndex] =
+    useState(-1);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [results, setResults] = useState<any[]>([]);
@@ -93,6 +95,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
         setSelectedTags([]);
         setTagDraft("");
         setTagInputFocused(false);
+        setHighlightedTagSuggestionIndex(-1);
       }, 300);
       return () => clearTimeout(timer);
     }
@@ -134,20 +137,12 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
       return [...current, tag];
     });
     setTagDraft("");
+    setHighlightedTagSuggestionIndex(-1);
   }, []);
 
   const removeTagFilter = useCallback((tag: string) => {
     setSelectedTags((current) => current.filter((item) => item !== tag));
   }, []);
-
-  const handleTagKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" || e.key === "," || e.key === "，") {
-      e.preventDefault();
-      addTagFilter(tagDraft);
-    } else if (e.key === "Backspace" && !tagDraft && selectedTags.length > 0) {
-      removeTagFilter(selectedTags[selectedTags.length - 1]);
-    }
-  };
 
   const filteredTagSuggestions = useMemo(() => {
     if (!tagInputFocused) return [];
@@ -168,6 +163,14 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
         return aStarts ? -1 : 1;
       });
   }, [allTags, selectedTags, tagDraft, tagInputFocused]);
+
+  useEffect(() => {
+    setHighlightedTagSuggestionIndex((current) => {
+      if (filteredTagSuggestions.length === 0) return -1;
+      if (current >= filteredTagSuggestions.length) return -1;
+      return current;
+    });
+  }, [filteredTagSuggestions.length]);
 
   const performSearch = useCallback(async () => {
     if (!query.trim() && !startDate && !endDate && selectedTags.length === 0) {
@@ -494,73 +497,34 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
               </div>
 
               {/* Native Tag Filters */}
-              <div
-                className={`relative rounded-2xl p-2 flex flex-wrap items-center gap-2 border ${filterContainerStyle}`}
-              >
-                <Hash
-                  size={14}
-                  className={`shrink-0 ${isDark ? "text-indigo-300/70" : "text-indigo-400/70"}`}
-                />
-                {selectedTags.map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => removeTagFilter(tag)}
-                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold transition-colors ${
-                      isDark
-                        ? "bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25"
-                        : "bg-indigo-100/80 text-indigo-600 hover:bg-indigo-200/80"
-                    }`}
-                  >
-                    {tag}
-                    <X size={11} strokeWidth={2.5} />
-                  </button>
-                ))}
-                <input
-                  value={tagDraft}
-                  onChange={(e) => setTagDraft(e.target.value)}
-                  onKeyDown={handleTagKeyDown}
-                  onFocus={() => setTagInputFocused(true)}
-                  onBlur={() => {
-                    addTagFilter(tagDraft);
-                    setTagInputFocused(false);
-                  }}
-                  placeholder={t.search?.tagPlaceholder || "Filter by tag"}
-                  className={`min-w-28 flex-1 bg-transparent outline-none text-sm font-medium placeholder:opacity-40 ${
-                    isDark ? "text-slate-300" : "text-slate-600"
-                  }`}
-                />
-                {tagDraft.trim() && (
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => addTagFilter(tagDraft)}
-                    className={`px-2.5 py-1 rounded-full text-xs font-bold transition-colors ${
-                      isDark
-                        ? "bg-white/10 text-slate-300 hover:bg-white/15"
-                        : "bg-white text-indigo-500 hover:bg-indigo-50"
-                    }`}
-                  >
-                    {t.search?.addTag || "Add"}
-                  </button>
-                )}
-                {filteredTagSuggestions.length > 0 && (
-                  <div className="absolute left-2 right-2 top-full z-30 mt-2 max-h-44 overflow-y-auto rounded-xl border border-base-200 bg-base-100/95 p-1 shadow-xl backdrop-blur-md">
-                    {filteredTagSuggestions.map((tag) => (
-                      <button
-                        key={tag}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => addTagFilter(tag)}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-base-content/75 hover:bg-base-200/70"
-                      >
-                        <Hash size={13} className="text-indigo-400" />
-                        <span className="truncate">{tag}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <TagInput
+                tags={selectedTags}
+                draft={tagDraft}
+                suggestions={filteredTagSuggestions}
+                highlightedIndex={highlightedTagSuggestionIndex}
+                placeholder={t.search?.tagPlaceholder || "Filter by tag"}
+                onDraftChange={setTagDraft}
+                onFocusChange={setTagInputFocused}
+                onHighlightChange={setHighlightedTagSuggestionIndex}
+                onAddTag={addTagFilter}
+                onRemoveTag={removeTagFilter}
+                addButtonLabel={t.search?.addTag || "Add"}
+                containerClassName={`relative rounded-2xl p-2 border ${filterContainerStyle}`}
+                inputClassName={`min-w-28 flex-1 bg-transparent outline-none text-sm font-medium placeholder:opacity-40 ${
+                  isDark ? "text-slate-300" : "text-slate-600"
+                }`}
+                chipClassName={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold transition-colors ${
+                  isDark
+                    ? "bg-indigo-500/15 text-indigo-200 hover:bg-indigo-500/25"
+                    : "bg-indigo-100/80 text-indigo-600 hover:bg-indigo-200/80"
+                }`}
+                addButtonClassName={`btn btn-ghost btn-xs btn-circle ${
+                  isDark
+                    ? "text-indigo-300/70 hover:bg-white/10"
+                    : "text-indigo-400/70 hover:bg-white"
+                }`}
+                iconClassName="text-indigo-400"
+              />
             </div>
           </div>
 
