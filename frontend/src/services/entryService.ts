@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { type EntryType } from "../config/entryTheme";
+import { type EntrySummary } from "../utils/markdownUtils";
 
 export interface CreateEntryPayload {
   content: string;
@@ -118,6 +119,12 @@ export interface AttachmentCleanupResult {
   summary: AttachmentMaintenanceSummary;
 }
 
+export interface DayOverview {
+  id: string;
+  type: EntryType;
+  status: string;
+}
+
 type SearchMode = "text" | "regex" | "semantic";
 
 interface SearchResult {
@@ -133,10 +140,51 @@ const normalizeEntry = (entry: any) => {
     ...entry,
     date: entry.date ?? entry.target_date ?? null,
     tags: Array.isArray(entry.tags) ? entry.tags : [],
+    summary: normalizeEntrySummary(entry.summary),
   };
 };
 
 const normalizeEntries = (entries: any[]) => entries.map(normalizeEntry);
+
+const normalizeEntrySummary = (summary: any): EntrySummary | undefined => {
+  if (!summary || typeof summary !== "object") return undefined;
+  const meta = summary.meta || {};
+  return {
+    text: typeof summary.text === "string" ? summary.text : "",
+    uploadReferences: Array.isArray(summary.upload_references)
+      ? summary.upload_references
+      : Array.isArray(summary.uploadReferences)
+        ? summary.uploadReferences
+        : [],
+    meta: {
+      hasImage: Boolean(meta.has_image ?? meta.hasImage),
+      hasLink: Boolean(meta.has_link ?? meta.hasLink),
+      hasChecklist: Boolean(meta.has_checklist ?? meta.hasChecklist),
+      hasOrderedList: Boolean(meta.has_ordered_list ?? meta.hasOrderedList),
+      hasUnorderedList: Boolean(
+        meta.has_unordered_list ?? meta.hasUnorderedList,
+      ),
+      hasCode: Boolean(meta.has_code ?? meta.hasCode),
+      hasMath: Boolean(meta.has_math ?? meta.hasMath),
+      hasQuote: Boolean(meta.has_quote ?? meta.hasQuote),
+      hasTag: Boolean(meta.has_tag ?? meta.hasTag),
+    },
+  };
+};
+
+const normalizeOverviewMap = (overview: Record<string, any[]>): Record<string, DayOverview[]> => {
+  const normalized: Record<string, DayOverview[]> = {};
+  Object.entries(overview || {}).forEach(([date, items]) => {
+    normalized[date] = Array.isArray(items)
+      ? items.map((item) => ({
+          id: String(item.id),
+          type: (item.type ?? item.entry_type ?? "task") as EntryType,
+          status: String(item.status ?? "open"),
+        }))
+      : [];
+  });
+  return normalized;
+};
 
 const normalizeUpload = <
   T extends {
@@ -315,18 +363,20 @@ export const entryService = {
   },
 
   getRangeOverview: async (startDate: string, endDate: string) => {
-    return invoke<any[]>("get_range_overview", {
+    const overview = await invoke<Record<string, any[]>>("get_range_overview", {
       startDate,
       endDate,
       includeArchived: false,
     });
+    return normalizeOverviewMap(overview);
   },
 
   getMonthOverview: async (month: string) => {
-    return invoke<Record<string, any[]>>("get_month_overview", {
+    const overview = await invoke<Record<string, any[]>>("get_month_overview", {
       month,
       includeArchived: false,
     });
+    return normalizeOverviewMap(overview);
   },
 
   getDailyEntries: async (dateStr: string, includeArchived = false) => {

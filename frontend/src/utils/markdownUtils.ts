@@ -1,5 +1,6 @@
 export interface EntrySummary {
   text: string;
+  uploadReferences?: string[];
   meta: {
     hasImage: boolean;
     hasLink: boolean;

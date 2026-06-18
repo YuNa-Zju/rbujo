@@ -1,9 +1,112 @@
-import { useState, useEffect, useCallback } from "react"; // ✅ 引入 useRef
+import { useState, useEffect, useCallback } from "react";
 import { format, startOfYear, endOfYear } from "date-fns";
-import { entryService } from "../services/entryService";
+import { entryService, type DayOverview } from "../services/entryService";
 import { cacheStorage } from "../utils/cacheStorage";
-import { entryEventBus, type MigratePayload } from "../lib/entryEventBus";
-import { type DayOverview } from "../features/calendar/components/CalendarDots";
+import { entryEventBus } from "../lib/entryEventBus";
+
+type OverviewCache = Record<string, DayOverview[]>;
+type EntryCache = Record<string, any[]>;
+
+const getEntryDateKey = (entry: any): string | null => {
+  const rawDate = entry?.target_date ?? entry?.date;
+  if (!rawDate) return null;
+  if (typeof rawDate === "string") return rawDate.split("T")[0];
+  return format(new Date(rawDate), "yyyy-MM-dd");
+};
+
+const mergeEntryForCache = (current: any | undefined, update: any) => {
+  const merged = { ...(current || {}), ...update };
+  if (
+    update &&
+    Object.prototype.hasOwnProperty.call(update, "content") &&
+    update.content !== current?.content &&
+    !Object.prototype.hasOwnProperty.call(update, "summary")
+  ) {
+    delete merged.summary;
+  }
+  return merged;
+};
+
+const upsertDailyEntry = (cache: EntryCache, update: any): EntryCache => {
+  if (!update?.id) return cache;
+
+  let existingDate: string | null = null;
+  let existingEntry: any | undefined;
+  for (const [dateKey, entries] of Object.entries(cache)) {
+    const match = entries.find((entry: any) => entry.id === update.id);
+    if (match) {
+      existingDate = dateKey;
+      existingEntry = match;
+      break;
+    }
+  }
+
+  const merged = mergeEntryForCache(existingEntry, update);
+  const targetDate = getEntryDateKey(merged) || existingDate;
+  if (!targetDate) return cache;
+
+  const nextCache = { ...cache };
+  if (existingDate && existingDate !== targetDate) {
+    nextCache[existingDate] = (nextCache[existingDate] || []).filter(
+      (entry: any) => entry.id !== update.id,
+    );
+  }
+
+  const targetEntries = nextCache[targetDate] || [];
+  nextCache[targetDate] = targetEntries.some((entry: any) => entry.id === update.id)
+    ? targetEntries.map((entry: any) => (entry.id === update.id ? merged : entry))
+    : [merged, ...targetEntries];
+  return nextCache;
+};
+
+const removeDailyEntry = (cache: EntryCache, id: string): EntryCache => {
+  let changed = false;
+  const nextCache: EntryCache = {};
+  for (const [dateKey, entries] of Object.entries(cache)) {
+    const filtered = entries.filter((entry: any) => entry.id !== id);
+    nextCache[dateKey] = filtered;
+    changed ||= filtered.length !== entries.length;
+  }
+  return changed ? nextCache : cache;
+};
+
+const findOverviewDot = (cache: OverviewCache, id: string) => {
+  for (const [dateKey, entries] of Object.entries(cache)) {
+    const match = entries.find((entry) => entry.id === id);
+    if (match) return { dateKey, dot: match };
+  }
+  return null;
+};
+
+const upsertOverviewEntry = (cache: OverviewCache, update: any): OverviewCache => {
+  if (!update?.id) return cache;
+  const existing = findOverviewDot(cache, update.id);
+  const targetDate = getEntryDateKey(update) || existing?.dateKey;
+  if (!targetDate) return cache;
+
+  const nextCache: OverviewCache = {};
+  for (const [dateKey, entries] of Object.entries(cache)) {
+    nextCache[dateKey] = entries.filter((entry) => entry.id !== update.id);
+  }
+
+  if (update.archived_at) return nextCache;
+
+  const dot: DayOverview = {
+    id: update.id,
+    type: update.entry_type ?? update.type ?? existing?.dot.type ?? "task",
+    status: update.status ?? existing?.dot.status ?? "open",
+  };
+  nextCache[targetDate] = [...(nextCache[targetDate] || []), dot];
+  return nextCache;
+};
+
+const removeOverviewEntry = (cache: OverviewCache, id: string): OverviewCache => {
+  const nextCache: OverviewCache = {};
+  for (const [dateKey, entries] of Object.entries(cache)) {
+    nextCache[dateKey] = entries.filter((entry) => entry.id !== id);
+  }
+  return nextCache;
+};
 
 export function useJournalData(
   selectedDate: Date,
@@ -11,24 +114,16 @@ export function useJournalData(
   viewMode: string,
 ) {
   const [dailyCache, setDailyCache] = useState<Record<string, any[]>>({});
-  const [overviewCache, setOverviewCache] = useState<
-    Record<string, DayOverview[]>
-  >({});
-  const [yearEntries, setYearEntries] = useState<any[]>([]);
+  const [overviewCache, setOverviewCache] = useState<OverviewCache>({});
+  const [yearOverview, setYearOverview] = useState<OverviewCache>({});
   const [loadingList, setLoadingList] = useState(false);
   const [isCacheLoaded, setIsCacheLoaded] = useState(false);
 
-  // 1. Load Cache
   useEffect(() => {
     const loadCache = async () => {
       try {
-        const [daily, overview] = await Promise.all([
-          cacheStorage.loadDaily(),
-          cacheStorage.loadOverview(),
-        ]);
+        const daily = await cacheStorage.loadDaily();
         if (daily && Object.keys(daily).length) setDailyCache(daily);
-        if (overview && Object.keys(overview).length)
-          setOverviewCache(overview);
       } catch (e) {
         console.error("Cache load failed", e);
       } finally {
@@ -38,63 +133,43 @@ export function useJournalData(
     loadCache();
   }, []);
 
-  // 2. Save Cache
   useEffect(() => {
     if (isCacheLoaded) cacheStorage.saveDaily(dailyCache);
   }, [dailyCache, isCacheLoaded]);
 
-  useEffect(() => {
-    if (isCacheLoaded) cacheStorage.saveOverview(overviewCache);
-  }, [overviewCache, isCacheLoaded]);
+  const refreshMonthOverview = useCallback(async () => {
+    const data = await entryService.getMonthOverview(format(currentDate, "yyyy-MM"));
+    setOverviewCache(data);
+  }, [currentDate]);
 
-  // 3. API Fetching - Overview
+  const refreshYearOverview = useCallback(async () => {
+    const start = format(startOfYear(currentDate), "yyyy-MM-dd");
+    const end = format(endOfYear(currentDate), "yyyy-MM-dd");
+    const data = await entryService.getRangeOverview(start, end);
+    setYearOverview(data);
+  }, [currentDate]);
+
   useEffect(() => {
     if (viewMode === "year" || !isCacheLoaded) return;
-    const fetchOverview = async () => {
-      try {
-        const data = await entryService.getMonthOverview(
-          format(currentDate, "yyyy-MM"),
-        );
-        setOverviewCache((prev) => ({ ...prev, ...data }));
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    fetchOverview();
-  }, [currentDate, viewMode, isCacheLoaded]);
+    refreshMonthOverview().catch(console.error);
+  }, [refreshMonthOverview, viewMode, isCacheLoaded]);
 
-  // 🔴 4. API Fetching - Daily (核心修复)
   useEffect(() => {
     if (viewMode === "year" || !isCacheLoaded) return;
 
-    const dStr = format(selectedDate, "yyyy-MM-dd");
-
-    // 逻辑变更：即使缓存里有数据，也要静默刷新，因为可能在别的页面被改了
-    // 只有当缓存完全为空时，才显示 Loading 转圈
-    if (!dailyCache[dStr]) {
+    const dateKey = format(selectedDate, "yyyy-MM-dd");
+    if (!dailyCache[dateKey]) {
       setLoadingList(true);
     }
 
     const fetchDaily = async () => {
       try {
-        const newData = (await entryService.getDailyEntries(dStr)) || [];
-
+        const newData = (await entryService.getDailyEntries(dateKey)) || [];
         setDailyCache((prev) => {
-          // 只有当数据真的变了才更新 State，防止死循环
-          if (JSON.stringify(prev[dStr]) !== JSON.stringify(newData)) {
-            return { ...prev, [dStr]: newData };
+          if (JSON.stringify(prev[dateKey]) !== JSON.stringify(newData)) {
+            return { ...prev, [dateKey]: newData };
           }
           return prev;
-        });
-
-        // 同步更新 overview dots
-        setOverviewCache((prev) => {
-          const dots = newData.map((e: any) => ({
-            id: e.id,
-            type: e.entry_type,
-            status: e.status,
-          }));
-          return { ...prev, [dStr]: dots };
         });
       } catch (e) {
         console.error(e);
@@ -104,52 +179,63 @@ export function useJournalData(
     };
 
     fetchDaily();
+  }, [selectedDate, viewMode, isCacheLoaded]);
 
-    // ⚠️ 关键：移除 dailyCache 依赖，防止 fetch -> setDailyCache -> effect -> fetch 的死循环
-    // 我们只在 selectedDate 或 viewMode 变化时重新请求
-  }, [selectedDate, viewMode, isCacheLoaded]); // ❌ Removed dailyCache dependency
-
-  // Year View Fetching
   useEffect(() => {
     if (viewMode !== "year") return;
-    const fetchYear = async () => {
-      try {
-        const start = format(startOfYear(currentDate), "yyyy-MM-dd");
-        const end = format(endOfYear(currentDate), "yyyy-MM-dd");
-        const data = await entryService.getRangeOverview(start, end);
-        setYearEntries(data);
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    fetchYear();
-  }, [currentDate, viewMode]);
+    refreshYearOverview().catch(console.error);
+  }, [refreshYearOverview, viewMode]);
 
   const handleSilentRefresh = useCallback(() => {
     if (viewMode === "year") {
-      const start = format(startOfYear(currentDate), "yyyy-MM-dd");
-      const end = format(endOfYear(currentDate), "yyyy-MM-dd");
-      entryService
-        .getRangeOverview(start, end)
-        .then(setYearEntries)
-        .catch(console.error);
+      refreshYearOverview().catch(console.error);
       return;
     }
 
-    const dStr = format(selectedDate, "yyyy-MM-dd");
+    const dateKey = format(selectedDate, "yyyy-MM-dd");
     entryService
-      .getDailyEntries(dStr)
-      .then((data) => setDailyCache((prev) => ({ ...prev, [dStr]: data })));
-    entryService
-      .getMonthOverview(format(currentDate, "yyyy-MM"))
-      .then((data) => setOverviewCache((prev) => ({ ...prev, ...data })));
-  }, [viewMode, currentDate, selectedDate]);
+      .getDailyEntries(dateKey)
+      .then((data) => setDailyCache((prev) => ({ ...prev, [dateKey]: data })))
+      .catch(console.error);
+    refreshMonthOverview().catch(console.error);
+  }, [refreshMonthOverview, refreshYearOverview, viewMode, selectedDate]);
 
   const handleInvalidateOverviewCache = useCallback(() => {
-    setOverviewCache({});
-    cacheStorage.clearOverview().catch(console.error);
-    handleSilentRefresh();
-  }, [handleSilentRefresh]);
+    if (viewMode === "year") {
+      refreshYearOverview().catch(console.error);
+    } else {
+      refreshMonthOverview().catch(console.error);
+    }
+  }, [refreshMonthOverview, refreshYearOverview, viewMode]);
+
+  const handleOptimisticCreate = useCallback((entry: any) => {
+    setDailyCache((prev) => upsertDailyEntry(prev, entry));
+    setOverviewCache((prev) => upsertOverviewEntry(prev, entry));
+    setYearOverview((prev) => upsertOverviewEntry(prev, entry));
+  }, []);
+
+  const handleOptimisticUpdate = useCallback((entry: any) => {
+    setDailyCache((prev) => upsertDailyEntry(prev, entry));
+    setOverviewCache((prev) => upsertOverviewEntry(prev, entry));
+    setYearOverview((prev) => upsertOverviewEntry(prev, entry));
+  }, []);
+
+  const handleOptimisticDelete = useCallback((payload: any) => {
+    const id = typeof payload === "string" ? payload : payload?.id;
+    if (!id) return;
+    setDailyCache((prev) => removeDailyEntry(prev, id));
+    setOverviewCache((prev) => removeOverviewEntry(prev, id));
+    setYearOverview((prev) => removeOverviewEntry(prev, id));
+  }, []);
+
+  const handleOptimisticMigrate = useCallback(
+    (payload: any) => {
+      if (!payload) return;
+      if (payload.source) handleOptimisticUpdate(payload.source);
+      if (payload.target) handleOptimisticCreate(payload.target);
+    },
+    [handleOptimisticCreate, handleOptimisticUpdate],
+  );
 
   useEffect(() => {
     if (viewMode === "year" || !isCacheLoaded) return;
@@ -170,222 +256,37 @@ export function useJournalData(
     if (!isCacheLoaded) return;
     entryEventBus.on("entry:reload_needed", handleSilentRefresh);
     entryEventBus.on("entry:invalidate_overview_cache", handleInvalidateOverviewCache);
+    entryEventBus.on("entry:create", handleOptimisticCreate);
+    entryEventBus.on("entry:update", handleOptimisticUpdate);
+    entryEventBus.on("entry:status_change", handleOptimisticUpdate);
+    entryEventBus.on("entry:delete", handleOptimisticDelete);
+    entryEventBus.on("entry:migrate", handleOptimisticMigrate);
     return () => {
       entryEventBus.off("entry:reload_needed", handleSilentRefresh);
       entryEventBus.off(
         "entry:invalidate_overview_cache",
         handleInvalidateOverviewCache,
       );
+      entryEventBus.off("entry:create", handleOptimisticCreate);
+      entryEventBus.off("entry:update", handleOptimisticUpdate);
+      entryEventBus.off("entry:status_change", handleOptimisticUpdate);
+      entryEventBus.off("entry:delete", handleOptimisticDelete);
+      entryEventBus.off("entry:migrate", handleOptimisticMigrate);
     };
-  }, [handleInvalidateOverviewCache, handleSilentRefresh, isCacheLoaded]);
-
-  // -------------------------------------------------------------------------
-  // ✅ 5. EventBus Logic (保持之前的修复)
-  // -------------------------------------------------------------------------
-
-  const getEntryDateKey = (entry: any): string | null => {
-    if (entry.date)
-      return typeof entry.date === "string"
-        ? entry.date.split("T")[0]
-        : format(new Date(entry.date), "yyyy-MM-dd");
-    if (entry.target_date)
-      return typeof entry.target_date === "string"
-        ? entry.target_date.split("T")[0]
-        : format(new Date(entry.target_date), "yyyy-MM-dd");
-    return null;
-  };
-
-  useEffect(() => {
-    const handleUpdate = (updatedPayload: any) => {
-      const targetId = updatedPayload.id;
-      // console.log("🔄 [UseJournal] Update Rx:", updatedPayload);
-
-      setDailyCache((prev) => {
-        const newState = { ...prev };
-        let hasChanges = false;
-        let existingEntry = null;
-        let existingDateKey = null;
-
-        for (const dateKey of Object.keys(newState)) {
-          const found = newState[dateKey].find((e) => e.id === targetId);
-          if (found) {
-            existingEntry = found;
-            existingDateKey = dateKey;
-            break;
-          }
-        }
-
-        const finalEntry = existingEntry
-          ? { ...existingEntry, ...updatedPayload }
-          : updatedPayload;
-
-        const dateKey = getEntryDateKey(finalEntry);
-        if (dateKey && !finalEntry.date) {
-          finalEntry.date = dateKey;
-        }
-
-        if (existingEntry) {
-          if (dateKey && dateKey !== existingDateKey) {
-            // 跨天移动
-            newState[existingDateKey!] = newState[existingDateKey!].filter(
-              (e) => e.id !== targetId,
-            );
-            const newList = newState[dateKey] || [];
-            newState[dateKey] = [finalEntry, ...newList];
-            hasChanges = true;
-          } else if (dateKey && dateKey === existingDateKey) {
-            // 原地更新
-            const list = newState[dateKey];
-            const index = list.findIndex((e) => e.id === targetId);
-            if (index !== -1) {
-              const newList = [...list];
-              newList[index] = finalEntry;
-              newState[dateKey] = newList;
-              hasChanges = true;
-            }
-          } else {
-            // 移除 (无日期)
-            newState[existingDateKey!] = newState[existingDateKey!].filter(
-              (e) => e.id !== targetId,
-            );
-            hasChanges = true;
-          }
-        } else {
-          // 新增
-          if (dateKey) {
-            const list = newState[dateKey] || [];
-            if (!list.some((e) => e.id === targetId)) {
-              newState[dateKey] = [finalEntry, ...list];
-              hasChanges = true;
-            }
-          }
-        }
-        return hasChanges ? newState : prev;
-      });
-
-      // Overview Dots Update
-      setOverviewCache((prev) => {
-        const newState = { ...prev };
-        let hasChanges = false;
-
-        let existingDateKey = null;
-        for (const dateKey of Object.keys(newState)) {
-          if (newState[dateKey].some((d) => d.id === targetId)) {
-            existingDateKey = dateKey;
-            break;
-          }
-        }
-
-        const targetDateKey =
-          getEntryDateKey(updatedPayload) || existingDateKey;
-
-        if (
-          existingDateKey &&
-          targetDateKey &&
-          existingDateKey !== targetDateKey
-        ) {
-          newState[existingDateKey] = newState[existingDateKey].filter(
-            (d) => d.id !== targetId,
-          );
-          const dots = newState[targetDateKey] || [];
-          newState[targetDateKey] = [
-            {
-              id: targetId,
-              type: updatedPayload.entry_type || "task",
-              status: updatedPayload.status || "open",
-            },
-            ...dots,
-          ];
-          hasChanges = true;
-        } else if (targetDateKey) {
-          const dots = newState[targetDateKey] || [];
-          const index = dots.findIndex((d) => d.id === targetId);
-          if (index !== -1) {
-            const oldDot = dots[index];
-            const newDot = {
-              ...oldDot,
-              type: updatedPayload.entry_type ?? oldDot.type,
-              status: updatedPayload.status ?? oldDot.status,
-            };
-            if (
-              oldDot.type !== newDot.type ||
-              oldDot.status !== newDot.status
-            ) {
-              const newDots = [...dots];
-              newDots[index] = newDot;
-              newState[targetDateKey] = newDots;
-              hasChanges = true;
-            }
-          } else if (updatedPayload.entry_type && updatedPayload.status) {
-            newState[targetDateKey] = [
-              {
-                id: targetId,
-                type: updatedPayload.entry_type,
-                status: updatedPayload.status,
-              },
-              ...dots,
-            ];
-            hasChanges = true;
-          }
-        } else if (existingDateKey && !targetDateKey) {
-          newState[existingDateKey] = newState[existingDateKey].filter(
-            (d) => d.id !== targetId,
-          );
-          hasChanges = true;
-        }
-        return hasChanges ? newState : prev;
-      });
-    };
-
-    const handleDelete = (id: string) => {
-      setDailyCache((prev) => {
-        const newState = { ...prev };
-        let hasChanges = false;
-        Object.keys(newState).forEach((key) => {
-          if (newState[key].some((e) => e.id === id)) {
-            newState[key] = newState[key].filter((i) => i.id !== id);
-            hasChanges = true;
-          }
-        });
-        return hasChanges ? newState : prev;
-      });
-      setOverviewCache((prev) => {
-        const newState = { ...prev };
-        let hasChanges = false;
-        Object.keys(newState).forEach((key) => {
-          if (newState[key].some((d) => d.id === id)) {
-            newState[key] = newState[key].filter((d) => d.id !== id);
-            hasChanges = true;
-          }
-        });
-        return hasChanges ? newState : prev;
-      });
-    };
-
-    const handleMigrate = (payload: MigratePayload) => {
-      handleUpdate(payload.source);
-      if (payload.target) handleUpdate(payload.target);
-    };
-
-    entryEventBus.on("entry:create", handleUpdate);
-    entryEventBus.on("entry:update", handleUpdate);
-    entryEventBus.on("entry:status_change", handleUpdate);
-    entryEventBus.on("entry:delete", handleDelete);
-    entryEventBus.on("entry:migrate", handleMigrate);
-
-    return () => {
-      entryEventBus.off("entry:create", handleUpdate);
-      entryEventBus.off("entry:update", handleUpdate);
-      entryEventBus.off("entry:status_change", handleUpdate);
-      entryEventBus.off("entry:delete", handleDelete);
-      entryEventBus.off("entry:migrate", handleMigrate);
-    };
-  }, []);
+  }, [
+    handleInvalidateOverviewCache,
+    handleOptimisticCreate,
+    handleOptimisticDelete,
+    handleOptimisticMigrate,
+    handleOptimisticUpdate,
+    handleSilentRefresh,
+    isCacheLoaded,
+  ]);
 
   return {
     dailyCache,
     overviewCache,
-    yearEntries,
+    yearOverview,
     loadingList,
     handleSilentRefresh,
     setDailyCache,

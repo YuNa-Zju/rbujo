@@ -74,7 +74,7 @@ export default function CalendarPage() {
   const {
     dailyCache,
     overviewCache,
-    yearEntries,
+    yearOverview,
     loadingList,
     handleSilentRefresh,
     setDailyCache,
@@ -297,7 +297,7 @@ export default function CalendarPage() {
             >
               <YearGrid
                 currentDate={currentDate}
-                entries={yearEntries}
+                overviewMap={yearOverview}
                 onDateClick={handleDateClick}
                 onMonthClick={handleMonthClick}
               />

@@ -269,10 +269,15 @@ test("backup imports keep an undoable record and refresh views without full relo
     journalDataSource,
     /entryEventBus\.on\("entry:invalidate_overview_cache", handleInvalidateOverviewCache\)/,
   );
-  assert.match(journalDataSource, /cacheStorage\.clearOverview/);
+  assert.doesNotMatch(journalDataSource, /cacheStorage\.clearOverview/);
+  assert.doesNotMatch(journalDataSource, /cacheStorage\.loadOverview/);
   assert.match(
     journalDataSource,
-    /const handleSilentRefresh = useCallback\(\(\) => \{[\s\S]*viewMode === "year"[\s\S]*entryService[\s\S]*\.getRangeOverview/,
+    /const refreshYearOverview = useCallback\(async \(\) => \{[\s\S]*entryService\.getRangeOverview/,
+  );
+  assert.match(
+    journalDataSource,
+    /const handleSilentRefresh = useCallback\(\(\) => \{[\s\S]*viewMode === "year"[\s\S]*refreshYearOverview/,
   );
   assert.match(dailyPageSource, /entryEventBus\.on\("entry:reload_needed", refreshCurrentDate\)/);
   assert.doesNotMatch(translationsSource, /即将刷新/);

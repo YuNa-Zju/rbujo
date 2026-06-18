@@ -265,6 +265,94 @@ async fn native_tag_list_reads_tags_without_entry_search() {
 }
 
 #[tokio::test]
+async fn entry_responses_include_backend_markdown_summary() {
+    let dir = temp_app_dir("backend-summary");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content:
+                "#tag\n\n- [ ] ![Diagram](asset://localhost/%2FUsers%2Fme%2Fattachments%2Fdiagram.png)\n\n[Doc](attachments/doc.pdf)\n\n`code` $x$"
+                    .to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(entry.summary.text, "[图片] Diagram");
+    assert!(entry.summary.meta.has_image);
+    assert!(entry.summary.meta.has_checklist);
+    assert!(entry.summary.meta.has_link);
+    assert!(entry.summary.meta.has_code);
+    assert!(entry.summary.meta.has_math);
+    assert!(entry.summary.meta.has_tag);
+    assert_eq!(
+        entry.summary.upload_references,
+        vec![
+            "attachments/diagram.png".to_string(),
+            "attachments/doc.pdf".to_string()
+        ]
+    );
+
+    let daily = backend.get_daily_log("2026-06-18", false).await.unwrap();
+    assert_eq!(daily[0].summary.text, "[图片] Diagram");
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn overview_commands_return_backend_grouped_day_dots() {
+    let dir = temp_app_dir("backend-overview");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let created = backend
+        .create_entry(CreateEntryInput {
+            content: "overview dot".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let month = backend
+        .get_month_overview("2026-06".to_string(), false)
+        .await
+        .unwrap();
+    assert_eq!(month["2026-06-18"][0].id, created.id);
+    assert_eq!(month["2026-06-18"][0].entry_type, "event");
+    assert_eq!(month["2026-06-18"][0].status, "open");
+
+    backend
+        .update_entry(
+            created.id.clone(),
+            EntryPatch {
+                status: Some("completed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let updated_month = backend
+        .get_month_overview("2026-06".to_string(), false)
+        .await
+        .unwrap();
+    assert_eq!(updated_month["2026-06-18"][0].status, "completed");
+
+    let range = backend
+        .get_range_overview("2026-06-01".to_string(), "2026-06-30".to_string(), false)
+        .await
+        .unwrap();
+    assert_eq!(range["2026-06-18"][0].id, created.id);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn tag_migration_script_parses_existing_text_tags_once() {
     let dir = temp_app_dir("text-tag-migration");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();

@@ -84,6 +84,81 @@ fn command_palette_places_tags_between_data_and_app_groups() {
 }
 
 #[test]
+fn settings_modal_uses_card_and_capsule_controls() {
+    let source = read_file("frontend/src/components/modals/SettingsModalController.tsx");
+
+    assert!(
+        source.contains("SettingsActionCard"),
+        "Settings modal should render primary actions as card-style controls"
+    );
+    assert!(
+        source.contains("SettingsPill"),
+        "Settings modal should expose compact capsule status controls"
+    );
+    assert!(
+        source.contains("rounded-full") && source.contains("rounded-3xl"),
+        "Settings modal should keep the app's capsule and card visual language"
+    );
+}
+
+#[test]
+fn frontend_prefers_backend_summaries_and_backend_overview_cache() {
+    let entry_display = read_file("frontend/src/features/entry/EntryDisplay.tsx");
+    let command_palette = read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+    let entry_action_view = read_file("frontend/src/components/modals/cmdk/EntryActionView.tsx");
+    let entry_actions = read_file("frontend/src/features/entry/useEntryActions.ts");
+    let journal_data = read_file("frontend/src/hooks/useJournalData.ts");
+    let cache_storage = read_file("frontend/src/utils/cacheStorage.ts");
+    let markdown_viewer = read_file("frontend/src/components/MarkdownViewer.tsx");
+    let year_grid = read_file("frontend/src/features/calendar/components/YearGrid.tsx");
+
+    assert!(
+        entry_display.contains("backendSummary"),
+        "EntryDisplay should prefer the backend summary supplied on entries"
+    );
+    assert!(
+        command_palette.contains("entry.summary") && entry_action_view.contains("entry.summary"),
+        "Command palette entry previews should use backend summaries before falling back"
+    );
+    assert!(
+        !journal_data.contains("cacheStorage.loadOverview")
+            && !journal_data.contains("cacheStorage.saveOverview")
+            && !cache_storage.contains("OVERVIEW_CACHE_KEY"),
+        "Overview dots should not be persisted in frontend IndexedDB"
+    );
+    assert!(
+        !journal_data.contains("newData.map((e: any) => ({")
+            && !journal_data.contains("const newState = { ...prev };"),
+        "Frontend should not rebuild overview dots through heavy local mutation paths"
+    );
+    assert!(
+        journal_data.contains("entryEventBus.on(\"entry:update\", handleOptimisticUpdate)")
+            && !journal_data.contains("entryEventBus.on(\"entry:update\", handleSilentRefresh)")
+            && !journal_data
+                .contains("entryEventBus.on(\"entry:status_change\", handleSilentRefresh)"),
+        "Optimistic entry events should update local cache without re-fetching stale backend data"
+    );
+    assert!(
+        journal_data.contains("delete merged.summary"),
+        "Optimistic content edits should drop stale backend summaries"
+    );
+    assert!(
+        entry_actions.contains("delete currentUpdate.summary"),
+        "Optimistic edit payloads should not carry stale backend summaries"
+    );
+    assert!(
+        markdown_viewer.contains("if (!backendUploadReferences?.length) return localReferences")
+            && markdown_viewer
+                .contains("new Set([...backendUploadReferences, ...localReferences])"),
+        "MarkdownViewer should keep frontend upload extraction as a fallback/union"
+    );
+    assert!(
+        year_grid.contains("overviewMap") && !year_grid.contains("entryMap"),
+        "Year view should consume backend grouped overview data instead of reducing entries locally"
+    );
+}
+
+#[test]
 fn add_entry_tag_suggestions_support_keyboard_selection() {
     let source = read_file("frontend/src/components/modals/AddEntryModal.tsx");
 

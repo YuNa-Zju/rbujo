@@ -65,6 +65,13 @@ export function useEntryActions(
    */
   const broadcastSync = (baseEntry: any, overrideProps: any = {}) => {
     const currentUpdate = { ...baseEntry, ...overrideProps };
+    if (
+      Object.prototype.hasOwnProperty.call(overrideProps, "content") &&
+      overrideProps.content !== baseEntry.content &&
+      !Object.prototype.hasOwnProperty.call(overrideProps, "summary")
+    ) {
+      delete currentUpdate.summary;
+    }
     entryEventBus.emit("entry:update", currentUpdate);
 
     // 如果有本体 (Source Entry)，也要同步更新它

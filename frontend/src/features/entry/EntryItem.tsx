@@ -110,6 +110,7 @@ export default function EntryItem({
             tags={entry.tags || []}
             status={entry.status}
             isTask={isTask}
+            backendSummary={entry.summary}
             forceCollapse={forceCollapse}
             disableOverflowCheck={disableOverflowCheck}
             onDoubleClick={openEditEntry}
