@@ -17,6 +17,8 @@ import { useEntryNavigation } from "../../hooks/useEntryNavigation";
 import DraggableEntryCard from "../../components/DraggableEntryCard";
 import { entryEventBus, type MigratePayload } from "../../lib/entryEventBus";
 
+const TIMELINE_SEARCH_LIMIT = 10000;
+
 // 动画配置
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -71,13 +73,11 @@ export default function TimelinePage() {
 
   const fetchTimeline = useCallback(async () => {
     try {
-      const today = new Date();
-      const endDate = addDays(today, 60);
-
       const data = await entryService.search({
         q: query,
-        start_date: format(today, "yyyy-MM-dd"),
-        end_date: format(endDate, "yyyy-MM-dd"),
+        entry_type: ["task"],
+        status: "open",
+        limit: TIMELINE_SEARCH_LIMIT,
       });
 
       const groups: Record<string, any[]> = {};
@@ -114,8 +114,6 @@ export default function TimelinePage() {
   useEffect(() => {
     // 统一处理 Create / Update / StatusChange
     const handleBusUpdate = (payload: any) => {
-      console.log("Timeline Event Rx:", payload);
-
       setGroupedEntries((prev) => {
         const next = { ...prev };
         let oldDateKey = null;
@@ -138,13 +136,6 @@ export default function TimelinePage() {
         // 3. 判断是否可见
         const isVisible = isEntryVisible(finalEntry);
         const newDateKey = getEntryDate(finalEntry);
-
-        console.log("   -> Merge Result:", {
-          id: finalEntry.id,
-          type: finalEntry.entry_type,
-          status: finalEntry.status,
-          isVisible,
-        });
 
         // 4. 执行移除 (如果之前存在)
         // 只要存在旧数据，先移除，稍后如果可见再添加 (处理跨天移动或属性变更)
@@ -169,7 +160,6 @@ export default function TimelinePage() {
     };
 
     const handleBusDelete = (id: string) => {
-      console.log("Timeline Delete Rx:", id);
       setGroupedEntries((prev) => {
         const next = { ...prev };
         let hasChanges = false;
@@ -186,7 +176,6 @@ export default function TimelinePage() {
     };
 
     const handleBusMigrate = (payload: MigratePayload) => {
-      console.log("Timeline Migrate Rx:", payload);
       handleBusUpdate(payload.source);
       if (payload.target) {
         handleBusUpdate(payload.target);
@@ -261,7 +250,7 @@ export default function TimelinePage() {
               </span>
             </h2>
             <p className="text-xs font-bold text-base-content/40 font-mono mt-1.5 ml-1 tracking-widest uppercase">
-              {t.timeline?.subtitle || "Next 60 Days Overview"}
+              {t.timeline?.subtitle || "All Scheduled Tasks"}
             </p>
           </div>
 
@@ -462,7 +451,7 @@ export default function TimelinePage() {
               className="flex justify-center -mt-6"
             >
               <div className="px-4 py-1 rounded-full border border-base-content/10 bg-base-100/50 backdrop-blur text-[10px] font-mono text-base-content/30 tracking-widest uppercase">
-                {t.timeline?.endOfRange || "End of 60 days"}
+                {t.timeline?.endOfRange || "All scheduled tasks shown"}
               </div>
             </motion.div>
           )}

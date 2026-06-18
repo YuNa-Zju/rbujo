@@ -90,6 +90,100 @@ body {
   will-change: transform;
 }
 
+.tag-search-modal-shell {
+  --tag-search-modal-radius: 2rem 2rem 0 0;
+  overflow: hidden;
+  border-radius: var(--tag-search-modal-radius);
+  contain: paint;
+  isolation: isolate;
+  background-clip: padding-box;
+}
+
+.tag-search-modal-surface {
+  overflow: hidden;
+  border-radius: var(--tag-search-modal-radius);
+  contain: paint;
+  isolation: isolate;
+  background-clip: padding-box;
+  -webkit-clip-path: inset(0 round var(--tag-search-modal-radius));
+  clip-path: inset(0 round var(--tag-search-modal-radius));
+  -webkit-mask-image: -webkit-radial-gradient(white, black);
+  mask-image: radial-gradient(#fff, #fff);
+  transform: translate3d(0, 0, 0);
+}
+
+@media (min-width: 640px) {
+  .tag-search-modal-shell {
+    --tag-search-modal-radius: 1rem;
+  }
+}
+
+.tag-pill {
+  background-clip: padding-box;
+}
+
+.tag-pill-task {
+  background-color: rgba(238, 242, 255, 0.9);
+  border-color: rgba(129, 140, 248, 0.28);
+  color: #4f46e5;
+}
+
+.tag-pill-idea {
+  background-color: rgba(255, 251, 235, 0.9);
+  border-color: rgba(245, 158, 11, 0.28);
+  color: #b45309;
+}
+
+.tag-pill-event {
+  background-color: rgba(240, 249, 255, 0.9);
+  border-color: rgba(14, 165, 233, 0.28);
+  color: #0369a1;
+}
+
+.tag-pill-disabled {
+  background-color: rgba(148, 163, 184, 0.1);
+  border-color: rgba(148, 163, 184, 0.22);
+  color: rgba(71, 85, 105, 0.68);
+}
+
+[data-theme="dark"] .tag-pill-task {
+  background-color: rgba(99, 102, 241, 0.22);
+  border-color: rgba(129, 140, 248, 0.38);
+  color: #c7d2fe;
+}
+
+[data-theme="dark"] .tag-pill-idea {
+  background-color: rgba(245, 158, 11, 0.2);
+  border-color: rgba(251, 191, 36, 0.34);
+  color: #fde68a;
+}
+
+[data-theme="dark"] .tag-pill-event {
+  background-color: rgba(14, 165, 233, 0.2);
+  border-color: rgba(56, 189, 248, 0.34);
+  color: #bae6fd;
+}
+
+[data-theme="dark"] .tag-pill-disabled {
+  background-color: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.16);
+  color: rgba(203, 213, 225, 0.48);
+}
+
+.tag-pill-clickable:hover {
+  filter: saturate(1.08) brightness(1.02);
+}
+
+[data-theme="dark"] .tag-pill-clickable:hover {
+  filter: saturate(1.12) brightness(1.12);
+}
+
+@media (min-width: 640px) {
+  .tag-search-modal-surface {
+    -webkit-mask-image: -webkit-radial-gradient(white, black);
+  }
+}
+
 /* =========================================
    4. 动画定义
    ========================================= */

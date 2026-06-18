@@ -324,6 +324,7 @@ export const entryService = {
         mode: params.mode ?? "text",
         include_archived: Boolean(params.include_archived),
         entry_type: params.entry_type ?? [],
+        status: params.status ?? null,
         tags: params.tags ?? [],
         start_date: params.start_date ?? null,
         end_date: params.end_date ?? null,

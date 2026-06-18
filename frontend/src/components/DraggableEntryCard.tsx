@@ -5,6 +5,9 @@ import { GripVertical } from "lucide-react";
 import EntryItem from "../features/entry/EntryItem"; // 确保路径正确
 import { ENTRY_THEME, type EntryType } from "../config/entryTheme";
 
+export const ENTRY_CARD_RADIUS_CLASS = "rounded-2xl";
+export const ENTRY_CARD_OVERFLOW_CLASS = "overflow-visible";
+
 // 1. 定义精简后的接口 (移除了所有 onOptimistic... 回调)
 interface DraggableEntryCardProps {
   entry: any;
@@ -65,7 +68,7 @@ export const EntryCard = memo(
         className={`relative group/card touch-manipulation ${isOverlay ? "z-50" : "mb-3"}`}
       >
         <div
-          className={`relative transition-all duration-200 ease-out rounded-2xl ${containerStyle} ${className} overflow-visible`}
+          className={`relative transition-all duration-200 ease-out ${ENTRY_CARD_RADIUS_CLASS} ${ENTRY_CARD_OVERFLOW_CLASS} ${containerStyle} ${className}`}
         >
           {/* 左侧彩色条 */}
           {!isDragging || isOverlay ? (

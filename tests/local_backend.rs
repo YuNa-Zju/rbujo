@@ -206,6 +206,61 @@ async fn native_tag_search_is_case_insensitive() {
 }
 
 #[tokio::test]
+async fn search_status_filter_applies_before_limit() {
+    let dir = temp_app_dir("search-status-limit");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let completed = backend
+        .create_entry(CreateEntryInput {
+            content: "已完成但日期更晚".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-07-01".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec![],
+        })
+        .await
+        .unwrap();
+    let open = backend
+        .create_entry(CreateEntryInput {
+            content: "未完成但日期更早".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-01".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec![],
+        })
+        .await
+        .unwrap();
+
+    backend
+        .update_entry(
+            completed.id,
+            EntryPatch {
+                status: Some("completed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let results = backend
+        .search_entries(SearchOptions {
+            query: String::new(),
+            entry_type: vec!["task".to_string()],
+            status: Some("open".to_string()),
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].entry.id, open.id);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn native_tag_list_reads_tags_without_entry_search() {
     let dir = temp_app_dir("native-tag-list");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -348,6 +403,62 @@ async fn overview_commands_return_backend_grouped_day_dots() {
         .await
         .unwrap();
     assert_eq!(range["2026-06-18"][0].id, created.id);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn range_overview_order_matches_daily_log_order() {
+    let dir = temp_app_dir("range-overview-order");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let older = backend
+        .create_entry(CreateEntryInput {
+            content: "older item".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let newer = backend
+        .create_entry(CreateEntryInput {
+            content: "newer item".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    sqlx::query("UPDATE entries SET position = 0, created_at = ? WHERE id = ?")
+        .bind("2026-06-18 08:00:00")
+        .bind(&older.id)
+        .execute(backend.db())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE entries SET position = 0, created_at = ? WHERE id = ?")
+        .bind("2026-06-18 09:00:00")
+        .bind(&newer.id)
+        .execute(backend.db())
+        .await
+        .unwrap();
+
+    let daily = backend.get_daily_log("2026-06-18", false).await.unwrap();
+    let range = backend
+        .get_range_overview("2026-06-01".to_string(), "2026-06-30".to_string(), false)
+        .await
+        .unwrap();
+
+    let daily_ids: Vec<&str> = daily.iter().map(|entry| entry.id.as_str()).collect();
+    let dot_ids: Vec<&str> = range["2026-06-18"]
+        .iter()
+        .map(|dot| dot.id.as_str())
+        .collect();
+    assert_eq!(dot_ids, daily_ids);
 
     fs::remove_dir_all(dir).ok();
 }

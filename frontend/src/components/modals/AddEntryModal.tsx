@@ -351,13 +351,12 @@ const AddEntryModal = forwardRef<AddEntryModalRef, Props>(
         )
         .filter((tag) => !needle || tag.toLowerCase().includes(needle))
         .sort((a, b) => {
-          if (!needle) return 0;
+          if (!needle) return a.localeCompare(b);
           const aStarts = a.toLowerCase().startsWith(needle);
           const bStarts = b.toLowerCase().startsWith(needle);
           if (aStarts === bStarts) return 0;
           return aStarts ? -1 : 1;
-        })
-        .slice(0, 8);
+        });
     }, [allTags, tagDraft, tagInputFocused, tags]);
 
     useEffect(() => {

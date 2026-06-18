@@ -27,6 +27,8 @@ import { entryEventBus, type MigratePayload } from "../../lib/entryEventBus";
 import { useAppTheme } from "../../hooks/useAppTheme"; // ✅ 1. 引入 Theme Hook
 import { EscModalWrapper } from "../common/EscModalWrapper"; // ✅ 2. 引入 EscWrapper
 
+const TIMELINE_SEARCH_LIMIT = 10000;
+
 export interface TimelineModalRef {
   open: () => void;
   close: () => void;
@@ -82,13 +84,11 @@ const TimelineModal = forwardRef<TimelineModalRef, any>((_, ref) => {
 
     setLoading(true);
     try {
-      const today = new Date();
-      const endDate = addDays(today, 60); // 获取未来 60 天
-
       const data = await entryService.search({
         q: query,
-        start_date: format(today, "yyyy-MM-dd"),
-        end_date: format(endDate, "yyyy-MM-dd"),
+        entry_type: ["task"],
+        status: "open",
+        limit: TIMELINE_SEARCH_LIMIT,
       });
 
       const groups: Record<string, any[]> = {};
@@ -503,7 +503,9 @@ const TimelineModal = forwardRef<TimelineModalRef, any>((_, ref) => {
                 <div className="flex justify-center py-12 opacity-70">
                   <div className={styles.timeline.endMarker}>
                     <span>●</span>
-                    <span>{t.timeline?.endOfRange || "End of 60 days"}</span>
+                    <span>
+                      {t.timeline?.endOfRange || "All scheduled tasks shown"}
+                    </span>
                     <span>●</span>
                   </div>
                 </div>

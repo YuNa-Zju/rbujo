@@ -1,4 +1,5 @@
-import { motion, AnimatePresence } from "framer-motion";
+import { memo } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { X, ChevronRight, ChevronsRight, Check } from "lucide-react";
 import { type EntryType } from "../../../config/entryTheme";
 
@@ -21,7 +22,16 @@ const COLOR_MAP = {
   forward: "#3b82f6", // blue-500
 };
 
-export default function CalendarDots({
+export const CALENDAR_DOT_ROW_CLASS =
+  "flex h-2.5 items-center justify-center gap-0.5 px-0.5 pointer-events-none";
+
+const DOT_TRANSITION = {
+  layout: { type: "spring" as const, stiffness: 360, damping: 28 },
+  scale: { type: "spring" as const, stiffness: 420, damping: 24 },
+  opacity: { duration: 0.12 },
+};
+
+function CalendarDots({
   items,
 }: {
   items: DayOverview[];
@@ -62,8 +72,8 @@ export default function CalendarDots({
   const overflowCount = safeItems.length - visibleItems.length;
 
   return (
-    <div className="flex gap-0.5 mt-1 justify-center flex-wrap px-0.5 min-h-[12px] items-center pointer-events-none">
-      <AnimatePresence mode="popLayout">
+    <div className={CALENDAR_DOT_ROW_CLASS}>
+      <AnimatePresence initial={false} mode="popLayout">
         {visibleItems.map((item) => {
           const config = getRenderConfig(item);
           const isIcon = config.type === "icon";
@@ -71,37 +81,25 @@ export default function CalendarDots({
           return (
             <motion.div
               key={item.id}
-              layout
-              initial={{ scale: 0, opacity: 0 }}
+              layout="position"
+              initial={{ scale: 0.72, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}
-              transition={{
-                layout: { type: "spring", stiffness: 300, damping: 25 },
-                scale: { type: "spring", stiffness: 400, damping: 20 },
-                opacity: { duration: 0.2 },
-              }}
-              // ✅ 修复核心：动态类名
-              // 如果是图标(Icon)：使用 w-3 h-3 (12px)，给图标足够的空间展示
-              // 如果是圆点(Dot)：保持 w-2 h-2 (8px)，保持紧凑
+              exit={{ scale: 0.72, opacity: 0 }}
+              transition={DOT_TRANSITION}
               className={`flex items-center justify-center ${
-                isIcon ? "w-3 h-3" : "w-2 h-2"
+                isIcon ? "h-2.5 w-2.5" : "h-1.5 w-1.5"
               }`}
             >
               {isIcon && config.icon ? (
-                // ✅ 图标配置：
-                // size={12}: 现在容器是 12px，这里设为 12 就能撑满容器，看起来很大
-                // strokeWidth={4}: 保持超粗线条
-                // -ml-[0.5px]: 视觉微调居中
                 <config.icon
-                  size={12}
-                  strokeWidth={4}
+                  size={10}
+                  strokeWidth={3.5}
                   color={config.color}
-                  className="opacity-100 -ml-[0.5px]"
+                  className="opacity-100"
                 />
               ) : (
-                // ✅ 普通圆点
                 <div
-                  className="w-2 h-2 rounded-full ring-1 ring-base-100"
+                  className="h-1.5 w-1.5 rounded-full ring-1 ring-base-100"
                   style={{ backgroundColor: config.color }}
                 />
               )}
@@ -112,13 +110,14 @@ export default function CalendarDots({
         {overflowCount > 0 && (
           <motion.div
             key="overflow-badge"
-            layout
-            initial={{ scale: 0, opacity: 0 }}
+            layout="position"
+            initial={{ scale: 0.72, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0, opacity: 0 }}
-            className="h-3 min-w-[14px] px-1 rounded-full bg-rose-400/80 flex items-center justify-center ring-1 ring-base-100"
+            exit={{ scale: 0.72, opacity: 0 }}
+            transition={DOT_TRANSITION}
+            className="flex h-2.5 min-w-3 items-center justify-center rounded-full bg-rose-400/80 px-0.5 ring-1 ring-base-100"
           >
-            <span className="text-[9px] font-bold text-white leading-none">
+            <span className="text-[8px] font-bold leading-none text-white">
               +{overflowCount}
             </span>
           </motion.div>
@@ -127,3 +126,5 @@ export default function CalendarDots({
     </div>
   );
 }
+
+export default memo(CalendarDots);

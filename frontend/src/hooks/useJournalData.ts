@@ -1,5 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
-import { format, startOfYear, endOfYear } from "date-fns";
+import {
+  addMonths,
+  addWeeks,
+  endOfMonth,
+  endOfWeek,
+  format,
+  startOfMonth,
+  startOfWeek,
+  startOfYear,
+  endOfYear,
+  subMonths,
+  subWeeks,
+} from "date-fns";
 import { entryService, type DayOverview } from "../services/entryService";
 import { cacheStorage } from "../utils/cacheStorage";
 import { entryEventBus } from "../lib/entryEventBus";
@@ -96,7 +108,14 @@ const upsertOverviewEntry = (cache: OverviewCache, update: any): OverviewCache =
     type: update.entry_type ?? update.type ?? existing?.dot.type ?? "task",
     status: update.status ?? existing?.dot.status ?? "open",
   };
-  nextCache[targetDate] = [...(nextCache[targetDate] || []), dot];
+  const targetEntries = [...(nextCache[targetDate] || [])];
+  const existingIndex = targetEntries.findIndex((entry) => entry.id === dot.id);
+  if (existingIndex >= 0) {
+    targetEntries.splice(existingIndex, 1, dot);
+  } else {
+    targetEntries.unshift(dot);
+  }
+  nextCache[targetDate] = targetEntries;
   return nextCache;
 };
 
@@ -137,10 +156,21 @@ export function useJournalData(
     if (isCacheLoaded) cacheStorage.saveDaily(dailyCache);
   }, [dailyCache, isCacheLoaded]);
 
-  const refreshMonthOverview = useCallback(async () => {
-    const data = await entryService.getMonthOverview(format(currentDate, "yyyy-MM"));
+  const refreshCalendarOverview = useCallback(async () => {
+    const rangeStart =
+      viewMode === "week"
+        ? startOfWeek(subWeeks(currentDate, 1), { weekStartsOn: 1 })
+        : startOfMonth(subMonths(currentDate, 1));
+    const rangeEnd =
+      viewMode === "week"
+        ? endOfWeek(addWeeks(currentDate, 1), { weekStartsOn: 1 })
+        : endOfMonth(addMonths(currentDate, 1));
+    const data = await entryService.getRangeOverview(
+      format(rangeStart, "yyyy-MM-dd"),
+      format(rangeEnd, "yyyy-MM-dd"),
+    );
     setOverviewCache(data);
-  }, [currentDate]);
+  }, [currentDate, viewMode]);
 
   const refreshYearOverview = useCallback(async () => {
     const start = format(startOfYear(currentDate), "yyyy-MM-dd");
@@ -151,8 +181,8 @@ export function useJournalData(
 
   useEffect(() => {
     if (viewMode === "year" || !isCacheLoaded) return;
-    refreshMonthOverview().catch(console.error);
-  }, [refreshMonthOverview, viewMode, isCacheLoaded]);
+    refreshCalendarOverview().catch(console.error);
+  }, [refreshCalendarOverview, viewMode, isCacheLoaded]);
 
   useEffect(() => {
     if (viewMode === "year" || !isCacheLoaded) return;
@@ -197,16 +227,16 @@ export function useJournalData(
       .getDailyEntries(dateKey)
       .then((data) => setDailyCache((prev) => ({ ...prev, [dateKey]: data })))
       .catch(console.error);
-    refreshMonthOverview().catch(console.error);
-  }, [refreshMonthOverview, refreshYearOverview, viewMode, selectedDate]);
+    refreshCalendarOverview().catch(console.error);
+  }, [refreshCalendarOverview, refreshYearOverview, viewMode, selectedDate]);
 
   const handleInvalidateOverviewCache = useCallback(() => {
     if (viewMode === "year") {
       refreshYearOverview().catch(console.error);
     } else {
-      refreshMonthOverview().catch(console.error);
+      refreshCalendarOverview().catch(console.error);
     }
-  }, [refreshMonthOverview, refreshYearOverview, viewMode]);
+  }, [refreshCalendarOverview, refreshYearOverview, viewMode]);
 
   const handleOptimisticCreate = useCallback((entry: any) => {
     setDailyCache((prev) => upsertDailyEntry(prev, entry));

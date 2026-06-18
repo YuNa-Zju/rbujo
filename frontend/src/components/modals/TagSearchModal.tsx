@@ -134,154 +134,158 @@ const TagSearchModal = ({ tag: activeTag, onClose }: TagSearchModalProps) => {
                 exit="exit"
                 className={`
                   pointer-events-auto
-                  relative w-full sm:max-w-2xl flex flex-col
-                  rounded-t-[2rem] sm:rounded-2xl
+                  tag-search-modal-shell
+                  relative w-full sm:max-w-2xl
                   h-[90dvh] sm:h-[80vh]
-                  overflow-hidden
                   ${styles.modal.base} border
                 `}
-                style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+                style={{
+                  backgroundColor: colors.modalBg,
+                }}
               >
-                {/* Header */}
-                <div className={styles.modal.header}>
-                  <div className="flex justify-between items-center">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-3">
-                        <motion.div
-                          initial={{ scale: 0.8, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
-                          transition={{ delay: 0.1 }}
-                          className={`w-10 h-10 rounded-full flex items-center justify-center border shadow-sm ${styles.modal.iconBox}`}
-                        >
-                          <Hash size={20} strokeWidth={2.5} />
-                        </motion.div>
-                        <h3
-                          className={`font-serif font-bold text-2xl tracking-tight flex items-center gap-2 ${styles.modal.title}`}
-                        >
-                          {activeTag}
-                        </h3>
-                      </div>
-                      <p
-                        className={`text-xs font-medium pl-14 ${styles.modal.subtitle}`}
-                      >
-                        {loading
-                          ? t.tag?.searching
-                          : `${results.length} ${t.tag?.results}`}
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleClose}
-                      className={styles.modal.closeBtn}
-                    >
-                      <X size={22} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* List Body */}
-                <div className="flex-1 overflow-y-auto p-4 pb-20 custom-scrollbar">
-                  {loading ? (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="flex flex-col items-center justify-center h-64 gap-4 opacity-60"
-                    >
-                      <Loader2
-                        size={32}
-                        className={`animate-spin ${styles.feedback.loadingSpinner}`}
-                      />
-                      <span
-                        className={`text-sm font-medium tracking-wide ${styles.feedback.loadingText}`}
-                      >
-                        {t.tag?.scanning}
-                      </span>
-                    </motion.div>
-                  ) : results.length === 0 ? (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      className="flex flex-col items-center justify-center h-64 gap-4 opacity-60 select-none"
-                    >
-                      <div
-                        className={`p-4 rounded-full ${styles.feedback.emptyIconBg}`}
-                      >
-                        <SearchX size={32} />
-                      </div>
-                      <p
-                        className={`font-bold text-lg ${styles.feedback.emptyText}`}
-                      >
-                        {t.tag?.noEntries}
-                      </p>
-                    </motion.div>
-                  ) : (
-                    <ReadOnlyContext.Provider value={true}>
-                      {/* ✅ 列表容器：控制交错动画 */}
-                      <motion.div
-                        variants={listContainerVariants}
-                        initial="hidden"
-                        animate="visible"
-                        className="flex flex-col gap-6 pb-10"
-                      >
-                        {results.map((entry) => (
+                <div
+                  className="tag-search-modal-surface flex h-full min-h-0 flex-col"
+                  style={{
+                    paddingBottom: "env(safe-area-inset-bottom)",
+                    backgroundColor: colors.modalBg,
+                  }}
+                >
+                  {/* Header */}
+                  <div className={styles.modal.header}>
+                    <div className="flex justify-between items-center">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-3">
                           <motion.div
-                            key={entry.id}
-                            variants={listItemVariants} // 每个子元素应用此变体
-                            className="relative group px-2 sm:px-4"
+                            initial={{ scale: 0.8, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            transition={{ delay: 0.1 }}
+                            className={`w-10 h-10 rounded-full flex items-center justify-center border shadow-sm ${styles.modal.iconBox}`}
                           >
-                            {/* Date Label / Jump Button */}
-                            <div className="flex items-center mb-2">
-                              <button
-                                onClick={() =>
-                                  handleJumpToDate(
-                                    entry.date || entry.target_date,
-                                  )
-                                }
-                                className={`
-                                  flex items-center gap-2 px-3 py-1 rounded-full border shadow-sm text-xs font-mono transition-all
-                                  ${
-                                    isDark
-                                      ? "bg-[#1e293b]/50 border-indigo-500/20 text-indigo-300 hover:bg-[#1e293b] hover:border-indigo-400"
-                                      : "bg-white border-indigo-100 text-slate-500 hover:text-indigo-600 hover:border-indigo-200"
-                                  }
-                                `}
-                              >
-                                <Calendar size={12} />
-                                <span className="font-semibold">
-                                  {entry.date ||
-                                    entry.target_date ||
-                                    "Future Log"}
-                                </span>
-                                <ArrowRight
-                                  size={10}
-                                  className="opacity-0 -ml-1 group-hover:opacity-100 group-hover:ml-0 transition-all"
-                                />
-                              </button>
-                            </div>
-
-                            {/* Entry Card */}
-                            <div className="transform transition-transform hover:translate-x-1 duration-300">
-                              <EntryCard
-                                entry={entry}
-                                refresh={() => {}}
-                                isDragEnabled={false}
-                                // ✅ 严格保留原有样式类名，仅替换颜色变量
-                                className={`
-                                  transition-all duration-300 shadow-sm
-                                  ${styles.card.style}
-                                  ${styles.card.hover}
-                                `}
-                                // 注入颜色 Context (为了 EntryCard 内部的遮罩)
-                                style={{
-                                  backgroundColor: colors.cardBg,
-                                  borderColor: colors.cardBorder,
-                                }}
-                              />
-                            </div>
+                            <Hash size={20} strokeWidth={2.5} />
                           </motion.div>
-                        ))}
+                          <h3
+                            className={`font-serif font-bold text-2xl tracking-tight flex items-center gap-2 ${styles.modal.title}`}
+                          >
+                            {activeTag}
+                          </h3>
+                        </div>
+                        <p
+                          className={`text-xs font-medium pl-14 ${styles.modal.subtitle}`}
+                        >
+                          {loading
+                            ? t.tag?.searching
+                            : `${results.length} ${t.tag?.results}`}
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleClose}
+                        className={styles.modal.closeBtn}
+                      >
+                        <X size={22} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* List Body */}
+                  <div className="flex-1 overflow-y-auto p-4 pb-20 custom-scrollbar">
+                    {loading ? (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="flex flex-col items-center justify-center h-64 gap-4 opacity-60"
+                      >
+                        <Loader2
+                          size={32}
+                          className={`animate-spin ${styles.feedback.loadingSpinner}`}
+                        />
+                        <span
+                          className={`text-sm font-medium tracking-wide ${styles.feedback.loadingText}`}
+                        >
+                          {t.tag?.scanning}
+                        </span>
                       </motion.div>
-                    </ReadOnlyContext.Provider>
-                  )}
+                    ) : results.length === 0 ? (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="flex flex-col items-center justify-center h-64 gap-4 opacity-60 select-none"
+                      >
+                        <div
+                          className={`p-4 rounded-full ${styles.feedback.emptyIconBg}`}
+                        >
+                          <SearchX size={32} />
+                        </div>
+                        <p
+                          className={`font-bold text-lg ${styles.feedback.emptyText}`}
+                        >
+                          {t.tag?.noEntries}
+                        </p>
+                      </motion.div>
+                    ) : (
+                      <ReadOnlyContext.Provider value={true}>
+                        {/* ✅ 列表容器：控制交错动画 */}
+                        <motion.div
+                          variants={listContainerVariants}
+                          initial="hidden"
+                          animate="visible"
+                          className="flex flex-col gap-6 pb-10"
+                        >
+                          {results.map((entry) => (
+                            <motion.div
+                              key={entry.id}
+                              variants={listItemVariants} // 每个子元素应用此变体
+                              className="relative group px-2 sm:px-4"
+                            >
+                              {/* Date Label / Jump Button */}
+                              <div className="flex items-center mb-2">
+                                <button
+                                  onClick={() =>
+                                    handleJumpToDate(
+                                      entry.date || entry.target_date,
+                                    )
+                                  }
+                                  className={`
+                                    flex items-center gap-2 px-3 py-1 rounded-full border shadow-sm text-xs font-mono transition-all
+                                    ${
+                                      isDark
+                                        ? "bg-[#1e293b]/50 border-indigo-500/20 text-indigo-300 hover:bg-[#1e293b] hover:border-indigo-400"
+                                        : "bg-white border-indigo-100 text-slate-500 hover:text-indigo-600 hover:border-indigo-200"
+                                    }
+                                  `}
+                                >
+                                  <Calendar size={12} />
+                                  <span className="font-semibold">
+                                    {entry.date ||
+                                      entry.target_date ||
+                                      "Future Log"}
+                                  </span>
+                                  <ArrowRight
+                                    size={10}
+                                    className="opacity-0 -ml-1 group-hover:opacity-100 group-hover:ml-0 transition-all"
+                                  />
+                                </button>
+                              </div>
+
+                              {/* Entry Card */}
+                              <div className="transform transition-transform hover:translate-x-1 duration-300">
+                                <EntryCard
+                                  entry={entry}
+                                  refresh={() => {}}
+                                  isDragEnabled={false}
+                                  // ✅ 严格保留原有样式类名，仅替换颜色变量
+                                  className={`
+                                    transition-all duration-300 shadow-sm
+                                    ${styles.card.style}
+                                    ${styles.card.hover}
+                                  `}
+                                />
+                              </div>
+                            </motion.div>
+                          ))}
+                        </motion.div>
+                      </ReadOnlyContext.Provider>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             </>

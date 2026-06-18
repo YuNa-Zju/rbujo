@@ -102,6 +102,7 @@ pub struct SearchOptions {
     pub include_archived: bool,
     #[serde(default)]
     pub entry_type: Vec<String>,
+    pub status: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     pub start_date: Option<String>,
@@ -117,6 +118,7 @@ impl Default for SearchOptions {
             mode: SearchMode::Text,
             include_archived: false,
             entry_type: Vec::new(),
+            status: None,
             tags: Vec::new(),
             start_date: None,
             end_date: None,
@@ -3210,7 +3212,7 @@ impl LocalBackend {
               AND target_date <= ?
               AND status NOT IN ('forward', 'future')
               {archive_filter}
-            ORDER BY target_date ASC, position ASC
+            ORDER BY target_date ASC, position ASC, created_at DESC
             "#
         ))
         .bind(self.owner_id)
@@ -3249,6 +3251,10 @@ impl LocalBackend {
                 vec!["?"; entry_types.len()].join(", ")
             ));
             bindings.extend(entry_types);
+        }
+        if let Some(status) = options.status.as_deref() {
+            sql.push_str(" AND status = ?");
+            bindings.push(validate_status(status)?);
         }
         if let Some(start_date) = options.start_date.as_deref() {
             sql.push_str(" AND target_date >= ?");

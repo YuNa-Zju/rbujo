@@ -143,6 +143,13 @@ fn frontend_prefers_backend_summaries_and_backend_overview_cache() {
         "Optimistic content edits should drop stale backend summaries"
     );
     assert!(
+        journal_data.contains("const existingIndex")
+            && journal_data.contains("targetEntries.splice(existingIndex, 1, dot)")
+            && journal_data.contains("targetEntries.unshift(dot)")
+            && !journal_data.contains("[...(nextCache[targetDate] || []), dot]"),
+        "Optimistic overview dots should preserve the same order as the daily entry list instead of appending updated dots to the end"
+    );
+    assert!(
         entry_actions.contains("delete currentUpdate.summary"),
         "Optimistic edit payloads should not carry stale backend summaries"
     );
@@ -155,6 +162,244 @@ fn frontend_prefers_backend_summaries_and_backend_overview_cache() {
     assert!(
         year_grid.contains("overviewMap") && !year_grid.contains("entryMap"),
         "Year view should consume backend grouped overview data instead of reducing entries locally"
+    );
+}
+
+#[test]
+fn calendar_uses_desktop_card_stack_surface() {
+    let calendar_page = read_file("frontend/src/features/calendar/CalendarPage.tsx");
+    let daily_sheet = read_file("frontend/src/features/calendar/components/DailySheetCard.tsx");
+    let swipe_surface =
+        read_file("frontend/src/features/calendar/components/SwipeCalendarSurface.tsx");
+
+    assert!(
+        calendar_page.contains("SwipeCalendarSurface")
+            && calendar_page.contains("DailySheetCard")
+            && !calendar_page.contains("CalendarGrid"),
+        "CalendarPage should use the desktop card-stack calendar and daily sheet components"
+    );
+    assert!(
+        swipe_surface.contains("CALENDAR_PAGE_OFFSETS")
+            && swipe_surface.contains("[-1, 0, 1]")
+            && swipe_surface.contains("addMonths")
+            && swipe_surface.contains("addWeeks"),
+        "SwipeCalendarSurface should pre-render previous/current/next pages for month and week navigation"
+    );
+    assert!(
+        swipe_surface.contains("drag=\"x\"")
+            && swipe_surface.contains("dragDirectionLock")
+            && swipe_surface.contains("onDragEnd")
+            && swipe_surface.contains("onWheel"),
+        "SwipeCalendarSurface should support drag and trackpad page navigation"
+    );
+    assert!(
+        daily_sheet.contains("drag=\"y\"")
+            && daily_sheet.contains("onDragEnd")
+            && daily_sheet.contains("isManualSorting")
+            && daily_sheet.contains("onCollapseCalendar")
+            && daily_sheet.contains("onExpandCalendar"),
+        "DailySheetCard should own the vertical pull gesture and disable it during sorting"
+    );
+}
+
+#[test]
+fn calendar_selected_day_is_fixed_circle() {
+    let swipe_surface =
+        read_file("frontend/src/features/calendar/components/SwipeCalendarSurface.tsx");
+    let calendar_dots = read_file("frontend/src/features/calendar/components/CalendarDots.tsx");
+
+    assert!(
+        swipe_surface.contains("DAY_BUTTON_SIZE_CLASS")
+            && swipe_surface.contains("w-7 h-7")
+            && swipe_surface.contains("rounded-full"),
+        "Selected day should use a fixed square button with full rounding, not a stretched capsule"
+    );
+    assert!(
+        swipe_surface.contains("CalendarDots")
+            && swipe_surface.contains("calendar-day-dots")
+            && swipe_surface.contains("CALENDAR_DOTS_POSITION_CLASS")
+            && swipe_surface.contains("absolute bottom-0 left-1/2")
+            && !swipe_surface.contains("rounded-lg active:scale-90"),
+        "Dots should be anchored inside each date cell instead of flowing into adjacent rows"
+    );
+    assert!(
+        calendar_dots.contains("memo(")
+            && calendar_dots.contains("CALENDAR_DOT_ROW_CLASS")
+            && calendar_dots.contains("AnimatePresence")
+            && calendar_dots.contains("motion.div")
+            && calendar_dots.contains("layout"),
+        "CalendarDots should keep memoized compact markers while preserving the layout animation used for dot swaps during sorting"
+    );
+}
+
+#[test]
+fn calendar_card_stack_preserves_desktop_space_and_side_dots() {
+    let calendar_page = read_file("frontend/src/features/calendar/CalendarPage.tsx");
+    let daily_sheet = read_file("frontend/src/features/calendar/components/DailySheetCard.tsx");
+    let swipe_surface =
+        read_file("frontend/src/features/calendar/components/SwipeCalendarSurface.tsx");
+
+    assert!(
+        swipe_surface.contains("CALENDAR_CARD_WIDTH_STYLE")
+            && swipe_surface.contains("920px")
+            && swipe_surface.contains("MONTH_SURFACE_HEIGHT = 340")
+            && swipe_surface.contains("MONTH_CARD_MIN_HEIGHT = 292")
+            && swipe_surface.contains("w-7 h-7")
+            && swipe_surface.contains("h-[38px]"),
+        "Calendar card stack should use desktop-sized width while keeping month view compact enough to reveal daily todos"
+    );
+    assert!(
+        calendar_page.contains("pt-3 pb-2")
+            && calendar_page.contains("btn btn-primary h-11")
+            && daily_sheet.contains(" p-2"),
+        "Calendar page chrome and the new-entry footer should stay compact enough to keep todos visible"
+    );
+    assert!(
+        swipe_surface.contains("SIDE_PAGE_OPACITY")
+            && swipe_surface.contains("SIDE_PAGE_TRANSLATE_PERCENT = \"50%\"")
+            && swipe_surface.contains("CALENDAR_CARD_RADIUS_CLASS")
+            && swipe_surface.contains("overflow-hidden")
+            && swipe_surface.contains("calendar-side-page-dots")
+            && swipe_surface.contains("showDotsOnSidePages"),
+        "Previous and next calendar pages should keep their rounded corners visible and still render overview dots"
+    );
+    assert!(
+        !swipe_surface
+            .contains("absolute inset-x-0 top-4 z-10 pointer-events-none flex justify-center"),
+        "Calendar surface should not add a floating duplicate view-mode pill above the main card"
+    );
+}
+
+#[test]
+fn calendar_navigation_has_desktop_motion_and_bar_toggle() {
+    let calendar_page = read_file("frontend/src/features/calendar/CalendarPage.tsx");
+    let calendar_state = read_file("frontend/src/hooks/useCalendarState.ts");
+    let journal_data = read_file("frontend/src/hooks/useJournalData.ts");
+    let swipe_surface =
+        read_file("frontend/src/features/calendar/components/SwipeCalendarSurface.tsx");
+    let daily_sheet = read_file("frontend/src/features/calendar/components/DailySheetCard.tsx");
+
+    assert!(
+        calendar_state.contains("navDirection")
+            && calendar_page.contains("navDirection={navDirection}")
+            && swipe_surface.contains("NAVIGATION_ANIMATION_DISTANCE"),
+        "Calendar navigation should expose direction so wheel and button changes animate between pages"
+    );
+    assert!(
+        journal_data.contains("refreshCalendarOverview")
+            && journal_data.contains("entryService.getRangeOverview")
+            && journal_data.contains("subMonths")
+            && journal_data.contains("addMonths")
+            && journal_data.contains("subWeeks")
+            && journal_data.contains("addWeeks"),
+        "Calendar overview should prefetch previous/current/next page ranges so side cards can render dots"
+    );
+    assert!(
+        daily_sheet.contains("SHEET_WHEEL_THRESHOLD")
+            && daily_sheet.contains("handleSheetWheel")
+            && daily_sheet.contains("onToggleCalendar")
+            && daily_sheet.contains("aria-label")
+            && daily_sheet.contains("onClick={onToggleCalendar}"),
+        "Daily sheet grabber should support desktop-friendly wheel and click toggles between month/week views"
+    );
+}
+
+#[test]
+fn entry_card_allows_action_tooltips_to_escape_card_bounds() {
+    let entry_card = read_file("frontend/src/components/DraggableEntryCard.tsx");
+
+    assert!(
+        entry_card.contains("ENTRY_CARD_RADIUS_CLASS")
+            && entry_card.contains("ENTRY_CARD_OVERFLOW_CLASS")
+            && entry_card.contains("rounded-2xl")
+            && entry_card.contains("overflow-visible"),
+        "Entry cards should keep a rounded surface while allowing action menus and tooltips to render outside card bounds"
+    );
+    assert!(
+        !entry_card.contains("ENTRY_CARD_VISUAL_CLIP_CLASS")
+            && !entry_card.contains("ENTRY_CARD_VISUAL_CLIP_CLASS = \"overflow-hidden\""),
+        "Entry cards should not use a card-level overflow-hidden clip because it cuts off action tooltips"
+    );
+}
+
+#[test]
+fn tag_search_modal_clips_its_animated_rounded_surface() {
+    let tag_modal = read_file("frontend/src/components/modals/TagSearchModal.tsx");
+    let css = read_file("frontend/src/index.css");
+
+    assert!(
+        tag_modal.contains("tag-search-modal-shell")
+            && tag_modal.contains("tag-search-modal-surface"),
+        "TagSearchModal should split animated shell and clipped content surface"
+    );
+    assert!(
+        tag_modal.contains("backgroundColor: colors.modalBg"),
+        "TagSearchModal should paint its own modal background instead of relying only on dynamic Tailwind classes"
+    );
+    assert!(
+        css.contains(".tag-search-modal-shell")
+            && css.contains("--tag-search-modal-radius: 2rem 2rem 0 0")
+            && css.contains(".tag-search-modal-surface")
+            && css.contains("clip-path: inset(0 round var(--tag-search-modal-radius))")
+            && css.contains("-webkit-clip-path: inset(0 round var(--tag-search-modal-radius))")
+            && css.contains("-webkit-mask-image: -webkit-radial-gradient(white, black)")
+            && css.contains("contain: paint")
+            && css.contains("isolation: isolate"),
+        "TagSearchModal surface should use paint containment, clip-path, and a WebKit mask so blurred children cannot bleed past rounded corners"
+    );
+    assert!(
+        css.contains("@media (min-width: 640px)")
+            && css.contains("--tag-search-modal-radius: 1rem"),
+        "TagSearchModal should use full rounded corners on desktop while preserving the mobile bottom-sheet shape"
+    );
+    assert!(
+        !tag_modal.contains("backgroundColor: colors.cardBg")
+            && !tag_modal.contains("borderColor: colors.cardBorder"),
+        "Tag search result cards should not paint the square EntryCard wrapper behind the rounded card surface"
+    );
+}
+
+#[test]
+fn tag_suggestions_are_sorted_without_hiding_later_tags() {
+    let add_entry = read_file("frontend/src/components/modals/AddEntryModal.tsx");
+    let search_modal = read_file("frontend/src/components/modals/SearchModal.tsx");
+
+    assert!(
+        add_entry.contains("if (!needle) return a.localeCompare(b)")
+            && search_modal.contains("if (!needle) return a.localeCompare(b)"),
+        "Tag suggestions should sort alphabetically before slicing so tags like ACEE are visible even before typing"
+    );
+    assert!(
+        !add_entry.contains("if (!needle) return 0")
+            && !search_modal.contains("if (!needle) return 0"),
+        "Empty tag suggestion ordering should not preserve arbitrary backend order"
+    );
+    assert!(
+        !add_entry.contains(".slice(0, 8)") && !search_modal.contains(".slice(0, 8)"),
+        "Add/search tag suggestion lists should not hide later English tags behind a fixed count limit"
+    );
+}
+
+#[test]
+fn tag_pills_use_data_theme_dark_styles() {
+    let tag_pill = read_file("frontend/src/components/markdown/TagPill.tsx");
+    let css = read_file("frontend/src/index.css");
+
+    assert!(
+        tag_pill.contains("tag-pill")
+            && tag_pill.contains("tag-pill-task")
+            && tag_pill.contains("tag-pill-idea")
+            && tag_pill.contains("tag-pill-event")
+            && !tag_pill.contains("dark:bg")
+            && !tag_pill.contains("dark:text"),
+        "TagPill should use app theme-aware classes instead of Tailwind dark variants"
+    );
+    assert!(
+        css.contains("[data-theme=\"dark\"] .tag-pill-task")
+            && css.contains("[data-theme=\"dark\"] .tag-pill-idea")
+            && css.contains("[data-theme=\"dark\"] .tag-pill-event")
+            && css.contains("[data-theme=\"dark\"] .tag-pill-disabled"),
+        "Tag pill colors should adapt to daisyUI data-theme dark mode"
     );
 }
 

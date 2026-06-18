@@ -291,15 +291,15 @@ export const translations = {
     },
     timeline: {
       title: "时间轴",
-      subtitle: "未来 60 天概览",
+      subtitle: "全部待办概览",
       placeholder: "搜索时间轴...",
       loading: "正在扫描时间流...", // 保持了一点科技感的语气
-      empty: "未来 60 天内暂无任务",
+      empty: "暂无带日期的待办",
       noResults: "未找到匹配的任务",
       daysLeft: "天后", // 例如: "5 天后"
       today: "今天",
       tomorrow: "明天",
-      endOfRange: "60 天预览结束", // 比直译 "60天结束" 更通顺
+      endOfRange: "所有待办已显示",
       noEntry: "暂无任务安排",
       sync: "同步中...",
     },
@@ -732,15 +732,15 @@ export const translations = {
     },
     timeline: {
       title: "Timeline",
-      subtitle: "Next 60 Days Overview",
+      subtitle: "All Scheduled Tasks",
       placeholder: "Search timeline...", // 对应搜索框
       loading: "Scanning time stream...",
-      empty: "No tasks found in the next 60 days.",
+      empty: "No dated tasks found.",
       noResults: "No matching tasks found.",
       daysLeft: "days left", // 例如: "5 days left"
       today: "Today",
       tomorrow: "Tomorrow",
-      endOfRange: "End of 60 days range",
+      endOfRange: "All scheduled tasks shown",
       noEntry: "No tasks scheduled",
       sync: "Syncing...",
     },
