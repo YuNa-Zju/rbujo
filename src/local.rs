@@ -21,10 +21,13 @@ use crate::models::{
     ImportResponseDto, ReopenResponse, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_MIGRATED_FORWARD,
     STATUS_MIGRATED_FUTURE, STATUS_OPEN, TYPE_EVENT, TYPE_IDEA, TYPE_TASK,
 };
+use crate::semantic::{
+    CandleSemanticEmbedder, SEMANTIC_MODEL_VERSION, build_semantic_query_input,
+    content_embedding_sha256, cosine_similarity, embedding_from_blob, embedding_to_blob,
+};
 
 const LOCAL_USERNAME: &str = "local";
 const LOCAL_PASSWORD_PLACEHOLDER: &str = "local_desktop_profile";
-const EMBEDDING_DIMS: usize = 256;
 const MARKDOWN_WORKSPACE_SETTING_KEY: &str = "markdown_workspace_path";
 const MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY: &str = "markdown_workspace_bookmark";
 const ATTACHMENT_DIR: &str = "attachments";
@@ -58,6 +61,8 @@ pub struct LocalBackend {
     pool: SqlitePool,
     app_dir: PathBuf,
     owner_id: i64,
+    semantic_assets_dir: Option<PathBuf>,
+    semantic_embedder: Arc<Mutex<Option<CandleSemanticEmbedder>>>,
     summary_cache: Arc<Mutex<HashMap<String, EntrySummaryDto>>>,
     overview_cache: Arc<Mutex<HashMap<String, HashMap<String, Vec<DayOverviewDto>>>>>,
 }
@@ -455,6 +460,13 @@ async fn attachment_preview_data_url(path: &Path, size: u64) -> AppResult<Option
 
 impl LocalBackend {
     pub async fn open(app_dir: impl AsRef<Path>) -> AppResult<Self> {
+        Self::open_with_semantic_assets(app_dir, None).await
+    }
+
+    pub async fn open_with_semantic_assets(
+        app_dir: impl AsRef<Path>,
+        semantic_assets_dir: Option<PathBuf>,
+    ) -> AppResult<Self> {
         let app_dir = app_dir.as_ref().to_path_buf();
         tokio::fs::create_dir_all(&app_dir)
             .await
@@ -474,6 +486,8 @@ impl LocalBackend {
             pool,
             app_dir,
             owner_id,
+            semantic_assets_dir,
+            semantic_embedder: Arc::new(Mutex::new(None)),
             summary_cache: Arc::new(Mutex::new(HashMap::new())),
             overview_cache: Arc::new(Mutex::new(HashMap::new())),
         };
@@ -909,7 +923,6 @@ impl LocalBackend {
             if content != entry.content {
                 entry.content = content;
                 self.save_entry(&entry).await?;
-                self.index_entry(&entry).await?;
             }
         }
 
@@ -957,7 +970,6 @@ impl LocalBackend {
 
         let entry = self.fetch_entry(&id).await?;
         self.set_entry_tags(&id, tags).await?;
-        self.index_entry(&entry).await?;
         let response = self.response_from_entry(entry).await?;
         self.sync_daily_markdown_for_date_values(vec![response.target_date.clone()])
             .await;
@@ -1027,7 +1039,6 @@ impl LocalBackend {
         if let Some(tags) = patch.tags {
             self.set_entry_tags(&id, tags).await?;
         }
-        self.index_entry(&entry).await?;
         let response = self
             .response_from_entry(self.fetch_entry(&id).await?)
             .await?;
@@ -1138,7 +1149,6 @@ impl LocalBackend {
         entry.target_month = None;
         entry.is_future = 0;
         self.save_entry(&entry).await?;
-        self.index_entry(&entry).await?;
         let updated_entry = self
             .response_from_entry(self.fetch_entry(&id).await?)
             .await?;
@@ -1176,7 +1186,6 @@ impl LocalBackend {
         }
         normalize_entry_state(&mut entry);
         self.save_entry(&entry).await?;
-        self.index_entry(&entry).await?;
         let response = self
             .response_from_entry(self.fetch_entry(&id).await?)
             .await?;
@@ -1380,8 +1389,6 @@ impl LocalBackend {
         source.migrated_to_entry_id = Some(created.id.clone());
         normalize_entry_state(&mut source);
         self.save_entry(&source).await?;
-        self.index_entry(&source).await?;
-        self.index_entry(&created).await?;
         self.sync_daily_markdown_for_date_values(vec![
             previous_target_date,
             source.target_date.clone(),
@@ -1423,8 +1430,6 @@ impl LocalBackend {
         source.migrated_to_entry_id = Some(created.id.clone());
         normalize_entry_state(&mut source);
         self.save_entry(&source).await?;
-        self.index_entry(&source).await?;
-        self.index_entry(&created).await?;
         self.sync_daily_markdown_for_date_values(vec![
             previous_target_date,
             source.target_date.clone(),
@@ -1522,8 +1527,123 @@ impl LocalBackend {
                 }
                 Ok(results)
             }
-            SearchMode::Semantic => self.semantic_search(candidates, query, options.limit).await,
+            SearchMode::Semantic => {
+                self.semantic_search_entries(candidates, query, options.limit)
+                    .await
+            }
         }
+    }
+
+    async fn semantic_search_entries(
+        &self,
+        candidates: Vec<Entry>,
+        query: &str,
+        limit: usize,
+    ) -> AppResult<Vec<SearchResult>> {
+        let query_embedding = self.semantic_embed_text(&build_semantic_query_input(query))?;
+        let mut scored_entries = Vec::new();
+
+        for entry in candidates {
+            let semantic_text = clean_markdown(&entry.content);
+            if semantic_text.trim().is_empty() {
+                continue;
+            }
+            let content_hash = content_embedding_sha256(&semantic_text);
+            let embedding = self
+                .cached_semantic_embedding(&entry.id, &semantic_text, &content_hash)
+                .await?;
+            let score =
+                cosine_similarity(&query_embedding, &embedding).map_err(AppError::Internal)?;
+            scored_entries.push((score, entry));
+        }
+
+        scored_entries.sort_by(|left, right| right.0.total_cmp(&left.0));
+
+        let mut results = Vec::new();
+        for (score, entry) in scored_entries.into_iter().take(limit) {
+            results.push(SearchResult {
+                snippet: snippet(&entry.content, ""),
+                entry: self.response_from_entry(entry).await?,
+                score,
+                match_type: "semantic".to_string(),
+            });
+        }
+        Ok(results)
+    }
+
+    fn semantic_embed_text(&self, text: &str) -> AppResult<Vec<f32>> {
+        let assets_dir = self.semantic_assets_dir.as_ref().ok_or_else(|| {
+            AppError::BadRequest("Semantic search model is not available in this build".to_string())
+        })?;
+        let mut embedder = self
+            .semantic_embedder
+            .lock()
+            .map_err(|_| AppError::Internal("semantic model lock poisoned".to_string()))?;
+        if embedder.is_none() {
+            *embedder = Some(CandleSemanticEmbedder::load(assets_dir).map_err(|error| {
+                AppError::Internal(format!("semantic model load failed: {error}"))
+            })?);
+        }
+        embedder
+            .as_ref()
+            .expect("semantic embedder initialized")
+            .embed(text)
+            .map_err(|error| AppError::Internal(format!("semantic embedding failed: {error}")))
+    }
+
+    async fn cached_semantic_embedding(
+        &self,
+        entry_id: &str,
+        semantic_text: &str,
+        content_sha256: &str,
+    ) -> AppResult<Vec<f32>> {
+        let cached: Option<Vec<u8>> = sqlx::query_scalar(
+            r#"
+            SELECT embedding
+            FROM semantic_embeddings
+            WHERE owner_id = ?
+              AND entry_id = ?
+              AND model_version = ?
+              AND content_sha256 = ?
+            "#,
+        )
+        .bind(self.owner_id)
+        .bind(entry_id)
+        .bind(SEMANTIC_MODEL_VERSION)
+        .bind(content_sha256)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(bytes) = cached {
+            if let Ok(embedding) = embedding_from_blob(&bytes) {
+                return Ok(embedding);
+            }
+        }
+
+        let embedding = self.semantic_embed_text(semantic_text)?;
+        let blob = embedding_to_blob(&embedding);
+        sqlx::query(
+            r#"
+            INSERT INTO semantic_embeddings(
+                owner_id, entry_id, model_version, content_sha256, embedding, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(owner_id, entry_id, model_version)
+            DO UPDATE SET
+                content_sha256 = excluded.content_sha256,
+                embedding = excluded.embedding,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(self.owner_id)
+        .bind(entry_id)
+        .bind(SEMANTIC_MODEL_VERSION)
+        .bind(content_sha256)
+        .bind(blob)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(embedding)
     }
 
     pub async fn migrate_text_tags_to_native(&self) -> AppResult<usize> {
@@ -1609,7 +1729,6 @@ impl LocalBackend {
                 .execute(&self.pool)
                 .await?;
             for entry in &affected_entries {
-                self.index_entry(entry).await?;
                 sync_dates.push(entry.target_date.clone());
                 affects_future |= entry_affects_future_markdown(entry);
             }
@@ -1634,7 +1753,6 @@ impl LocalBackend {
                 })
                 .collect::<Vec<_>>();
             self.set_entry_tags(&entry.id, next_tags).await?;
-            self.index_entry(entry).await?;
             sync_dates.push(entry.target_date.clone());
             affects_future |= entry_affects_future_markdown(entry);
         }
@@ -1662,20 +1780,6 @@ impl LocalBackend {
         }
 
         Ok(affected_entries.len())
-    }
-
-    pub async fn rebuild_search_index(&self) -> AppResult<usize> {
-        let entries = sqlx::query_as::<_, Entry>(&format!(
-            "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
-        ))
-        .bind(self.owner_id)
-        .fetch_all(&self.pool)
-        .await?;
-        let count = entries.len();
-        for entry in entries {
-            self.index_entry(&entry).await?;
-        }
-        Ok(count)
     }
 
     pub async fn get_all_entries_for_backup(&self) -> AppResult<Vec<EntryExportSchema>> {
@@ -1744,7 +1848,6 @@ impl LocalBackend {
                     affects_future |= previous.as_ref().is_some_and(entry_affects_future_markdown);
                     self.save_entry(&imported).await?;
                     self.set_entry_tags(&imported.id, tags).await?;
-                    self.index_entry(&imported).await?;
                     sync_dates.push(previous.and_then(|entry| entry.target_date));
                     sync_dates.push(imported.target_date.clone());
                     updated_count += 1;
@@ -1757,7 +1860,6 @@ impl LocalBackend {
                     imported.id = Uuid::new_v4().to_string();
                     self.insert_entry(&imported).await?;
                     self.set_entry_tags(&imported.id, tags).await?;
-                    self.index_entry(&imported).await?;
                     sync_dates.push(imported.target_date.clone());
                     inserted_ids.push(imported.id);
                 }
@@ -1782,7 +1884,6 @@ impl LocalBackend {
                 let id = imported.id.clone();
                 self.insert_entry(&imported).await?;
                 self.set_entry_tags(&imported.id, tags).await?;
-                self.index_entry(&imported).await?;
                 sync_dates.push(imported.target_date.clone());
                 inserted_ids.push(id);
             }
@@ -2526,7 +2627,6 @@ impl LocalBackend {
                 normalize_entry_state(&mut entry);
                 self.save_entry(&entry).await?;
                 self.set_entry_tags(&id, parsed.tags.clone()).await?;
-                self.index_entry(&entry).await?;
                 seen_ids.insert(id);
             } else {
                 let id = self
@@ -2604,7 +2704,6 @@ impl LocalBackend {
         };
         self.insert_entry(&entry).await?;
         self.set_entry_tags(&id, parsed.tags.clone()).await?;
-        self.index_entry(&entry).await?;
         Ok(id)
     }
 
@@ -2851,7 +2950,6 @@ impl LocalBackend {
                 normalize_entry_state(&mut entry);
                 self.save_entry(&entry).await?;
                 self.set_entry_tags(&id, parsed.tags.clone()).await?;
-                self.index_entry(&entry).await?;
                 seen_ids.insert(id);
             } else {
                 let id = self
@@ -2904,7 +3002,6 @@ impl LocalBackend {
         };
         self.insert_entry(&entry).await?;
         self.set_entry_tags(&id, parsed.tags.clone()).await?;
-        self.index_entry(&entry).await?;
         Ok(id)
     }
 
@@ -3408,72 +3505,6 @@ impl LocalBackend {
         Ok(filtered)
     }
 
-    async fn semantic_search(
-        &self,
-        candidates: Vec<Entry>,
-        query: &str,
-        limit: usize,
-    ) -> AppResult<Vec<SearchResult>> {
-        let query_embedding = embed_text(query);
-        let ids: HashSet<String> = candidates.iter().map(|entry| entry.id.clone()).collect();
-        let entry_map: HashMap<String, Entry> = candidates
-            .into_iter()
-            .map(|entry| (entry.id.clone(), entry))
-            .collect();
-        let chunks = sqlx::query(
-            r#"
-            SELECT entry_id, chunk_text, embedding_json
-            FROM search_chunks
-            WHERE owner_id = ?
-            "#,
-        )
-        .bind(self.owner_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut best: HashMap<String, (f32, String)> = HashMap::new();
-        for row in chunks {
-            let entry_id: String = row.try_get("entry_id")?;
-            if !ids.contains(&entry_id) {
-                continue;
-            }
-            let embedding_json: String = row.try_get("embedding_json")?;
-            let embedding: Vec<f32> = serde_json::from_str(&embedding_json).unwrap_or_default();
-            let score = dot(&query_embedding, &embedding);
-            if score <= 0.0 {
-                continue;
-            }
-            let chunk_text: String = row.try_get("chunk_text")?;
-            let current = best.entry(entry_id).or_insert((score, chunk_text.clone()));
-            if score > current.0 {
-                *current = (score, chunk_text);
-            }
-        }
-
-        let mut ranked: Vec<(Entry, f32, String)> = best
-            .into_iter()
-            .filter_map(|(entry_id, (score, chunk))| {
-                entry_map
-                    .get(&entry_id)
-                    .cloned()
-                    .map(|entry| (entry, score, chunk))
-            })
-            .collect();
-        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
-        ranked.truncate(limit);
-
-        let mut results = Vec::with_capacity(ranked.len());
-        for (entry, score, chunk) in ranked {
-            results.push(SearchResult {
-                snippet: snippet(&chunk, query),
-                entry: self.response_from_entry(entry).await?,
-                score,
-                match_type: "semantic".to_string(),
-            });
-        }
-        Ok(results)
-    }
-
     async fn create_migration_child(
         &self,
         source: &mut Entry,
@@ -3624,7 +3655,6 @@ impl LocalBackend {
         parent.is_future = 0;
         normalize_entry_state(&mut parent);
         self.save_entry(&parent).await?;
-        self.index_entry(&parent).await?;
         Ok(())
     }
 
@@ -3791,34 +3821,6 @@ impl LocalBackend {
         self.clear_overview_cache();
         Ok(())
     }
-
-    async fn index_entry(&self, entry: &Entry) -> AppResult<()> {
-        sqlx::query("DELETE FROM search_chunks WHERE entry_id = ? AND owner_id = ?")
-            .bind(&entry.id)
-            .bind(self.owner_id)
-            .execute(&self.pool)
-            .await?;
-        let text = clean_markdown(&entry.content);
-        if text.trim().is_empty() {
-            return Ok(());
-        }
-        let embedding_json = serde_json::to_string(&embed_text(&text))
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        sqlx::query(
-            r#"
-            INSERT INTO search_chunks(entry_id, owner_id, chunk_text, embedding_json, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&entry.id)
-        .bind(self.owner_id)
-        .bind(text)
-        .bind(embedding_json)
-        .bind(now_string())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
 }
 
 async fn ensure_local_user(pool: &SqlitePool) -> AppResult<i64> {
@@ -3843,12 +3845,6 @@ async fn adopt_legacy_entries_to_local_owner(pool: &SqlitePool, owner_id: i64) -
         .bind(owner_id)
         .execute(pool)
         .await?;
-    sqlx::query("UPDATE search_chunks SET owner_id = ? WHERE owner_id != ?")
-        .bind(owner_id)
-        .bind(owner_id)
-        .execute(pool)
-        .await?;
-
     let legacy_tags = sqlx::query("SELECT id, name FROM tags WHERE owner_id != ?")
         .bind(owner_id)
         .fetch_all(pool)
@@ -5416,61 +5412,4 @@ fn snippet(text: &str, query: &str) -> String {
     let index = clean.find(query).unwrap_or(0);
     let start = clean[..index].chars().count().saturating_sub(30);
     clean.chars().skip(start).take(140).collect()
-}
-
-fn embed_text(text: &str) -> Vec<f32> {
-    let mut vector = vec![0.0f32; EMBEDDING_DIMS];
-    for token in semantic_tokens(text) {
-        let index = hash_token(&token) % EMBEDDING_DIMS;
-        vector[index] += token_weight(&token);
-    }
-    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for value in &mut vector {
-            *value /= norm;
-        }
-    }
-    vector
-}
-
-fn semantic_tokens(text: &str) -> Vec<String> {
-    let lower = text.to_lowercase();
-    let mut tokens = Vec::new();
-    for word in lower.split(|ch: char| !ch.is_alphanumeric() && !is_cjk(ch)) {
-        if !word.trim().is_empty() {
-            tokens.push(word.to_string());
-        }
-    }
-    let chars: Vec<char> = lower.chars().filter(|ch| is_cjk(*ch)).collect();
-    for ch in &chars {
-        tokens.push(ch.to_string());
-    }
-    for pair in chars.windows(2) {
-        tokens.push(pair.iter().collect());
-    }
-    tokens
-}
-
-fn is_cjk(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x20000..=0x2A6DF
-    )
-}
-
-fn token_weight(token: &str) -> f32 {
-    if token.chars().count() > 1 { 1.5 } else { 1.0 }
-}
-
-fn hash_token(token: &str) -> usize {
-    let mut hash = 1469598103934665603usize;
-    for byte in token.as_bytes() {
-        hash ^= *byte as usize;
-        hash = hash.wrapping_mul(1099511628211usize);
-    }
-    hash
-}
-
-fn dot(left: &[f32], right: &[f32]) -> f32 {
-    left.iter().zip(right.iter()).map(|(a, b)| a * b).sum()
 }

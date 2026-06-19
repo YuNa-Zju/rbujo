@@ -46,6 +46,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "resources/semantic/bge-small-zh-v1.5/*"
+    ],
     "fileAssociations": [
       {
         "ext": [

@@ -8,6 +8,10 @@ use rbullet_journal::db;
 use rbullet_journal::local::{
     CreateEntryInput, EntryPatch, LocalBackend, SearchMode, SearchOptions, UploadInput,
 };
+use rbullet_journal::semantic::{
+    CandleSemanticEmbedder, SEMANTIC_MODEL_VERSION, build_semantic_query_input,
+    content_embedding_sha256, cosine_similarity, normalize_l2, semantic_cache_key,
+};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use zip::{ZipWriter, write::SimpleFileOptions};
@@ -3061,24 +3065,13 @@ async fn open_upload_rejects_paths_outside_uploads() {
 }
 
 #[tokio::test]
-async fn semantic_search_supports_chinese_ranked_retrieval() {
-    let dir = temp_app_dir("semantic");
+async fn new_databases_do_not_create_semantic_search_index_table() {
+    let dir = temp_app_dir("no-semantic-index");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
-    let target = backend
-        .create_entry(CreateEntryInput {
-            content: "复习随机过程中的马尔可夫链和平稳分布".to_string(),
-            entry_type: "idea".to_string(),
-            target_date: Some("2026-06-11".to_string()),
-            target_month: None,
-            is_future: false,
-            tags: Vec::new(),
-        })
-        .await
-        .unwrap();
     backend
         .create_entry(CreateEntryInput {
-            content: "买牛奶和面包".to_string(),
-            entry_type: "task".to_string(),
+            content: "今天吃了小笼包和牛肉面".to_string(),
+            entry_type: "event".to_string(),
             target_date: Some("2026-06-11".to_string()),
             target_month: None,
             is_future: false,
@@ -3087,41 +3080,93 @@ async fn semantic_search_supports_chinese_ranked_retrieval() {
         .await
         .unwrap();
 
-    let results = backend
-        .search_entries(SearchOptions {
-            query: "马尔可夫 平稳".to_string(),
-            mode: SearchMode::Semantic,
-            include_archived: false,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    let pool = db::connect(&sqlite_url(&dir)).await.unwrap();
+    let search_chunks_exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'search_chunks'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
 
-    assert_eq!(results[0].entry.id, target.id);
-    assert!(results[0].score > 0.0);
-    assert_eq!(results[0].match_type, "semantic");
+    assert_eq!(search_chunks_exists, None);
 
-    backend
-        .update_entry(
-            target.id.clone(),
-            EntryPatch {
-                content: Some("随机过程复习完成".to_string()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
+    fs::remove_dir_all(dir).ok();
+}
 
-    let updated = backend
-        .search_entries(SearchOptions {
-            query: "复习完成".to_string(),
-            mode: SearchMode::Semantic,
-            include_archived: false,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(updated[0].entry.id, target.id);
+#[test]
+fn semantic_helpers_use_bge_query_instruction_and_normalized_scores() {
+    assert_eq!(
+        build_semantic_query_input("  美食  "),
+        "为这个句子生成表示以用于检索相关文章：美食"
+    );
+
+    let query = normalize_l2(vec![1.0, 0.0]).unwrap();
+    let food = normalize_l2(vec![0.98, 0.02]).unwrap();
+    let study = normalize_l2(vec![0.05, 0.95]).unwrap();
+
+    assert!(cosine_similarity(&query, &food).unwrap() > cosine_similarity(&query, &study).unwrap());
+    assert_ne!(
+        semantic_cache_key("same-id", &content_embedding_sha256("今天吃了小笼包。")),
+        semantic_cache_key("same-id", &content_embedding_sha256("今天复习了线性代数。"))
+    );
+    assert!(semantic_cache_key("entry", "hash").contains(SEMANTIC_MODEL_VERSION));
+}
+
+#[test]
+#[ignore = "loads the bundled BGE model and is intended for manual quality evaluation"]
+fn semantic_model_ranks_chinese_examples() {
+    let model_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src-tauri/resources/semantic/bge-small-zh-v1.5");
+    let embedder = CandleSemanticEmbedder::load(model_dir).unwrap();
+    let documents = [
+        ("food", "今天午饭吃了小笼包和牛肉面，晚上还喝了奶茶。"),
+        ("study", "复习随机过程中的马尔可夫链和平稳分布。"),
+        ("backup", "整理附件目录，检查备份文件是否可以恢复。"),
+        ("meeting", "下午和同学讨论课程项目分工。"),
+    ];
+    let cases = [
+        ("美食", "food"),
+        ("马尔可夫链", "study"),
+        ("备份恢复", "backup"),
+    ];
+
+    for (query, expected_top_id) in cases {
+        let query_embedding = embedder.embed(&build_semantic_query_input(query)).unwrap();
+        let mut scores = documents
+            .iter()
+            .map(|(id, content)| {
+                let embedding = embedder.embed(content).unwrap();
+                let score = cosine_similarity(&query_embedding, &embedding).unwrap();
+                (*id, score)
+            })
+            .collect::<Vec<_>>();
+        scores.sort_by(|left, right| right.1.total_cmp(&left.1));
+        println!("{query}: {scores:?}");
+        assert_eq!(scores[0].0, expected_top_id);
+    }
+}
+
+#[tokio::test]
+async fn new_databases_create_semantic_embedding_cache_table() {
+    let dir = temp_app_dir("semantic-cache");
+    let _backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let pool = db::connect(&sqlite_url(&dir)).await.unwrap();
+
+    let table_exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'semantic_embeddings'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    let model_index_exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'ix_semantic_embeddings_model'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(table_exists, Some(1));
+    assert_eq!(model_index_exists, Some(1));
 
     fs::remove_dir_all(dir).ok();
 }

@@ -613,6 +613,58 @@ test("tag search title supports double click rename through invoke", async () =>
   assert.match(libSource, /rename_tag,/);
 });
 
+test("global semantic search is restored with a bundled local BGE model", async () => {
+  const searchPath = path.resolve(
+    import.meta.dirname,
+    "../src/components/modals/SearchModal.tsx",
+  );
+  const entryServicePath = path.resolve(
+    import.meta.dirname,
+    "../src/services/entryService.ts",
+  );
+  const translationsPath = path.resolve(
+    import.meta.dirname,
+    "../src/config/translations.ts",
+  );
+  const libPath = path.resolve(import.meta.dirname, "../../src-tauri/src/lib.rs");
+  const localPath = path.resolve(import.meta.dirname, "../../src/local.rs");
+  const semanticPath = path.resolve(import.meta.dirname, "../../src/semantic.rs");
+  const cargoPath = path.resolve(import.meta.dirname, "../../Cargo.toml");
+  const tauriConfigPath = path.resolve(
+    import.meta.dirname,
+    "../../src-tauri/tauri.conf.json",
+  );
+
+  const searchSource = await readFile(searchPath, "utf8");
+  const entryServiceSource = await readFile(entryServicePath, "utf8");
+  const translationsSource = await readFile(translationsPath, "utf8");
+  const libSource = await readFile(libPath, "utf8");
+  const localSource = await readFile(localPath, "utf8");
+  const semanticSource = await readFile(semanticPath, "utf8");
+  const cargoSource = await readFile(cargoPath, "utf8");
+  const tauriConfig = JSON.parse(await readFile(tauriConfigPath, "utf8"));
+
+  assert.match(searchSource, /setMode\("text"\)/);
+  assert.match(searchSource, /setMode\("regex"\)/);
+  assert.match(searchSource, /setMode\("semantic"\)/);
+  assert.match(searchSource, /Sparkles/);
+  assert.match(entryServiceSource, /"semantic"/);
+  assert.doesNotMatch(entryServiceSource, /@huggingface\/transformers/);
+  assert.match(localSource, /SearchMode::Semantic/);
+  assert.match(semanticSource, /candle_transformers::models::bert/);
+  assert.match(semanticSource, /use tokenizers::\{Tokenizer,\s*TruncationParams\}/);
+  assert.match(semanticSource, /bge-small-zh-v1\.5/);
+  assert.match(semanticSource, /model\.safetensors/);
+  assert.match(cargoSource, /candle-core/);
+  assert.match(cargoSource, /candle-transformers/);
+  assert.match(cargoSource, /tokenizers/);
+  assert.match(translationsSource, /modeSemantic/);
+  assert.doesNotMatch(libSource, /rebuild_search_index/);
+  assert.ok(
+    tauriConfig.bundle.resources.includes("resources/semantic/bge-small-zh-v1.5/*"),
+  );
+});
+
 test("cancel action does not use overflowing daisy tooltip text", async () => {
   const entryActionsPath = path.resolve(
     import.meta.dirname,
