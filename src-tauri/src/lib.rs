@@ -33,6 +33,7 @@ struct PendingUpdate(Mutex<Option<Update>>);
 const BJK_OPEN_EVENT: &str = "file:open-bjk";
 const MAIN_WINDOW_LABEL: &str = "main";
 const MAX_BJK_IMPORT_BYTES: u64 = 256 * 1024 * 1024;
+const SEMANTIC_MODEL_DIR: &str = "semantic/bge-small-zh-v1.5";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -836,6 +837,19 @@ fn pending_bjk_import_from_args(
     bjk_path_from_args(args).map(pending_bjk_import_from_path)
 }
 
+fn semantic_assets_dir_from_resource_dir(resource_dir: &Path) -> Option<PathBuf> {
+    [
+        resource_dir.join(SEMANTIC_MODEL_DIR),
+        resource_dir.join("resources").join(SEMANTIC_MODEL_DIR),
+    ]
+    .into_iter()
+    .find(|candidate| {
+        candidate.join("config.json").is_file()
+            && candidate.join("tokenizer.json").is_file()
+            && candidate.join("model.safetensors").is_file()
+    })
+}
+
 fn pending_bjk_import_from_url(url: &Url) -> Option<PendingBjkImport> {
     url.to_file_path()
         .ok()
@@ -1037,7 +1051,7 @@ pub fn run() {
                 .path()
                 .resource_dir()
                 .ok()
-                .map(|dir| dir.join("semantic").join("bge-small-zh-v1.5"));
+                .and_then(|dir| semantic_assets_dir_from_resource_dir(&dir));
             let backend = tauri::async_runtime::block_on(LocalBackend::open_with_semantic_assets(
                 app_dir,
                 semantic_assets_dir,
@@ -1131,7 +1145,9 @@ mod tests {
     use super::{
         bjk_path_from_arg, bjk_path_from_args, menu_event_name, native_menu_enabled,
         pending_bjk_import_from_path, pending_bjk_import_from_url,
+        semantic_assets_dir_from_resource_dir,
     };
+    use std::fs;
     use std::path::PathBuf;
     use url::Url;
 
@@ -1155,6 +1171,27 @@ mod tests {
     #[test]
     fn native_menu_is_macos_only() {
         assert_eq!(native_menu_enabled(), cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn finds_semantic_assets_inside_tauri_resources_directory() {
+        let resource_dir =
+            std::env::temp_dir().join(format!("rbujo-resource-test-{}", uuid::Uuid::new_v4()));
+        let model_dir = resource_dir
+            .join("resources")
+            .join("semantic")
+            .join("bge-small-zh-v1.5");
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(model_dir.join("config.json"), "{}").unwrap();
+        fs::write(model_dir.join("tokenizer.json"), "{}").unwrap();
+        fs::write(model_dir.join("model.safetensors"), b"weights").unwrap();
+
+        assert_eq!(
+            semantic_assets_dir_from_resource_dir(&resource_dir),
+            Some(model_dir)
+        );
+
+        fs::remove_dir_all(resource_dir).ok();
     }
 
     #[test]

@@ -40,6 +40,7 @@ import {
   RefreshCw,
   Info,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -101,6 +102,8 @@ export default function GlobalCommandPalette() {
   const [dayEntries, setDayEntries] = useState<any[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<any | null>(null);
   const [loadingEntries, setLoadingEntries] = useState(false);
+  const [smartResults, setSmartResults] = useState<any[]>([]);
+  const [loadingSmartResults, setLoadingSmartResults] = useState(false);
 
   const [isTouchDevice, setIsTouchDevice] = useState(false);
 
@@ -132,10 +135,39 @@ export default function GlobalCommandPalette() {
     }
   };
 
+  const getSearchMatchLabel = (type?: string) => {
+    const normalizedType = type === "text" ? "exact" : type;
+    switch (normalizedType) {
+      case "exact":
+        return t.search?.matchExact || "Exact";
+      case "semantic":
+        return t.search?.matchSemantic || "Semantic";
+      case "regex":
+        return t.search?.matchRegex || "Regex";
+      default:
+        return "";
+    }
+  };
+
+  const getSearchMatchClass = (type?: string) => {
+    const normalizedType = type === "text" ? "exact" : type;
+    switch (normalizedType) {
+      case "semantic":
+        return "bg-cyan-500/10 text-cyan-600 dark:text-cyan-200 border-cyan-500/20";
+      case "regex":
+        return "bg-amber-500/10 text-amber-700 dark:text-amber-200 border-amber-500/20";
+      case "exact":
+      default:
+        return "bg-primary/10 text-primary border-primary/20";
+    }
+  };
+
   const resetContext = useCallback(() => {
     setView("ROOT");
     setSelectedEntry(null);
     setInputValue("");
+    setSmartResults([]);
+    setLoadingSmartResults(false);
   }, []);
 
   const run = (action: () => void) => {
@@ -225,6 +257,44 @@ export default function GlobalCommandPalette() {
   useEffect(() => {
     if (open) void refreshTags();
   }, [open, refreshTags]);
+
+  useEffect(() => {
+    if (!open || view !== "ROOT") {
+      setSmartResults([]);
+      setLoadingSmartResults(false);
+      return;
+    }
+
+    const trimmed = inputValue.trim();
+    if (!trimmed) {
+      setSmartResults([]);
+      setLoadingSmartResults(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingSmartResults(true);
+    setSmartResults([]);
+    const timer = window.setTimeout(() => {
+      entryService
+        .search({ q: trimmed, mode: "semantic", limit: 6 })
+        .then((results) => {
+          if (!cancelled) setSmartResults(results);
+        })
+        .catch((error) => {
+          console.warn("Smart command search failed", error);
+          if (!cancelled) setSmartResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingSmartResults(false);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [inputValue, open, view]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -383,6 +453,95 @@ export default function GlobalCommandPalette() {
                   />
                 </Command.Group>
               )}
+
+              {inputValue.trim() &&
+                (loadingSmartResults || smartResults.length > 0) && (
+                  <Command.Group
+                    forceMount
+                    heading={
+                      <div className="flex items-center gap-2 mb-2 px-1">
+                        <Sparkles size={14} className="opacity-50" />
+                        <span className="font-semibold opacity-70 tracking-wide">
+                          {t.command?.smartResults || "Smart Results"}
+                        </span>
+                      </div>
+                    }
+                    className="space-y-2"
+                  >
+                    {loadingSmartResults ? (
+                      <div className="px-4 py-4 text-sm text-base-content/40 flex items-center justify-center gap-2 bg-base-200/30 rounded-2xl">
+                        <Loader2 className="w-5 h-5 animate-spin" />{" "}
+                        {t.search?.searching || "Searching..."}
+                      </div>
+                    ) : (
+                      smartResults.map((entry) => {
+                        const theme =
+                          ENTRY_THEME[entry.entry_type as EntryType] ||
+                          ENTRY_THEME.task;
+                        const { text, meta } =
+                          entry.summary || getSmartSummary(entry.content);
+                        const Icon = theme.icon;
+                        const dateLabel =
+                          entry.date ||
+                          entry.target_date ||
+                          t.addEntry?.futureLogTitle ||
+                          "Future Log";
+                        const matchLabel = getSearchMatchLabel(
+                          entry._search?.type,
+                        );
+                        const snippet = entry._search?.snippet || text;
+
+                        return (
+                          <Command.Item
+                            forceMount
+                            key={`smart:${entry.id}`}
+                            onSelect={() => openEntryActions(entry)}
+                            value={`smart:${entry.id}`}
+                            className="relative flex items-center gap-4 px-5 py-4 rounded-2xl text-base font-medium transition-all duration-200 cursor-pointer group font-lxgw
+                                     border border-transparent bg-base-100 shadow-sm
+                                     data-[selected=true]:bg-primary/5 data-[selected=true]:border-primary/20 data-[selected=true]:shadow-md data-[selected=true]:scale-[1.01]"
+                          >
+                            <div
+                              className={`shrink-0 ${theme.color} p-2 rounded-xl bg-base-content/5 group-data-[selected=true]:bg-primary/20 transition-colors duration-200`}
+                            >
+                              <Icon size={18} strokeWidth={2.5} />
+                            </div>
+                            <div className="flex-1 min-w-0 flex flex-col">
+                              <span className="truncate opacity-80 group-data-[selected=true]:opacity-100">
+                                {text}
+                              </span>
+                              <div className="mt-1 flex items-center gap-2 min-w-0 text-[11px] opacity-60">
+                                <span className="shrink-0 font-mono font-bold">
+                                  {dateLabel}
+                                </span>
+                                {matchLabel && (
+                                  <span
+                                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${getSearchMatchClass(entry._search?.type)}`}
+                                  >
+                                    {matchLabel}
+                                  </span>
+                                )}
+                                <span className="truncate">{snippet}</span>
+                              </div>
+                            </div>
+                            <div className="flex gap-2 opacity-30 group-data-[selected=true]:opacity-60 transition-opacity">
+                              {meta.hasImage && <ImageIcon size={14} />}
+                              {meta.hasLink && <LinkIcon size={14} />}
+                              {meta.hasChecklist && <CheckSquare size={14} />}
+                              {meta.hasOrderedList && <ListOrdered size={14} />}
+                              {meta.hasUnorderedList && <List size={14} />}
+                              {meta.hasCode && <Code size={14} />}
+                              {meta.hasMath && <Sigma size={14} />}
+                              {meta.hasQuote && <Quote size={14} />}
+                              {meta.hasTag && <Hash size={14} />}
+                            </div>
+                            <ArrowRight className="w-4 h-4 opacity-0 group-data-[selected=true]:opacity-100 text-primary transition-all -ml-2 group-data-[selected=true]:ml-0" />
+                          </Command.Item>
+                        );
+                      })
+                    )}
+                  </Command.Group>
+                )}
 
               {/* Daily & Create */}
               <Command.Group

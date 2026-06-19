@@ -10,6 +10,7 @@ pub const SEMANTIC_MODEL_ID: &str = "bge-small-zh-v1.5";
 pub const SEMANTIC_MODEL_VERSION: &str = "bge-small-zh-v1.5-candle-f32-v1";
 pub const SEMANTIC_EMBEDDING_DIMS: usize = 512;
 pub const SEMANTIC_MAX_TOKENS: usize = 512;
+pub const SEMANTIC_SCORE_THRESHOLD: f32 = 0.32;
 
 const BGE_QUERY_INSTRUCTION: &str = "为这个句子生成表示以用于检索相关文章：";
 

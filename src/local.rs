@@ -22,8 +22,9 @@ use crate::models::{
     STATUS_MIGRATED_FUTURE, STATUS_OPEN, TYPE_EVENT, TYPE_IDEA, TYPE_TASK,
 };
 use crate::semantic::{
-    CandleSemanticEmbedder, SEMANTIC_MODEL_VERSION, build_semantic_query_input,
-    content_embedding_sha256, cosine_similarity, embedding_from_blob, embedding_to_blob,
+    CandleSemanticEmbedder, SEMANTIC_MODEL_VERSION, SEMANTIC_SCORE_THRESHOLD,
+    build_semantic_query_input, content_embedding_sha256, cosine_similarity, embedding_from_blob,
+    embedding_to_blob,
 };
 
 const LOCAL_USERNAME: &str = "local";
@@ -1540,27 +1541,53 @@ impl LocalBackend {
         query: &str,
         limit: usize,
     ) -> AppResult<Vec<SearchResult>> {
-        let query_embedding = self.semantic_embed_text(&build_semantic_query_input(query))?;
-        let mut scored_entries = Vec::new();
+        let mut results = Vec::new();
+        let mut semantic_candidates = Vec::new();
 
         for entry in candidates {
             let semantic_text = clean_markdown(&entry.content);
             if semantic_text.trim().is_empty() {
                 continue;
             }
+            if exact_search_match(&semantic_text, query) {
+                results.push(SearchResult {
+                    snippet: snippet(&entry.content, query),
+                    entry: self.response_from_entry(entry).await?,
+                    score: 1.0,
+                    match_type: "exact".to_string(),
+                });
+                if results.len() >= limit {
+                    return Ok(results);
+                }
+            } else {
+                semantic_candidates.push((entry, semantic_text));
+            }
+        }
+
+        if self.semantic_assets_dir.is_none() {
+            return Ok(results);
+        }
+
+        let query_embedding = self.semantic_embed_text(&build_semantic_query_input(query))?;
+        let mut scored_entries = Vec::new();
+
+        for (entry, semantic_text) in semantic_candidates {
             let content_hash = content_embedding_sha256(&semantic_text);
             let embedding = self
                 .cached_semantic_embedding(&entry.id, &semantic_text, &content_hash)
                 .await?;
             let score =
                 cosine_similarity(&query_embedding, &embedding).map_err(AppError::Internal)?;
+            if score < SEMANTIC_SCORE_THRESHOLD {
+                continue;
+            }
             scored_entries.push((score, entry));
         }
 
         scored_entries.sort_by(|left, right| right.0.total_cmp(&left.0));
 
-        let mut results = Vec::new();
-        for (score, entry) in scored_entries.into_iter().take(limit) {
+        let remaining = limit.saturating_sub(results.len());
+        for (score, entry) in scored_entries.into_iter().take(remaining) {
             results.push(SearchResult {
                 snippet: snippet(&entry.content, ""),
                 entry: self.response_from_entry(entry).await?,
@@ -5402,6 +5429,13 @@ fn clean_markdown(markdown: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn exact_search_match(clean_text: &str, query: &str) -> bool {
+    if query.is_empty() {
+        return false;
+    }
+    clean_text.to_lowercase().contains(&query.to_lowercase())
 }
 
 fn snippet(text: &str, query: &str) -> String {

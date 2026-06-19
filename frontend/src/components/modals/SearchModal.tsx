@@ -54,7 +54,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
 
   // 搜索状态
   const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<"text" | "regex" | "semantic">("text");
+  const [mode, setMode] = useState<"text" | "regex" | "semantic">("semantic");
   const [selectedTypes, setSelectedTypes] = useState<EntryType[]>([
     "task",
     "idea",
@@ -91,7 +91,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
       const timer = setTimeout(() => {
         setQuery("");
         setResults([]);
-        setMode("text");
+        setMode("semantic");
         setSelectedTags([]);
         setTagDraft("");
         setTagInputFocused(false);
@@ -303,6 +303,36 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     Boolean(startDate) ||
     Boolean(endDate) ||
     selectedTags.length > 0;
+
+  const renderMatchPill = (type?: string) => {
+    if (!type || type === "list") return null;
+    const normalizedType = type === "text" ? "exact" : type;
+    const labelMap: Record<string, string> = {
+      exact: t.search?.matchExact || "精确",
+      semantic: t.search?.matchSemantic || "语义",
+      regex: t.search?.matchRegex || "正则",
+    };
+    const classMap: Record<string, string> = {
+      exact: isDark
+        ? "bg-indigo-500/15 text-indigo-200 border-indigo-400/20"
+        : "bg-indigo-50 text-indigo-600 border-indigo-100",
+      semantic: isDark
+        ? "bg-cyan-500/15 text-cyan-200 border-cyan-400/20"
+        : "bg-cyan-50 text-cyan-700 border-cyan-100",
+      regex: isDark
+        ? "bg-amber-500/15 text-amber-200 border-amber-400/20"
+        : "bg-amber-50 text-amber-700 border-amber-100",
+    };
+    const label = labelMap[normalizedType];
+    if (!label) return null;
+    return (
+      <span
+        className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-bold tracking-wide ${classMap[normalizedType]}`}
+      >
+        {label}
+      </span>
+    );
+  };
 
   return (
     // ✅ 5. 接入 EscModalWrapper
@@ -618,6 +648,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
                             />
                           </button>
                         </div>
+                        {renderMatchPill(entry._search?.type)}
                       </div>
 
                       <div className="transform transition-transform hover:translate-x-1 duration-300">

@@ -397,6 +397,50 @@ async fn search_status_filter_applies_before_limit() {
 }
 
 #[tokio::test]
+async fn semantic_search_falls_back_to_exact_matches_without_model_assets() {
+    let dir = temp_app_dir("semantic-exact-fallback");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let exact = backend
+        .create_entry(CreateEntryInput {
+            content: "今晚整理杭州美食清单。".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-19".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "和同学讨论课程项目分工。".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let results = backend
+        .search_entries(SearchOptions {
+            query: "美食".to_string(),
+            mode: SearchMode::Semantic,
+            limit: 10,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].entry.id, exact.id);
+    assert_eq!(results[0].match_type, "exact");
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn native_tag_list_reads_tags_without_entry_search() {
     let dir = temp_app_dir("native-tag-list");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
@@ -3144,6 +3188,95 @@ fn semantic_model_ranks_chinese_examples() {
         println!("{query}: {scores:?}");
         assert_eq!(scores[0].0, expected_top_id);
     }
+}
+
+#[tokio::test]
+#[ignore = "loads the bundled BGE model and exercises the backend semantic search path"]
+async fn semantic_search_entries_returns_ranked_results_with_bundled_model() {
+    let dir = temp_app_dir("semantic-search-integration");
+    let model_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src-tauri/resources/semantic/bge-small-zh-v1.5");
+    let backend = LocalBackend::open_with_semantic_assets(dir.clone(), Some(model_dir))
+        .await
+        .unwrap();
+    let exact = backend
+        .create_entry(CreateEntryInput {
+            content: "整理杭州美食地图和周末探店清单。".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-20".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "今天午饭吃了小笼包和牛肉面，晚上还喝了奶茶。".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-06-19".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "复习随机过程中的马尔可夫链和平稳分布。".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-19".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "整理附件目录，检查备份文件是否可以恢复。".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-19".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "已和学长交流 SRTP 相关内容。".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-03-29".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let results = backend
+        .search_entries(SearchOptions {
+            query: "美食".to_string(),
+            mode: SearchMode::Semantic,
+            limit: 5,
+            ..SearchOptions::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].entry.id, exact.id);
+    assert_eq!(results[0].match_type, "exact");
+    assert_eq!(results[1].match_type, "semantic");
+    assert!(results[1].entry.content.contains("小笼包"));
+    assert!(
+        results
+            .iter()
+            .all(|result| !result.entry.content.contains("SRTP"))
+    );
+
+    fs::remove_dir_all(dir).ok();
 }
 
 #[tokio::test]
