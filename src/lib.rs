@@ -7,4 +7,5 @@ pub mod local;
 pub mod macos_security_scope;
 pub mod models;
 pub mod routes;
+pub mod semantic;
 pub mod state;

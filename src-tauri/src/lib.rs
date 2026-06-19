@@ -444,11 +444,6 @@ async fn search_entries(
 }
 
 #[tauri::command]
-async fn rebuild_search_index(state: State<'_, DesktopState>) -> Result<usize, String> {
-    state.backend.rebuild_search_index().await.map_err(to_error)
-}
-
-#[tauri::command]
 async fn list_tags(state: State<'_, DesktopState>) -> Result<Vec<String>, String> {
     state.backend.list_tags().await.map_err(to_error)
 }
@@ -1038,7 +1033,15 @@ pub fn run() {
         .setup(|app| {
             let pending_import = pending_bjk_import_from_args(std::env::args().collect::<Vec<_>>());
             let app_dir = app.path().app_data_dir()?;
-            let backend = tauri::async_runtime::block_on(LocalBackend::open(app_dir))?;
+            let semantic_assets_dir = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(|dir| dir.join("semantic").join("bge-small-zh-v1.5"));
+            let backend = tauri::async_runtime::block_on(LocalBackend::open_with_semantic_assets(
+                app_dir,
+                semantic_assets_dir,
+            ))?;
             app.manage(DesktopState {
                 backend: Arc::new(backend),
             });
@@ -1072,7 +1075,6 @@ pub fn run() {
             migrate_entry_to_future,
             get_migration_chain,
             search_entries,
-            rebuild_search_index,
             list_tags,
             rename_tag,
             store_upload,

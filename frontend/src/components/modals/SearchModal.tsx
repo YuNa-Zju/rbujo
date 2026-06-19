@@ -211,10 +211,10 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     (entry: any) => {
       if (query) {
         const content = entry.content || "";
-        if (mode === "text" || mode === "semantic") {
+        if (mode === "text") {
           if (!content.toLowerCase().includes(query.toLowerCase()))
             return false;
-        } else {
+        } else if (mode === "regex") {
           try {
             const regex = new RegExp(query, "i");
             if (!regex.test(content)) return false;
@@ -245,6 +245,10 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
   useEffect(() => {
     if (!isOpen) return;
     const handleUpdate = (updatedEntry: any) => {
+      if (mode === "semantic") {
+        void performSearch();
+        return;
+      }
       setResults((prev) => {
         const exists = prev.some((e) => e.id === updatedEntry.id);
         const matches = checkEntryMatches(updatedEntry);
@@ -271,7 +275,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
       entryEventBus.off("entry:status_change", handleUpdate);
       entryEventBus.off("entry:delete", handleDelete);
     };
-  }, [isOpen, checkEntryMatches]);
+  }, [isOpen, mode, performSearch, checkEntryMatches]);
 
   const handleRefresh = () => performSearch();
 

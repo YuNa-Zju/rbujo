@@ -103,20 +103,6 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS ix_shared_links_token ON shared_links(token);
         CREATE INDEX IF NOT EXISTS ix_shared_links_target_id ON shared_links(target_id);
 
-        CREATE TABLE IF NOT EXISTS search_chunks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
-            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            chunk_text TEXT NOT NULL,
-            embedding_json TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE INDEX IF NOT EXISTS ix_search_chunks_entry
-            ON search_chunks(entry_id);
-        CREATE INDEX IF NOT EXISTS ix_search_chunks_owner
-            ON search_chunks(owner_id);
-
         CREATE TABLE IF NOT EXISTS attachment_records (
             relative_path TEXT PRIMARY KEY,
             filename TEXT NOT NULL,
@@ -137,6 +123,19 @@ pub async fn ensure_schema(pool: &SqlitePool) -> anyhow::Result<()> {
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY(owner_id, key)
         );
+
+        CREATE TABLE IF NOT EXISTS semantic_embeddings (
+            owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+            model_version TEXT NOT NULL,
+            content_sha256 TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(owner_id, entry_id, model_version)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_semantic_embeddings_model
+            ON semantic_embeddings(owner_id, model_version, content_sha256);
 
         CREATE TABLE IF NOT EXISTS daily_markdown_sync_state (
             owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
