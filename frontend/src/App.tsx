@@ -4,6 +4,7 @@ import { EntryModalProvider } from "./context/EntryModalContext";
 import { ModalControllerProvider } from "./context/ModalControllerContext";
 import { Toaster } from "sonner";
 import NativeMenuBridge from "./components/NativeMenuBridge";
+import LocalSnapshotBootstrap from "./components/LocalSnapshotBootstrap";
 
 const GlobalModalHost = lazy(() => import("./components/modals/GlobalModalHost"));
 const GlobalCommandPalette = lazy(
@@ -19,6 +20,7 @@ export default function App() {
       <BrowserRouter>
         <ModalControllerProvider>
           <NativeMenuBridge />
+          <LocalSnapshotBootstrap />
           <Suspense fallback={null}>
             <GlobalCommandPalette />
           </Suspense>

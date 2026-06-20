@@ -17,6 +17,7 @@ import VersionInfoController from "./VersionInfoController";
 import AttachmentMaintenanceController from "./AttachmentMaintenanceController";
 import SettingsModalController from "./SettingsModalController";
 import BjkImportPromptController from "./BjkImportPromptController";
+import EntryInspector from "../EntryInspector";
 
 export default function GlobalModalHost() {
   const {
@@ -24,6 +25,8 @@ export default function GlobalModalHost() {
     closeSearch,
     tagSearch,
     closeTagSearch,
+    inspector,
+    closeInspector,
     futureLogOpen,
     closeFutureLog,
     backupOpen,
@@ -271,6 +274,11 @@ export default function GlobalModalHost() {
       <AttachmentMaintenanceController />
       <SettingsModalController />
       <BjkImportPromptController />
+      <EntryInspector
+        open={inspector.open}
+        entry={inspector.entry}
+        onClose={closeInspector}
+      />
     </>
   );
 }

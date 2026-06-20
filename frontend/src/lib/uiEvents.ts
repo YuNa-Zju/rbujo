@@ -29,6 +29,7 @@ type UIEventType =
   | "OPEN_FUTURE_ENTRY"
   | "OPEN_DELETE_ENTRY"
   | "OPEN_EDIT_ENTRY"
+  | "OPEN_ENTRY_INSPECTOR"
   | "OPEN_CMD_PALETTE"
   | "OPEN_BACKUP"
   | "OPEN_SETTINGS"
@@ -49,6 +50,7 @@ interface UIEventPayloads {
   OPEN_FUTURE_ENTRY: EntryActionPayload;
   OPEN_DELETE_ENTRY: EntryActionPayload;
   OPEN_EDIT_ENTRY: EntryActionPayload;
+  OPEN_ENTRY_INSPECTOR: EntryActionPayload;
   OPEN_CMD_PALETTE: void;
   OPEN_BACKUP: void;
   OPEN_SETTINGS: void;
@@ -77,6 +79,7 @@ class UIEventEmitter {
     "OPEN_FUTURE_ENTRY",
     "OPEN_DELETE_ENTRY",
     "OPEN_EDIT_ENTRY",
+    "OPEN_ENTRY_INSPECTOR",
     "OPEN_BACKUP",
     "OPEN_SETTINGS",
     "OPEN_CHECK_UPDATE",

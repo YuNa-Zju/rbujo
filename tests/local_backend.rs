@@ -342,6 +342,198 @@ async fn native_tag_search_is_case_insensitive() {
 }
 
 #[tokio::test]
+async fn text_search_is_case_insensitive() {
+    let dir = temp_app_dir("text-search-case");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let entry = backend
+        .create_entry(CreateEntryInput {
+            content: "Meeting notes for Local Safety".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-06-20".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let results = backend
+        .search_entries(SearchOptions {
+            query: "local safety".to_string(),
+            mode: SearchMode::Text,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].entry.id, entry.id);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn related_entries_prefers_shared_tags_and_content_overlap() {
+    let dir = temp_app_dir("related-entries");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+
+    let source = backend
+        .create_entry(CreateEntryInput {
+            content: "今天整理本地备份和附件安全策略".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-20".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["backup".to_string(), "security".to_string()],
+        })
+        .await
+        .unwrap();
+    let related = backend
+        .create_entry(CreateEntryInput {
+            content: "检查备份恢复流程，确认附件不会重复打包".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-19".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["backup".to_string()],
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "晚上去吃小笼包和牛肉面".to_string(),
+            entry_type: "event".to_string(),
+            target_date: Some("2026-06-18".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["food".to_string()],
+        })
+        .await
+        .unwrap();
+
+    let results = backend.related_entries(source.id.clone(), 3).await.unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].entry.id, related.id);
+    assert!(results[0].score > 0.0);
+    assert_ne!(results[0].entry.id, source.id);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn local_snapshots_live_in_project_folder_without_attachment_bytes_and_keep_seven() {
+    let dir = temp_app_dir("local-snapshots");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let stored = backend
+        .store_upload(UploadInput {
+            filename: "receipt.png".to_string(),
+            bytes: b"image-bytes-should-not-be-in-snapshot".to_vec(),
+        })
+        .await
+        .unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: format!("本地安全快照 ![receipt]({})", stored.relative_path),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-20".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["backup".to_string()],
+        })
+        .await
+        .unwrap();
+
+    for _ in 0..8 {
+        backend.create_local_snapshot().await.unwrap();
+    }
+
+    let snapshots = backend.list_local_snapshots().await.unwrap();
+    assert_eq!(snapshots.len(), 7);
+    assert!(
+        snapshots
+            .iter()
+            .all(|snapshot| snapshot.absolute_path.contains(".bujo/snapshots"))
+    );
+
+    let latest_path = Path::new(&snapshots[0].absolute_path);
+    let bytes = fs::read(latest_path).unwrap();
+    let mut decoder = flate2::read::GzDecoder::new(Cursor::new(bytes));
+    let mut json = String::new();
+    decoder.read_to_string(&mut json).unwrap();
+    let snapshot: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(snapshot["format"], "fun.yunazju.rbujo.snapshot");
+    assert_eq!(snapshot["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["attachments"].as_array().unwrap().len(), 1);
+    assert!(snapshot["attachments"][0].get("bytes").is_none());
+    assert!(!json.contains("image-bytes-should-not-be-in-snapshot"));
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn local_snapshot_listing_skips_corrupt_snapshot_files() {
+    let dir = temp_app_dir("local-snapshot-corrupt-file");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "快照列表应忽略损坏文件".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-20".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let snapshot = backend.create_local_snapshot().await.unwrap();
+    let corrupt_path = default_workspace_path(&dir)
+        .join(".bujo")
+        .join("snapshots")
+        .join("broken.json.gz");
+    fs::write(corrupt_path, b"not a gzip snapshot").unwrap();
+
+    let snapshots = backend.list_local_snapshots().await.unwrap();
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].filename, snapshot.filename);
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn auto_local_snapshots_can_be_paused_for_seven_days() {
+    let dir = temp_app_dir("local-snapshot-pause");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    backend
+        .create_entry(CreateEntryInput {
+            content: "暂停自动快照".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-20".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let settings = backend.pause_auto_local_snapshots(7).await.unwrap();
+    assert!(settings.paused_until.is_some());
+    assert!(
+        backend
+            .run_auto_local_snapshot_if_due()
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(backend.create_local_snapshot().await.is_ok());
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn search_status_filter_applies_before_limit() {
     let dir = temp_app_dir("search-status-limit");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();
