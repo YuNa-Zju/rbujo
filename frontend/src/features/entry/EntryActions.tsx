@@ -55,7 +55,7 @@ export default function EntryActions({
       }
     };
 
-    entryEventBus.on("ui:dropdown_opened" as any, handleOtherDropdownOpen);
+    entryEventBus.on("ui:dropdown_opened", handleOtherDropdownOpen);
 
     // 2. 点击外部关闭
     const handlePointerDownOutside = (event: PointerEvent) => {
@@ -73,7 +73,7 @@ export default function EntryActions({
     document.addEventListener("pointerdown", handlePointerDownOutside, true);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      entryEventBus.off("ui:dropdown_opened" as any, handleOtherDropdownOpen);
+      entryEventBus.off("ui:dropdown_opened", handleOtherDropdownOpen);
       document.removeEventListener("pointerdown", handlePointerDownOutside, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
@@ -84,7 +84,7 @@ export default function EntryActions({
     const isOpening = (e.target as HTMLDetailsElement).open;
     if (isOpening) {
       // 广播：我打开了，其他的请闭嘴
-      entryEventBus.emit("ui:dropdown_opened" as any, entryId);
+      entryEventBus.emit("ui:dropdown_opened", entryId);
     }
   };
 
