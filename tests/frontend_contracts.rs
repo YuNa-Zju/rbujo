@@ -60,6 +60,35 @@ fn entry_inspector_is_persistent_side_panel_with_related_notes() {
 }
 
 #[test]
+fn entry_inspector_keeps_actions_purposeful_and_related_cards_compact() {
+    let inspector = read_file("frontend/src/components/EntryInspector.tsx");
+
+    assert!(
+        inspector.contains("className=\"flex items-center gap-1.5 border-b")
+            && !inspector.contains("flex flex-wrap items-center gap-1.5 border-b"),
+        "Inspector toolbar should stay as one compact icon row instead of wrapping into multiple rows"
+    );
+    assert!(
+        !inspector.contains("InspectorMoreMenu")
+            && !inspector.contains("performArchive")
+            && !inspector.contains("performCancel")
+            && !inspector.contains("label=\"复制\""),
+        "Inspector should not duplicate low-frequency actions from the entry card three-dot menu"
+    );
+    assert!(
+        inspector.contains("const isClosedTask = isTask && activeEntry?.status !== \"open\"")
+            && inspector.contains("label={isClosedTask ? \"重新打开\" : \"完成\"}"),
+        "Closed tasks in Inspector should advertise the real reopen action instead of showing a misleading complete action"
+    );
+    assert!(
+        inspector.contains("backendSummary={item.summary}")
+            && inspector.contains("forceCollapse")
+            && !inspector.contains("getInspectorDisplayText(item)"),
+        "Related Notes should reuse compact entry rendering with backend summaries and avoid duplicate summary text"
+    );
+}
+
+#[test]
 fn local_snapshot_safety_is_exposed_in_storage_panel_and_startup() {
     let app = read_file("frontend/src/App.tsx");
     let bootstrap = read_file("frontend/src/components/LocalSnapshotBootstrap.tsx");

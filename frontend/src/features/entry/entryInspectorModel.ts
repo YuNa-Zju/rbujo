@@ -1,5 +1,6 @@
 import type { EntryType } from "../../config/entryTheme";
 import type { UpdateEntryPayload } from "../../services/entryService";
+import { getSmartSummary } from "../../utils/markdownUtils.ts";
 
 export type InspectorRouteTarget =
   | {
@@ -93,6 +94,16 @@ export function mergeInspectorEntry(current: any, updated: any) {
     delete merged.summary;
   }
   return merged;
+}
+
+export function getInspectorDisplayText(entry: any): string {
+  const contentSummary = getSmartSummary(entry?.content || "").text;
+  if (contentSummary && contentSummary !== "新条目") return contentSummary;
+  const summaryText = entry?.summary?.text;
+  if (typeof summaryText === "string" && summaryText.trim()) {
+    return getSmartSummary(summaryText).text;
+  }
+  return "Untitled";
 }
 
 export function buildInspectorDraft(entry: any): InspectorDraft {

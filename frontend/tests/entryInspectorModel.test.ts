@@ -5,6 +5,7 @@ import {
   buildInspectorDraft,
   buildInspectorUpdatePayload,
   createInspectorStack,
+  getInspectorDisplayText,
   getInspectorRouteTarget,
   mergeInspectorEntry,
   moveInspectorStack,
@@ -40,6 +41,23 @@ test("resolves future entries to the Future Log jump target", () => {
     label: "2026-07",
     disabled: false,
   });
+});
+
+test("uses a clean markdown summary for inspector titles", () => {
+  assert.equal(
+    getInspectorDisplayText({
+      content: "- [ ] 复习场波",
+      summary: { text: "- [ ] 复习场波" },
+    }),
+    "复习场波",
+  );
+
+  assert.equal(
+    getInspectorDisplayText({
+      content: "#Tag\n\n1. **场波** report",
+    }),
+    "场波 report",
+  );
 });
 
 test("removes stale summaries when inspector content changes", () => {

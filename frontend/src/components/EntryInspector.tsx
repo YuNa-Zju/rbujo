@@ -7,7 +7,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Archive,
   ArrowRight,
   CalendarClock,
   CalendarDays,
@@ -15,7 +14,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
-  Copy,
   Edit3,
   ExternalLink,
   FileText,
@@ -27,11 +25,11 @@ import {
   Tag,
   Undo2,
   X,
-  XCircle,
 } from "lucide-react";
 import MarkdownViewer from "./MarkdownViewer";
 import TagInput from "./shared/TagInput";
 import TypeSelector from "./shared/TypeSelector";
+import EntryDisplay from "../features/entry/EntryDisplay";
 import { entryService } from "../services/entryService";
 import { ENTRY_THEME, type EntryType } from "../config/entryTheme";
 import { useEntryNavigation } from "../hooks/useEntryNavigation";
@@ -42,6 +40,7 @@ import {
   buildInspectorDraft,
   buildInspectorUpdatePayload,
   createInspectorStack,
+  getInspectorDisplayText,
   getInspectorRouteTarget,
   mergeInspectorEntry,
   moveInspectorStack,
@@ -139,6 +138,7 @@ export default function EntryInspector({
     canEdit && activeEntry ? canToggleEntryStatus(activeEntry) : false;
   const isTask = activeEntry?.entry_type === "task";
   const isCompletedTask = isTask && activeEntry?.status === "completed";
+  const isClosedTask = isTask && activeEntry?.status !== "open";
   const contentReadOnly =
     Boolean(activeEntry?.archived_at) || activeEntry?.status === "cancelled";
 
@@ -398,13 +398,7 @@ export default function EntryInspector({
     [activeEntry, entryActions],
   );
 
-  const handleCopy = useCallback(() => {
-    if (!activeEntry?.content) return;
-    void navigator.clipboard?.writeText(activeEntry.content);
-  }, [activeEntry?.content]);
-
-  const headerTitle =
-    activeEntry?.summary?.text || activeEntry?.content || "Untitled";
+  const headerTitle = getInspectorDisplayText(activeEntry);
 
   return (
     <div
@@ -453,7 +447,7 @@ export default function EntryInspector({
               </button>
             </header>
 
-            <div className="flex flex-wrap items-center gap-1.5 border-b border-base-200 bg-base-200/25 px-4 py-2">
+            <div className="flex items-center gap-1.5 border-b border-base-200 bg-base-200/25 px-4 py-2">
               <InspectorActionButton
                 icon={<ChevronLeft size={15} />}
                 label="上一步"
@@ -469,7 +463,7 @@ export default function EntryInspector({
                   entryStack.index >= entryStack.entries.length - 1
                 }
               />
-              <div className="mx-1 h-5 w-px bg-base-300/80" />
+              <div className="mx-1 h-5 w-px shrink-0 bg-base-300/80" />
               <InspectorActionButton
                 icon={<ExternalLink size={15} />}
                 label="打开"
@@ -507,18 +501,18 @@ export default function EntryInspector({
                 </>
               )}
 
-              <div className="mx-1 h-5 w-px bg-base-300/80" />
+              <div className="mx-1 h-5 w-px shrink-0 bg-base-300/80" />
 
               {isTask && (
                 <InspectorActionButton
                   icon={
-                    isCompletedTask ? (
+                    isClosedTask ? (
                       <RotateCcw size={15} />
                     ) : (
                       <Check size={15} />
                     )
                   }
-                  label={isCompletedTask ? "重新打开" : "完成"}
+                  label={isClosedTask ? "重新打开" : "完成"}
                   onClick={entryActions.handleStatusToggle}
                   disabled={!canToggleStatus || isEditing || entryActions.loading}
                   className={
@@ -546,156 +540,139 @@ export default function EntryInspector({
                   />
                 </>
               )}
-
-              <div className="mx-1 h-5 w-px bg-base-300/80" />
-
-              <InspectorActionButton
-                icon={<Copy size={15} />}
-                label="复制"
-                onClick={handleCopy}
-                disabled={!activeEntry.content}
-              />
-              {!activeEntry.archived_at && (
-                <InspectorActionButton
-                  icon={<Archive size={15} />}
-                  label="归档"
-                  onClick={entryActions.actions.performArchive}
-                  disabled={isEditing || entryActions.loading}
-                />
-              )}
-              {activeEntry.status !== "cancelled" && (
-                <InspectorActionButton
-                  icon={<XCircle size={15} />}
-                  label="取消"
-                  onClick={entryActions.actions.performCancel}
-                  disabled={isEditing || entryActions.loading}
-                  className="text-error hover:bg-error/10"
-                />
-              )}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto bg-base-200/20 px-4 py-4">
-              <section className="space-y-2 rounded-2xl border border-base-200 bg-base-100 p-3 shadow-sm shadow-base-content/5">
-                <InspectorMeta icon={<CalendarDays size={14} />} label="时间">
-                  <button
-                    type="button"
-                    className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold transition ${
-                      routeTarget.disabled
-                        ? "cursor-default bg-base-200/50 text-base-content/45"
-                        : "bg-primary/10 text-primary hover:bg-primary/15"
-                    }`}
-                    onClick={handleJumpClick}
-                    disabled={routeTarget.disabled}
-                  >
-                    <span className="truncate">{routeTarget.label}</span>
-                    {!routeTarget.disabled && <ExternalLink size={11} />}
-                  </button>
-                </InspectorMeta>
-                {activeEntry.created_at && (
-                  <InspectorMeta icon={<Clock3 size={14} />} label="创建">
-                    {activeEntry.created_at}
-                  </InspectorMeta>
-                )}
-                {activeEntry.tags?.length > 0 && !isEditing && (
-                  <InspectorMeta icon={<Hash size={14} />} label="标签">
-                    <span className="flex flex-wrap gap-1.5">
-                      {activeEntry.tags.map((tag: string) => (
-                        <span
-                          key={tag}
-                          className="inline-flex items-center gap-1 rounded-full border border-base-200 bg-base-200/40 px-2 py-0.5 text-[11px] font-medium"
-                        >
-                          <Tag size={10} />
-                          {tag}
-                        </span>
-                      ))}
-                    </span>
-                  </InspectorMeta>
-                )}
-              </section>
-
-              {isEditing ? (
-                <section className="mt-4 space-y-3 rounded-2xl border border-base-200 bg-base-100 p-3 shadow-sm shadow-base-content/5">
-                  <TypeSelector
-                    currentType={draft.entryType}
-                    onChange={(entryType) =>
-                      setDraft((current) => ({ ...current, entryType }))
-                    }
-                  />
-
-                  <div className="space-y-1">
-                    <label className="flex flex-col gap-1 text-xs font-semibold text-base-content/45">
-                      Status
-                      {canEditDraftStatus ? (
-                        <select
-                          className="select select-bordered select-sm w-full rounded-xl bg-base-100 text-sm text-base-content"
-                          value={draft.status}
-                          onChange={(event) =>
-                            setDraft((current) => ({
-                              ...current,
-                              status: event.target.value,
-                            }))
-                          }
-                        >
-                          {statusOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
+            <div className="min-h-0 flex-1 overflow-y-auto bg-base-200/25 px-4 py-4">
+              <article className="relative overflow-hidden rounded-[26px] border border-base-200 bg-base-100 shadow-lg shadow-base-content/5">
+                <div
+                  className={`absolute bottom-4 left-3 top-4 w-1.5 rounded-full ${theme.sideBar}`}
+                />
+                <div className="space-y-4 px-4 py-4 pl-7">
+                  <section className="space-y-2">
+                    <InspectorMeta icon={<CalendarDays size={14} />} label="时间">
+                      <button
+                        type="button"
+                        className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold transition ${
+                          routeTarget.disabled
+                            ? "cursor-default bg-base-200/50 text-base-content/45"
+                            : "bg-primary/10 text-primary hover:bg-primary/15"
+                        }`}
+                        onClick={handleJumpClick}
+                        disabled={routeTarget.disabled}
+                      >
+                        <span className="truncate">{routeTarget.label}</span>
+                        {!routeTarget.disabled && <ExternalLink size={11} />}
+                      </button>
+                    </InspectorMeta>
+                    {activeEntry.created_at && (
+                      <InspectorMeta icon={<Clock3 size={14} />} label="创建">
+                        {activeEntry.created_at}
+                      </InspectorMeta>
+                    )}
+                    {activeEntry.tags?.length > 0 && !isEditing && (
+                      <InspectorMeta icon={<Hash size={14} />} label="标签">
+                        <span className="flex flex-wrap gap-1.5">
+                          {activeEntry.tags.map((tag: string) => (
+                            <span
+                              key={tag}
+                              className="inline-flex items-center gap-1 rounded-full border border-base-200 bg-base-200/40 px-2 py-0.5 text-[11px] font-medium"
+                            >
+                              <Tag size={10} />
+                              {tag}
+                            </span>
                           ))}
-                        </select>
-                      ) : (
-                        <span className="inline-flex w-fit rounded-full border border-base-200 bg-base-200/50 px-3 py-1 text-xs font-semibold text-base-content/50">
-                          {draft.status}
                         </span>
-                      )}
-                    </label>
-                  </div>
+                      </InspectorMeta>
+                    )}
+                  </section>
 
-                  <TagInput
-                    tags={draft.tags}
-                    draft={tagDraft}
-                    suggestions={filteredTagSuggestions}
-                    highlightedIndex={highlightedTagSuggestionIndex}
-                    placeholder="添加标签"
-                    onDraftChange={setTagDraft}
-                    onFocusChange={setTagInputFocused}
-                    onHighlightChange={setHighlightedTagSuggestionIndex}
-                    onAddTag={addTag}
-                    onRemoveTag={removeTag}
-                    containerClassName="relative rounded-2xl border border-base-200/70 bg-base-200/25 px-3 py-2"
-                  />
+                  {isEditing ? (
+                    <section className="space-y-3">
+                      <TypeSelector
+                        currentType={draft.entryType}
+                        onChange={(entryType) =>
+                          setDraft((current) => ({ ...current, entryType }))
+                        }
+                      />
 
-                  <textarea
-                    className="textarea textarea-bordered min-h-56 w-full resize-y rounded-2xl bg-base-100 text-sm leading-relaxed focus:outline-none"
-                    value={draft.content}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        content: event.target.value,
-                      }))
-                    }
-                  />
-                </section>
-              ) : (
-                <section className="mt-5">
-                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-normal text-base-content/40">
-                    <FileText size={13} />
-                    内容
-                  </div>
-                  <div className="rounded-2xl border border-base-200 bg-base-100 p-3 shadow-sm shadow-base-content/5">
-                    <MarkdownViewer
-                      content={activeEntry.content || ""}
-                      tags={activeEntry.tags || []}
-                      entryType={activeEntry.entry_type}
-                      disableOverflowCheck
-                      readOnly={contentReadOnly}
-                      onTaskToggle={contentReadOnly ? undefined : handleTaskToggle}
-                      isTagClickable={false}
-                      uploadReferences={activeEntry.summary?.uploadReferences}
-                      className="text-sm"
-                    />
-                  </div>
-                </section>
-              )}
+                      <div className="space-y-1">
+                        <label className="flex flex-col gap-1 text-xs font-semibold text-base-content/45">
+                          Status
+                          {canEditDraftStatus ? (
+                            <select
+                              className="select select-bordered select-sm w-full rounded-xl bg-base-100 text-sm text-base-content"
+                              value={draft.status}
+                              onChange={(event) =>
+                                setDraft((current) => ({
+                                  ...current,
+                                  status: event.target.value,
+                                }))
+                              }
+                            >
+                              {statusOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="inline-flex w-fit rounded-full border border-base-200 bg-base-200/50 px-3 py-1 text-xs font-semibold text-base-content/50">
+                              {draft.status}
+                            </span>
+                          )}
+                        </label>
+                      </div>
+
+                      <TagInput
+                        tags={draft.tags}
+                        draft={tagDraft}
+                        suggestions={filteredTagSuggestions}
+                        highlightedIndex={highlightedTagSuggestionIndex}
+                        placeholder="添加标签"
+                        onDraftChange={setTagDraft}
+                        onFocusChange={setTagInputFocused}
+                        onHighlightChange={setHighlightedTagSuggestionIndex}
+                        onAddTag={addTag}
+                        onRemoveTag={removeTag}
+                        containerClassName="relative rounded-2xl border border-base-200/70 bg-base-200/25 px-3 py-2"
+                      />
+
+                      <textarea
+                        className="textarea textarea-bordered min-h-56 w-full resize-y rounded-2xl bg-base-100 text-sm leading-relaxed focus:outline-none"
+                        value={draft.content}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            content: event.target.value,
+                          }))
+                        }
+                      />
+                    </section>
+                  ) : (
+                    <section>
+                      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-normal text-base-content/40">
+                        <FileText size={13} />
+                        内容
+                      </div>
+                      <div className="rounded-2xl border border-base-200 bg-base-200/25 p-3">
+                        <MarkdownViewer
+                          content={activeEntry.content || ""}
+                          tags={activeEntry.tags || []}
+                          entryType={activeEntry.entry_type}
+                          disableOverflowCheck
+                          readOnly={contentReadOnly}
+                          onTaskToggle={
+                            contentReadOnly ? undefined : handleTaskToggle
+                          }
+                          isTagClickable={false}
+                          uploadReferences={activeEntry.summary?.uploadReferences}
+                          className="text-sm"
+                        />
+                      </div>
+                    </section>
+                  )}
+                </div>
+              </article>
 
               <section className="mt-5">
                 <div className="mb-2 flex items-center justify-between gap-2">
@@ -722,22 +699,24 @@ export default function EntryInspector({
                       <button
                         key={item.id}
                         type="button"
-                        className="w-full rounded-2xl border border-base-200 bg-base-100 px-4 py-3 text-left shadow-sm shadow-base-content/5 transition hover:-translate-y-0.5 hover:border-primary/25 hover:bg-primary/5 hover:shadow-md"
+                        className="relative w-full overflow-hidden rounded-2xl border border-base-200 bg-base-100 px-4 py-3 pl-6 text-left shadow-sm shadow-base-content/5 transition hover:-translate-y-0.5 hover:border-primary/25 hover:bg-primary/5 hover:shadow-md"
                         onClick={() => handleOpenRelated(item)}
                       >
-                        <div className="flex items-start gap-3">
-                          <div
-                            className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${itemTheme.dotColor}`}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-semibold text-base-content">
-                              {item.summary?.text || item.content || "Untitled"}
-                            </div>
-                            <div className="mt-1 truncate text-xs text-base-content/45">
-                              {item._search?.snippet || item.content}
-                            </div>
-                          </div>
-                        </div>
+                        <div
+                          className={`absolute bottom-3 left-2 top-3 w-1.5 rounded-full ${itemTheme.sideBar}`}
+                        />
+                        <EntryDisplay
+                          content={item.content || ""}
+                          tags={item.tags || []}
+                          status={item.status || "open"}
+                          isTask={item.entry_type === "task"}
+                          entryType={item.entry_type || "task"}
+                          backendSummary={item.summary}
+                          forceCollapse
+                          disableOverflowCheck
+                          isTagClickable={false}
+                          readOnly
+                        />
                       </button>
                     );
                   })}
