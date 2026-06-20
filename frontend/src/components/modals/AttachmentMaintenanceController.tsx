@@ -10,6 +10,9 @@ import {
   FolderOpen,
   HardDrive,
   Loader2,
+  PauseCircle,
+  RotateCcw,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -24,6 +27,7 @@ import {
   entryService,
   type AttachmentMaintenanceItem,
   type AttachmentMaintenanceSummary,
+  type LocalSnapshotState,
   type MarkdownWorkspace,
 } from "../../services/entryService";
 
@@ -64,21 +68,27 @@ export default function AttachmentMaintenanceController() {
     null,
   );
   const [workspace, setWorkspace] = useState<MarkdownWorkspace | null>(null);
+  const [snapshotState, setSnapshotState] = useState<LocalSnapshotState | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const [openingFolder, setOpeningFolder] = useState(false);
+  const [snapshotBusy, setSnapshotBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadStorage = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [nextSummary, nextWorkspace] = await Promise.all([
+      const [nextSummary, nextWorkspace, nextSnapshotState] = await Promise.all([
         entryService.getAttachmentMaintenanceSummary(),
         entryService.getMarkdownWorkspace(),
+        entryService.getLocalSnapshotState(),
       ]);
       setSummary(nextSummary);
       setWorkspace(nextWorkspace);
+      setSnapshotState(nextSnapshotState);
     } catch (nextError) {
       console.error("Storage maintenance summary failed", nextError);
       setError(labels?.loadFailed || "Failed to read storage statistics");
@@ -123,6 +133,52 @@ export default function AttachmentMaintenanceController() {
       setOpeningFolder(false);
     }
   }, [labels.openFolderFailed]);
+
+  const createSnapshot = useCallback(async () => {
+    setSnapshotBusy("create");
+    setError(null);
+    try {
+      await entryService.createLocalSnapshot();
+      setSnapshotState(await entryService.getLocalSnapshotState());
+    } catch (nextError) {
+      console.error("Local snapshot failed", nextError);
+      setError("无法创建本地安全快照");
+    } finally {
+      setSnapshotBusy(null);
+    }
+  }, []);
+
+  const pauseAutoSnapshots = useCallback(async () => {
+    setSnapshotBusy("pause");
+    setError(null);
+    try {
+      const settings = await entryService.pauseAutoLocalSnapshots(7);
+      setSnapshotState((current) =>
+        current ? { ...current, settings } : current,
+      );
+    } catch (nextError) {
+      console.error("Pause local snapshots failed", nextError);
+      setError("无法暂停自动快照");
+    } finally {
+      setSnapshotBusy(null);
+    }
+  }, []);
+
+  const resumeAutoSnapshots = useCallback(async () => {
+    setSnapshotBusy("resume");
+    setError(null);
+    try {
+      const settings = await entryService.resumeAutoLocalSnapshots();
+      setSnapshotState((current) =>
+        current ? { ...current, settings } : current,
+      );
+    } catch (nextError) {
+      console.error("Resume local snapshots failed", nextError);
+      setError("无法恢复自动快照");
+    } finally {
+      setSnapshotBusy(null);
+    }
+  }, []);
 
   const openReference = useCallback(
     (reference: AttachmentMaintenanceItem["references"][number]) => {
@@ -174,13 +230,18 @@ export default function AttachmentMaintenanceController() {
       open={open}
       summary={summary}
       workspace={workspace}
+      snapshotState={snapshotState}
       loading={loading}
       choosing={choosing}
       openingFolder={openingFolder}
+      snapshotBusy={snapshotBusy}
       error={error}
       labels={labels}
       onChooseWorkspace={chooseWorkspace}
       onOpenWorkspace={openWorkspace}
+      onCreateSnapshot={createSnapshot}
+      onPauseAutoSnapshots={pauseAutoSnapshots}
+      onResumeAutoSnapshots={resumeAutoSnapshots}
       onOpenReference={openReference}
       onClose={close}
     />
@@ -191,26 +252,36 @@ function AttachmentMaintenanceModal({
   open,
   summary,
   workspace,
+  snapshotState,
   loading,
   choosing,
   openingFolder,
+  snapshotBusy,
   error,
   labels,
   onChooseWorkspace,
   onOpenWorkspace,
+  onCreateSnapshot,
+  onPauseAutoSnapshots,
+  onResumeAutoSnapshots,
   onOpenReference,
   onClose,
 }: {
   open: boolean;
   summary: AttachmentMaintenanceSummary | null;
   workspace: MarkdownWorkspace | null;
+  snapshotState: LocalSnapshotState | null;
   loading: boolean;
   choosing: boolean;
   openingFolder: boolean;
+  snapshotBusy: string | null;
   error: string | null;
   labels: AttachmentMaintenanceLabels;
   onChooseWorkspace: () => void;
   onOpenWorkspace: () => void;
+  onCreateSnapshot: () => void;
+  onPauseAutoSnapshots: () => void;
+  onResumeAutoSnapshots: () => void;
   onOpenReference: (
     reference: AttachmentMaintenanceItem["references"][number],
   ) => void;
@@ -334,6 +405,15 @@ function AttachmentMaintenanceModal({
                     warning={(summary?.orphaned_count ?? 0) > 0}
                   />
                 </div>
+
+                <SnapshotSafetyCard
+                  snapshotState={snapshotState}
+                  busy={snapshotBusy}
+                  loading={loading}
+                  onCreateSnapshot={onCreateSnapshot}
+                  onPauseAutoSnapshots={onPauseAutoSnapshots}
+                  onResumeAutoSnapshots={onResumeAutoSnapshots}
+                />
 
                 {error && (
                   <div className="mt-4 rounded-2xl border border-error/20 bg-error/10 px-4 py-3 text-sm font-medium text-error">
@@ -521,6 +601,127 @@ function DailyRootPathCard({
       </div>
     </div>
   );
+}
+
+function SnapshotSafetyCard({
+  snapshotState,
+  busy,
+  loading,
+  onCreateSnapshot,
+  onPauseAutoSnapshots,
+  onResumeAutoSnapshots,
+}: {
+  snapshotState: LocalSnapshotState | null;
+  busy: string | null;
+  loading: boolean;
+  onCreateSnapshot: () => void;
+  onPauseAutoSnapshots: () => void;
+  onResumeAutoSnapshots: () => void;
+}) {
+  const latest = snapshotState?.snapshots[0] || null;
+  const pausedUntil = snapshotState?.settings.paused_until || null;
+  const isPaused = Boolean(pausedUntil && new Date(pausedUntil) > new Date());
+  const snapshotDir = snapshotState?.snapshot_dir || ".bujo/snapshots";
+
+  return (
+    <div className="mt-4 rounded-2xl border border-base-content/10 bg-base-100/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/10 text-success">
+            <ShieldCheck size={18} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-bold">本地安全快照</div>
+            <div className="mt-1 truncate text-[11px] font-mono text-base-content/45">
+              {snapshotDir}
+            </div>
+          </div>
+        </div>
+        <span className="shrink-0 rounded-full bg-base-200/70 px-2.5 py-1 text-[11px] font-bold text-base-content/55">
+          {snapshotState?.snapshots.length ?? 0}/7
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <div className="rounded-xl bg-base-200/45 px-3 py-2">
+          <div className="text-[11px] font-bold text-base-content/45">最近快照</div>
+          <div className="mt-1 truncate text-xs font-semibold">
+            {latest ? formatSnapshotTime(latest.created_at) : "暂无"}
+          </div>
+        </div>
+        <div className="rounded-xl bg-base-200/45 px-3 py-2">
+          <div className="text-[11px] font-bold text-base-content/45">内容</div>
+          <div className="mt-1 text-xs font-semibold">
+            {latest ? `${latest.entry_count} 条 / ${latest.attachment_count} 附件记录` : "-"}
+          </div>
+        </div>
+        <div className="rounded-xl bg-base-200/45 px-3 py-2">
+          <div className="text-[11px] font-bold text-base-content/45">大小</div>
+          <div className="mt-1 text-xs font-semibold">
+            {latest ? formatBytes(latest.size) : "-"}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-medium text-base-content/45">
+          {isPaused
+            ? `自动快照暂停到 ${formatSnapshotTime(pausedUntil || "")}`
+            : "自动快照每日最多一次，保留最近 7 份"}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-sm rounded-full"
+            onClick={onCreateSnapshot}
+            disabled={loading || Boolean(busy)}
+          >
+            {busy === "create" ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <ShieldCheck size={14} />
+            )}
+            立即保存
+          </button>
+          {isPaused ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm rounded-full"
+              onClick={onResumeAutoSnapshots}
+              disabled={loading || Boolean(busy)}
+            >
+              {busy === "resume" ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RotateCcw size={14} />
+              )}
+              恢复
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm rounded-full"
+              onClick={onPauseAutoSnapshots}
+              disabled={loading || Boolean(busy)}
+            >
+              {busy === "pause" ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <PauseCircle size={14} />
+              )}
+              暂停 7 天
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatSnapshotTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
 function AttachmentReferenceList({

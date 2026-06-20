@@ -119,6 +119,28 @@ export interface AttachmentCleanupResult {
   summary: AttachmentMaintenanceSummary;
 }
 
+export interface LocalSnapshotInfo {
+  filename: string;
+  absolute_path: string;
+  created_at: string;
+  entry_count: number;
+  attachment_count: number;
+  size: number;
+}
+
+export interface LocalSnapshotSettings {
+  auto_enabled: boolean;
+  paused_until: string | null;
+  last_auto_snapshot_at: string | null;
+  retention_count: number;
+}
+
+export interface LocalSnapshotState {
+  settings: LocalSnapshotSettings;
+  snapshots: LocalSnapshotInfo[];
+  snapshot_dir: string;
+}
+
 export interface DayOverview {
   id: string;
   type: EntryType;
@@ -318,10 +340,11 @@ export const entryService = {
     limit?: number;
     tags?: string[];
   }) => {
-    const results = await invoke<SearchResult[]>("search_entries", {
+    const requestedMode = params.mode ?? "semantic";
+    let results = await invoke<SearchResult[]>("search_entries", {
       options: {
         query: params.q ?? "",
-        mode: params.mode ?? "text",
+        mode: requestedMode,
         include_archived: Boolean(params.include_archived),
         entry_type: params.entry_type ?? [],
         status: params.status ?? null,
@@ -331,6 +354,26 @@ export const entryService = {
         limit: params.limit ?? 80,
       },
     });
+    if (
+      results.length === 0 &&
+      requestedMode === "semantic" &&
+      params.q?.trim()
+    ) {
+      const semanticFallbackResults = await invoke<SearchResult[]>("search_entries", {
+        options: {
+          query: params.q,
+          mode: "text",
+          include_archived: Boolean(params.include_archived),
+          entry_type: params.entry_type ?? [],
+          status: params.status ?? null,
+          tags: params.tags ?? [],
+          start_date: params.start_date ?? null,
+          end_date: params.end_date ?? null,
+          limit: params.limit ?? 80,
+        },
+      });
+      results = semanticFallbackResults;
+    }
     return results
       .map((result) => ({
         ...normalizeEntry(result.entry),
@@ -341,6 +384,21 @@ export const entryService = {
         },
       }))
       .filter((entry) => !params.status || entry.status === params.status);
+  },
+
+  getRelatedEntries: async (entryId: string, limit = 5) => {
+    const results = await invoke<SearchResult[]>("related_entries", {
+      entryId,
+      limit,
+    });
+    return results.map((result) => ({
+      ...normalizeEntry(result.entry),
+      _search: {
+        score: result.score,
+        type: result.match_type,
+        snippet: result.snippet,
+      },
+    }));
   },
 
   listTags: async () => {
@@ -480,6 +538,26 @@ export const entryService = {
 
   cleanupAllUnusedUploads: async () => {
     return invoke<AttachmentCleanupResult>("cleanup_all_unused_uploads");
+  },
+
+  getLocalSnapshotState: async () => {
+    return invoke<LocalSnapshotState>("local_snapshot_state");
+  },
+
+  createLocalSnapshot: async () => {
+    return invoke<LocalSnapshotInfo>("create_local_snapshot");
+  },
+
+  pauseAutoLocalSnapshots: async (days = 7) => {
+    return invoke<LocalSnapshotSettings>("pause_auto_local_snapshots", { days });
+  },
+
+  resumeAutoLocalSnapshots: async () => {
+    return invoke<LocalSnapshotSettings>("resume_auto_local_snapshots");
+  },
+
+  runAutoLocalSnapshotIfDue: async () => {
+    return invoke<LocalSnapshotInfo | null>("run_auto_local_snapshot_if_due");
   },
 
   downloadBackup: async () => {

@@ -182,10 +182,10 @@ async fn table_exists(pool: &SqlitePool, table: &str) -> anyhow::Result<bool> {
 }
 
 async fn table_columns(pool: &SqlitePool, table: &str) -> anyhow::Result<HashSet<String>> {
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "PRAGMA table_info(\"{}\")",
         table.replace('"', "\"\"")
-    ))
+    )))
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -250,7 +250,9 @@ async fn read_legacy_entries(pool: &SqlitePool) -> anyhow::Result<Vec<LegacyEntr
     .join(", ");
 
     let sql = format!("SELECT {select} FROM entries ORDER BY created_at, id");
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .fetch_all(pool)
+        .await?;
     let mut entries = Vec::with_capacity(rows.len());
 
     for row in rows {
@@ -323,7 +325,9 @@ async fn read_legacy_shared_links(
     ]
     .join(", ");
     let sql = format!("SELECT {select} FROM shared_links ORDER BY id");
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .fetch_all(pool)
+        .await?;
     let mut links = Vec::new();
     for row in rows {
         let target_id = row.try_get::<Option<String>, _>("target_id").ok().flatten();

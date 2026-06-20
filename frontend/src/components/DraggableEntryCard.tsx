@@ -1,9 +1,10 @@
-import { forwardRef, memo } from "react";
+import { forwardRef, memo, type MouseEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import EntryItem from "../features/entry/EntryItem"; // 确保路径正确
 import { ENTRY_THEME, type EntryType } from "../config/entryTheme";
+import { uiEvents } from "../lib/uiEvents";
 
 export const ENTRY_CARD_RADIUS_CLASS = "rounded-2xl";
 export const ENTRY_CARD_OVERFLOW_CLASS = "overflow-visible";
@@ -24,6 +25,7 @@ interface DraggableEntryCardProps {
   isTagClickable?: boolean;
   hideActions?: boolean;
   readOnly?: boolean;
+  onInspect?: (entry: any) => void;
 }
 
 export const EntryCard = memo(
@@ -42,11 +44,31 @@ export const EntryCard = memo(
       isTagClickable = true,
       hideActions = false,
       readOnly = false,
+      onInspect,
     } = props;
 
     const theme =
       ENTRY_THEME[entry.entry_type as EntryType] || ENTRY_THEME.task;
     const showHandle = isDragEnabled || isOverlay;
+
+    const handleInspectClick = (event: MouseEvent<HTMLDivElement>) => {
+      if (isOverlay || isDragging || event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest(
+          "button,a,input,textarea,select,details,summary,[role='button'],[data-entry-interactive]",
+        )
+      ) {
+        return;
+      }
+      const selection = window.getSelection()?.toString().trim();
+      if (selection) return;
+      if (onInspect) {
+        onInspect(entry);
+      } else {
+        uiEvents.emit("OPEN_ENTRY_INSPECTOR", { entry });
+      }
+    };
 
     let containerStyle = "";
     if (isOverlay) {
@@ -69,6 +91,7 @@ export const EntryCard = memo(
       >
         <div
           className={`relative transition-all duration-200 ease-out ${ENTRY_CARD_RADIUS_CLASS} ${ENTRY_CARD_OVERFLOW_CLASS} ${containerStyle} ${className}`}
+          onClick={handleInspectClick}
         >
           {/* 左侧彩色条 */}
           {!isDragging || isOverlay ? (
@@ -81,6 +104,7 @@ export const EntryCard = memo(
           {showHandle && (
             <div
               {...(isOverlay ? {} : dragHandleProps)}
+              data-entry-interactive
               className={`absolute left-0 top-0 bottom-0 w-10 flex items-center justify-center z-20 touch-none cursor-grab active:cursor-grabbing`}
             >
               <div

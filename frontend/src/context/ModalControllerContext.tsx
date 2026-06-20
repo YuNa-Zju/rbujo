@@ -27,9 +27,15 @@ interface EntryActionRequest {
   requestId: number;
 }
 
+interface EntryInspectorState {
+  open: boolean;
+  entry: any | null;
+}
+
 interface ModalControllerValue {
   search: { open: boolean; initialQuery: string | null };
   tagSearch: { open: boolean; tag: string | null };
+  inspector: EntryInspectorState;
   commandPaletteOpen: boolean;
   commandPaletteRequestId: number;
   futureLogOpen: boolean;
@@ -50,6 +56,8 @@ interface ModalControllerValue {
   openAddEntry: (payload?: AddEntryPayload) => void;
   openEntryAction: (kind: EntryActionKind, payload: EntryActionPayload) => void;
   clearEntryAction: () => void;
+  openInspector: (entry: any) => void;
+  closeInspector: () => void;
   openTimeline: () => void;
 }
 
@@ -64,6 +72,10 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
   const [tagSearch, setTagSearch] = useState({
     open: false,
     tag: null as string | null,
+  });
+  const [inspector, setInspector] = useState<EntryInspectorState>({
+    open: false,
+    entry: null,
   });
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteRequestId, setCommandPaletteRequestId] = useState(0);
@@ -139,6 +151,15 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     setEntryActionRequest(null);
   }, []);
 
+  const openInspector = useCallback((entry: any) => {
+    if (!entry) return;
+    setInspector({ open: true, entry });
+  }, []);
+
+  const closeInspector = useCallback(() => {
+    setInspector((current) => ({ ...current, open: false }));
+  }, []);
+
   const openTimeline = useCallback(() => {
     setTimelineRequestId((current) => current + 1);
   }, []);
@@ -152,12 +173,14 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       openEntryAction("future", payload);
     const remove = (payload: EntryActionPayload) =>
       openEntryAction("delete", payload);
+    const inspect = (payload: EntryActionPayload) => openInspector(payload?.entry);
 
     uiEvents.on("OPEN_ADD_ENTRY", add);
     uiEvents.on("OPEN_EDIT_ENTRY", edit);
     uiEvents.on("OPEN_MIGRATE_ENTRY", migrate);
     uiEvents.on("OPEN_FUTURE_ENTRY", future);
     uiEvents.on("OPEN_DELETE_ENTRY", remove);
+    uiEvents.on("OPEN_ENTRY_INSPECTOR", inspect);
     uiEvents.on("OPEN_SEARCH", openSearch);
     uiEvents.on("OPEN_TAG_SEARCH", openTagSearch);
     uiEvents.on("OPEN_CMD_PALETTE", openCommandPalette);
@@ -171,6 +194,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       uiEvents.off("OPEN_MIGRATE_ENTRY", migrate);
       uiEvents.off("OPEN_FUTURE_ENTRY", future);
       uiEvents.off("OPEN_DELETE_ENTRY", remove);
+      uiEvents.off("OPEN_ENTRY_INSPECTOR", inspect);
       uiEvents.off("OPEN_SEARCH", openSearch);
       uiEvents.off("OPEN_TAG_SEARCH", openTagSearch);
       uiEvents.off("OPEN_CMD_PALETTE", openCommandPalette);
@@ -184,6 +208,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     openCommandPalette,
     openEntryAction,
     openFutureLog,
+    openInspector,
     openSearch,
     openTagSearch,
     openTimeline,
@@ -219,6 +244,7 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     () => ({
       search,
       tagSearch,
+      inspector,
       commandPaletteOpen,
       commandPaletteRequestId,
       futureLogOpen,
@@ -239,6 +265,8 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       openAddEntry,
       openEntryAction,
       clearEntryAction,
+      openInspector,
+      closeInspector,
       openTimeline,
     }),
     [
@@ -253,12 +281,15 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       commandPaletteRequestId,
       entryActionRequest,
       commandPaletteOpen,
+      closeInspector,
       futureLogOpen,
+      inspector,
       openAddEntry,
       openBackup,
       openCommandPalette,
       openEntryAction,
       openFutureLog,
+      openInspector,
       openSearch,
       openTagSearch,
       openTimeline,

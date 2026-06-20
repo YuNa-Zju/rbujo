@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose};
-use flate2::read::GzDecoder;
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -31,6 +31,8 @@ const LOCAL_USERNAME: &str = "local";
 const LOCAL_PASSWORD_PLACEHOLDER: &str = "local_desktop_profile";
 const MARKDOWN_WORKSPACE_SETTING_KEY: &str = "markdown_workspace_path";
 const MARKDOWN_WORKSPACE_BOOKMARK_SETTING_KEY: &str = "markdown_workspace_bookmark";
+const LOCAL_SNAPSHOT_SETTINGS_KEY: &str = "local_snapshot_settings";
+const LOCAL_SNAPSHOT_FORMAT: &str = "fun.yunazju.rbujo.snapshot";
 const ATTACHMENT_DIR: &str = "attachments";
 const LEGACY_UPLOAD_DIR: &str = "uploads";
 const FUTURE_MARKDOWN_SOMEDAY_KEY: &str = "future:someday";
@@ -43,6 +45,7 @@ const MAX_BJK_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_BJK_PAYLOAD_BYTES: u64 = 256 * 1024 * 1024;
 const SUMMARY_CACHE_LIMIT: usize = 2048;
 const OVERVIEW_CACHE_LIMIT: usize = 256;
+const RELATED_SCORE_THRESHOLD: f32 = 0.12;
 
 const ENTRY_SELECT: &str = r#"
     SELECT entries.id AS id, entries.content AS content, entries.entry_type AS entry_type,
@@ -238,6 +241,51 @@ pub struct AttachmentCleanupResult {
     pub summary: AttachmentMaintenanceSummary,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalSnapshotAttachment {
+    pub relative_path: String,
+    pub filename: String,
+    pub original_filename: Option<String>,
+    pub sha256: String,
+    pub size: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalSnapshotInfo {
+    pub filename: String,
+    pub absolute_path: String,
+    pub created_at: String,
+    pub entry_count: usize,
+    pub attachment_count: usize,
+    pub size: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalSnapshotSettings {
+    pub auto_enabled: bool,
+    pub paused_until: Option<String>,
+    pub last_auto_snapshot_at: Option<String>,
+    pub retention_count: usize,
+}
+
+impl Default for LocalSnapshotSettings {
+    fn default() -> Self {
+        Self {
+            auto_enabled: true,
+            paused_until: None,
+            last_auto_snapshot_at: None,
+            retention_count: 7,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalSnapshotState {
+    pub settings: LocalSnapshotSettings,
+    pub snapshots: Vec<LocalSnapshotInfo>,
+    pub snapshot_dir: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FutureLogResponse {
     pub future_log: Vec<EntryResponse>,
@@ -258,6 +306,15 @@ struct BjkBackupObject {
     data: Vec<EntryExportSchema>,
     #[serde(default)]
     attachments: Vec<PortableBjkAttachment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LocalSnapshotFile {
+    format: String,
+    version: u64,
+    created_at: String,
+    entries: Vec<EntryExportSchema>,
+    attachments: Vec<LocalSnapshotAttachment>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -906,9 +963,9 @@ impl LocalBackend {
             return Ok(());
         }
 
-        let entries = sqlx::query_as::<_, Entry>(&format!(
+        let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
@@ -1224,7 +1281,7 @@ impl LocalBackend {
         let sql = format!(
             "{ENTRY_SELECT} WHERE owner_id = ? AND target_date = ?{archive_filter} ORDER BY position ASC, created_at DESC"
         );
-        let entries = sqlx::query_as::<_, Entry>(&sql)
+        let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(sql))
             .bind(self.owner_id)
             .bind(date)
             .fetch_all(&self.pool)
@@ -1242,7 +1299,7 @@ impl LocalBackend {
         } else {
             " AND archived_at IS NULL"
         };
-        let future_entries = sqlx::query_as::<_, Entry>(&format!(
+        let future_entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             r#"{ENTRY_SELECT}
             WHERE owner_id = ?
               AND is_future = 1
@@ -1251,19 +1308,19 @@ impl LocalBackend {
               AND status NOT IN ('forward', 'future')
               {archive_filter}
             ORDER BY position ASC, created_at DESC"#
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
 
-        let monthly_entries = sqlx::query_as::<_, Entry>(&format!(
+        let monthly_entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             r#"{ENTRY_SELECT}
             WHERE owner_id = ?
               AND target_month IS NOT NULL
               AND status NOT IN ('forward', 'future')
               {archive_filter}
             ORDER BY target_month ASC, position ASC, created_at DESC"#
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
@@ -1298,7 +1355,7 @@ impl LocalBackend {
         } else {
             " AND archived_at IS NULL"
         };
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT id, target_date, entry_type, status
             FROM entries
@@ -1307,7 +1364,7 @@ impl LocalBackend {
               {archive_filter}
             ORDER BY target_date ASC, position ASC, created_at DESC
             "#
-        ))
+        )))
         .bind(self.owner_id)
         .bind(month)
         .fetch_all(&self.pool)
@@ -1473,6 +1530,95 @@ impl LocalBackend {
         self.responses_from_entries(chain).await
     }
 
+    pub async fn related_entries(
+        &self,
+        entry_id: String,
+        limit: usize,
+    ) -> AppResult<Vec<SearchResult>> {
+        let source = self.fetch_entry(&entry_id).await?;
+        let source_text = clean_markdown(&source.content);
+        let source_tags = self.get_entry_tags(&source.id).await?;
+        let source_tag_set = normalized_tag_set(&source_tags);
+        let source_tokens = related_tokens(&source_text);
+        let source_embedding =
+            if self.semantic_assets_dir.is_some() && !source_text.trim().is_empty() {
+                let content_hash = content_embedding_sha256(&source_text);
+                self.cached_semantic_embedding(&source.id, &source_text, &content_hash)
+                    .await
+                    .ok()
+            } else {
+                None
+            };
+
+        let candidates = self
+            .search_candidates(&SearchOptions {
+                include_archived: false,
+                limit: limit.saturating_mul(8).max(40),
+                ..SearchOptions::default()
+            })
+            .await?;
+        let mut scored = Vec::new();
+
+        for candidate in candidates {
+            if candidate.id == source.id {
+                continue;
+            }
+            let candidate_text = clean_markdown(&candidate.content);
+            if candidate_text.trim().is_empty() {
+                continue;
+            }
+            let candidate_tags = self.get_entry_tags(&candidate.id).await?;
+            let candidate_tag_set = normalized_tag_set(&candidate_tags);
+            let candidate_tokens = related_tokens(&candidate_text);
+            let mut score = related_metadata_score(
+                &source,
+                &candidate,
+                &source_tag_set,
+                &candidate_tag_set,
+                &source_tokens,
+                &candidate_tokens,
+            );
+            let mut match_type = related_match_type(
+                &source,
+                &candidate,
+                &source_tag_set,
+                &candidate_tag_set,
+                &source_tokens,
+                &candidate_tokens,
+            );
+
+            if let Some(source_embedding) = source_embedding.as_ref() {
+                let content_hash = content_embedding_sha256(&candidate_text);
+                let embedding = self
+                    .cached_semantic_embedding(&candidate.id, &candidate_text, &content_hash)
+                    .await?;
+                let semantic_score =
+                    cosine_similarity(source_embedding, &embedding).map_err(AppError::Internal)?;
+                if semantic_score >= SEMANTIC_SCORE_THRESHOLD {
+                    score += semantic_score * 0.55;
+                    match_type = "semantic".to_string();
+                }
+            }
+
+            if score < RELATED_SCORE_THRESHOLD {
+                continue;
+            }
+            scored.push((score, match_type, candidate));
+        }
+
+        scored.sort_by(|left, right| right.0.total_cmp(&left.0));
+        let mut results = Vec::new();
+        for (score, match_type, entry) in scored.into_iter().take(limit.max(1)) {
+            results.push(SearchResult {
+                snippet: snippet(&entry.content, ""),
+                entry: self.response_from_entry(entry).await?,
+                score,
+                match_type,
+            });
+        }
+        Ok(results)
+    }
+
     pub async fn search_entries(&self, options: SearchOptions) -> AppResult<Vec<SearchResult>> {
         let candidates = self.search_candidates(&options).await?;
         let query = options.query.trim();
@@ -1493,7 +1639,7 @@ impl LocalBackend {
             SearchMode::Text => {
                 let mut results = Vec::new();
                 for entry in candidates {
-                    if !clean_markdown(&entry.content).contains(query) {
+                    if !exact_search_match(&clean_markdown(&entry.content), query) {
                         continue;
                     }
                     results.push(SearchResult {
@@ -1674,9 +1820,9 @@ impl LocalBackend {
     }
 
     pub async fn migrate_text_tags_to_native(&self) -> AppResult<usize> {
-        let entries = sqlx::query_as::<_, Entry>(&format!(
+        let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
@@ -1726,7 +1872,7 @@ impl LocalBackend {
             .ok_or_else(|| AppError::BadRequest("Invalid new tag".to_string()))?;
         let same_tag_key = old_name.eq_ignore_ascii_case(&new_name);
 
-        let affected_entries = sqlx::query_as::<_, Entry>(&format!(
+        let affected_entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             r#"
             {ENTRY_SELECT}
             JOIN entry_tags ON entry_tags.entry_id = entries.id
@@ -1736,7 +1882,7 @@ impl LocalBackend {
             WHERE entries.owner_id = ? AND lower(tags.name) = lower(?)
             ORDER BY entries.created_at ASC
             "#
-        ))
+        )))
         .bind(self.owner_id)
         .bind(&old_name)
         .fetch_all(&self.pool)
@@ -1810,9 +1956,9 @@ impl LocalBackend {
     }
 
     pub async fn get_all_entries_for_backup(&self) -> AppResult<Vec<EntryExportSchema>> {
-        let entries = sqlx::query_as::<_, Entry>(&format!(
+        let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
@@ -3043,20 +3189,20 @@ impl LocalBackend {
             " AND archived_at IS NULL"
         };
         let entries = if let Some(target_month) = target_month {
-            sqlx::query_as::<_, Entry>(&format!(
+            sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
                 r#"{ENTRY_SELECT}
                 WHERE owner_id = ?
                   AND target_month = ?
                   AND status NOT IN ('forward', 'future')
                   {archive_filter}
                 ORDER BY position ASC, created_at DESC"#
-            ))
+            )))
             .bind(self.owner_id)
             .bind(target_month)
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, Entry>(&format!(
+            sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
                 r#"{ENTRY_SELECT}
                 WHERE owner_id = ?
                   AND is_future = 1
@@ -3065,7 +3211,7 @@ impl LocalBackend {
                   AND status NOT IN ('forward', 'future')
                   {archive_filter}
                 ORDER BY position ASC, created_at DESC"#
-            ))
+            )))
             .bind(self.owner_id)
             .fetch_all(&self.pool)
             .await?
@@ -3311,6 +3457,217 @@ impl LocalBackend {
         Ok(())
     }
 
+    async fn local_snapshot_dir_path(&self) -> AppResult<PathBuf> {
+        Ok(self
+            .markdown_workspace_path()
+            .await?
+            .join(".bujo")
+            .join("snapshots"))
+    }
+
+    pub async fn local_snapshot_state(&self) -> AppResult<LocalSnapshotState> {
+        let snapshot_dir = self.local_snapshot_dir_path().await?;
+        Ok(LocalSnapshotState {
+            settings: self.local_snapshot_settings().await?,
+            snapshots: self.list_local_snapshots().await?,
+            snapshot_dir: snapshot_dir.to_string_lossy().to_string(),
+        })
+    }
+
+    pub async fn local_snapshot_settings(&self) -> AppResult<LocalSnapshotSettings> {
+        let mut settings = self
+            .get_setting(LOCAL_SNAPSHOT_SETTINGS_KEY)
+            .await?
+            .and_then(|value| serde_json::from_str::<LocalSnapshotSettings>(&value).ok())
+            .unwrap_or_default();
+        if settings.retention_count == 0 {
+            settings.retention_count = 7;
+        }
+        Ok(settings)
+    }
+
+    async fn save_local_snapshot_settings(
+        &self,
+        settings: &LocalSnapshotSettings,
+    ) -> AppResult<()> {
+        let value = serde_json::to_string(settings)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        self.set_setting(LOCAL_SNAPSHOT_SETTINGS_KEY, &value).await
+    }
+
+    pub async fn pause_auto_local_snapshots(&self, days: i64) -> AppResult<LocalSnapshotSettings> {
+        let mut settings = self.local_snapshot_settings().await?;
+        let days = days.clamp(1, 365);
+        settings.paused_until =
+            Some((chrono::Utc::now() + chrono::Duration::days(days)).to_rfc3339());
+        self.save_local_snapshot_settings(&settings).await?;
+        Ok(settings)
+    }
+
+    pub async fn resume_auto_local_snapshots(&self) -> AppResult<LocalSnapshotSettings> {
+        let mut settings = self.local_snapshot_settings().await?;
+        settings.paused_until = None;
+        self.save_local_snapshot_settings(&settings).await?;
+        Ok(settings)
+    }
+
+    pub async fn run_auto_local_snapshot_if_due(&self) -> AppResult<Option<LocalSnapshotInfo>> {
+        let mut settings = self.local_snapshot_settings().await?;
+        if !settings.auto_enabled || local_snapshot_is_paused(&settings) {
+            return Ok(None);
+        }
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        if settings
+            .last_auto_snapshot_at
+            .as_deref()
+            .and_then(|value| value.get(0..10))
+            == Some(today.as_str())
+        {
+            return Ok(None);
+        }
+
+        let snapshot = self.create_local_snapshot().await?;
+        settings.last_auto_snapshot_at = Some(chrono::Utc::now().to_rfc3339());
+        self.save_local_snapshot_settings(&settings).await?;
+        Ok(Some(snapshot))
+    }
+
+    pub async fn create_local_snapshot(&self) -> AppResult<LocalSnapshotInfo> {
+        let settings = self.local_snapshot_settings().await?;
+        let info = self.write_local_snapshot().await?;
+        self.prune_local_snapshots(settings.retention_count.max(1))
+            .await?;
+        Ok(info)
+    }
+
+    async fn write_local_snapshot(&self) -> AppResult<LocalSnapshotInfo> {
+        let snapshot_dir = self.local_snapshot_dir_path().await?;
+        tokio::fs::create_dir_all(&snapshot_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let entries = self.get_all_entries_for_backup().await?;
+        let attachments = self
+            .attachment_maintenance_summary()
+            .await?
+            .uploads
+            .into_iter()
+            .map(|upload| LocalSnapshotAttachment {
+                relative_path: upload.relative_path,
+                filename: upload.filename,
+                original_filename: upload.original_filename,
+                sha256: upload.sha256,
+                size: upload.size,
+            })
+            .collect::<Vec<_>>();
+        let snapshot = LocalSnapshotFile {
+            format: LOCAL_SNAPSHOT_FORMAT.to_string(),
+            version: 1,
+            created_at: created_at.clone(),
+            entries,
+            attachments,
+        };
+        let payload = serde_json::to_vec_pretty(&snapshot)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(&payload)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let compressed = encoder
+            .finish()
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+
+        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        let filename = format!("rbujo-snapshot-{timestamp}-{}.json.gz", Uuid::new_v4());
+        let path = snapshot_dir.join(filename);
+        tokio::fs::write(&path, compressed)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        self.local_snapshot_info_from_path(path)
+            .await?
+            .ok_or_else(|| AppError::Internal("Snapshot was not written".to_string()))
+    }
+
+    pub async fn list_local_snapshots(&self) -> AppResult<Vec<LocalSnapshotInfo>> {
+        let snapshot_dir = self.local_snapshot_dir_path().await?;
+        if tokio::fs::metadata(&snapshot_dir).await.is_err() {
+            return Ok(Vec::new());
+        }
+        let mut snapshots = Vec::new();
+        let mut read_dir = tokio::fs::read_dir(snapshot_dir)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?
+        {
+            match self.local_snapshot_info_from_path(entry.path()).await {
+                Ok(Some(info)) => snapshots.push(info),
+                Ok(None) | Err(_) => {}
+            }
+        }
+        snapshots.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.filename.cmp(&left.filename))
+        });
+        Ok(snapshots)
+    }
+
+    async fn prune_local_snapshots(&self, retention_count: usize) -> AppResult<()> {
+        let snapshots = self.list_local_snapshots().await?;
+        for snapshot in snapshots.into_iter().skip(retention_count.max(1)) {
+            match tokio::fs::remove_file(&snapshot.absolute_path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(AppError::Internal(error.to_string())),
+            }
+        }
+        Ok(())
+    }
+
+    async fn local_snapshot_info_from_path(
+        &self,
+        path: PathBuf,
+    ) -> AppResult<Option<LocalSnapshotInfo>> {
+        let Some(filename) = path.file_name().and_then(|value| value.to_str()) else {
+            return Ok(None);
+        };
+        if !filename.ends_with(".json.gz") {
+            return Ok(None);
+        }
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        if !metadata.is_file() {
+            return Ok(None);
+        }
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let mut decoder = GzDecoder::new(Cursor::new(bytes));
+        let mut json = String::new();
+        decoder
+            .read_to_string(&mut json)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let snapshot = serde_json::from_str::<LocalSnapshotFile>(&json)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        if snapshot.format != LOCAL_SNAPSHOT_FORMAT {
+            return Ok(None);
+        }
+        Ok(Some(LocalSnapshotInfo {
+            filename: filename.to_string(),
+            absolute_path: path.to_string_lossy().to_string(),
+            created_at: snapshot.created_at,
+            entry_count: snapshot.entries.len(),
+            attachment_count: snapshot.attachments.len(),
+            size: metadata.len() as i64,
+        }))
+    }
+
     pub async fn list_uploads_for_backup(&self) -> AppResult<Vec<UploadBackup>> {
         let mut uploads = Vec::new();
         let mut attachment_filenames = HashSet::new();
@@ -3442,7 +3799,7 @@ impl LocalBackend {
         } else {
             " AND archived_at IS NULL"
         };
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT id, target_date, entry_type, status
             FROM entries
@@ -3453,7 +3810,7 @@ impl LocalBackend {
               {archive_filter}
             ORDER BY target_date ASC, position ASC, created_at DESC
             "#
-        ))
+        )))
         .bind(self.owner_id)
         .bind(start_date)
         .bind(end_date)
@@ -3504,7 +3861,7 @@ impl LocalBackend {
             bindings.push(validate_date(end_date)?);
         }
         sql.push_str(" ORDER BY target_date DESC, created_at DESC");
-        let mut query = sqlx::query_as::<_, Entry>(&sql).bind(self.owner_id);
+        let mut query = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(sql)).bind(self.owner_id);
         for binding in bindings {
             query = query.bind(binding);
         }
@@ -3773,12 +4130,14 @@ impl LocalBackend {
     }
 
     async fn fetch_entry(&self, id: &str) -> AppResult<Entry> {
-        sqlx::query_as::<_, Entry>(&format!("{ENTRY_SELECT} WHERE id = ? AND owner_id = ?"))
-            .bind(id)
-            .bind(self.owner_id)
-            .fetch_optional(&self.pool)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Entry not found".to_string()))
+        sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
+            "{ENTRY_SELECT} WHERE id = ? AND owner_id = ?"
+        )))
+        .bind(id)
+        .bind(self.owner_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Entry not found".to_string()))
     }
 
     async fn save_entry(&self, entry: &Entry) -> AppResult<()> {
@@ -4216,7 +4575,11 @@ fn sanitized_extension(file_name: &str) -> String {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn daily_markdown_relative_path(date: &str) -> String {
@@ -5421,6 +5784,134 @@ fn extract_text_tags(content: &str) -> Vec<String> {
             .filter_map(|captures| captures.get(2).map(|value| value.as_str().to_string()))
             .collect(),
     )
+}
+
+fn normalized_tag_set(tags: &[String]) -> HashSet<String> {
+    tags.iter()
+        .map(|tag| tag.trim().to_lowercase())
+        .filter(|tag| !tag.is_empty())
+        .collect()
+}
+
+fn local_snapshot_is_paused(settings: &LocalSnapshotSettings) -> bool {
+    settings
+        .paused_until
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .is_some_and(|paused_until| paused_until.with_timezone(&chrono::Utc) > chrono::Utc::now())
+}
+
+fn related_metadata_score(
+    source: &Entry,
+    candidate: &Entry,
+    source_tags: &HashSet<String>,
+    candidate_tags: &HashSet<String>,
+    source_tokens: &HashSet<String>,
+    candidate_tokens: &HashSet<String>,
+) -> f32 {
+    let shared_tags = source_tags.intersection(candidate_tags).count();
+    let tag_score = if shared_tags == 0 {
+        0.0
+    } else {
+        let larger_tag_set = source_tags.len().max(candidate_tags.len()).max(1);
+        0.45 * (shared_tags as f32 / larger_tag_set as f32)
+    };
+
+    let overlap = token_overlap(source_tokens, candidate_tokens);
+    let content_score = 0.35 * overlap;
+
+    let date_score = if source.target_date.is_some() && source.target_date == candidate.target_date
+    {
+        0.16
+    } else if source.target_month.is_some() && source.target_month == candidate.target_month {
+        0.12
+    } else {
+        0.0
+    };
+
+    let type_score = if source.entry_type == candidate.entry_type {
+        0.03
+    } else {
+        0.0
+    };
+
+    tag_score + content_score + date_score + type_score
+}
+
+fn related_match_type(
+    source: &Entry,
+    candidate: &Entry,
+    source_tags: &HashSet<String>,
+    candidate_tags: &HashSet<String>,
+    source_tokens: &HashSet<String>,
+    candidate_tokens: &HashSet<String>,
+) -> String {
+    if source_tags.intersection(candidate_tags).next().is_some() {
+        "tag".to_string()
+    } else if token_overlap(source_tokens, candidate_tokens) > 0.0 {
+        "content".to_string()
+    } else if (source.target_date.is_some() && source.target_date == candidate.target_date)
+        || (source.target_month.is_some() && source.target_month == candidate.target_month)
+    {
+        "date".to_string()
+    } else {
+        "related".to_string()
+    }
+}
+
+fn token_overlap(left: &HashSet<String>, right: &HashSet<String>) -> f32 {
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    let shared = left.intersection(right).count();
+    let union = left.union(right).count().max(1);
+    shared as f32 / union as f32
+}
+
+fn related_tokens(text: &str) -> HashSet<String> {
+    let mut tokens = HashSet::new();
+    let mut ascii = String::new();
+    let mut cjk_run = Vec::new();
+
+    for ch in text.to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            flush_cjk_run(&mut cjk_run, &mut tokens);
+            ascii.push(ch);
+        } else if is_cjk_char(ch) {
+            flush_ascii_token(&mut ascii, &mut tokens);
+            cjk_run.push(ch);
+        } else {
+            flush_ascii_token(&mut ascii, &mut tokens);
+            flush_cjk_run(&mut cjk_run, &mut tokens);
+        }
+    }
+    flush_ascii_token(&mut ascii, &mut tokens);
+    flush_cjk_run(&mut cjk_run, &mut tokens);
+    tokens
+}
+
+fn flush_ascii_token(token: &mut String, tokens: &mut HashSet<String>) {
+    if token.len() >= 2 {
+        tokens.insert(token.clone());
+    }
+    token.clear();
+}
+
+fn flush_cjk_run(run: &mut Vec<char>, tokens: &mut HashSet<String>) {
+    if run.len() == 1 {
+        tokens.insert(run.iter().collect());
+    } else {
+        for pair in run.windows(2) {
+            tokens.insert(pair.iter().collect());
+        }
+    }
+    run.clear();
+}
+
+fn is_cjk_char(ch: char) -> bool {
+    ('\u{4e00}'..='\u{9fff}').contains(&ch)
+        || ('\u{3400}'..='\u{4dbf}').contains(&ch)
+        || ('\u{f900}'..='\u{faff}').contains(&ch)
 }
 
 fn clean_markdown(markdown: &str) -> String {

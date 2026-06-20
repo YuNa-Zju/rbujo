@@ -23,6 +23,99 @@ fn search_modal_exposes_native_tag_filter() {
 }
 
 #[test]
+fn entry_inspector_is_persistent_side_panel_with_related_notes() {
+    let modal_controller = read_file("frontend/src/context/ModalControllerContext.tsx");
+    let modal_host = read_file("frontend/src/components/modals/GlobalModalHost.tsx");
+    let entry_card = read_file("frontend/src/components/DraggableEntryCard.tsx");
+    let entry_service = read_file("frontend/src/services/entryService.ts");
+    let tauri_lib = read_file("src-tauri/src/lib.rs");
+
+    assert!(
+        modal_controller.contains("inspector")
+            && modal_controller.contains("openInspector")
+            && modal_controller.contains("closeInspector"),
+        "ModalControllerContext should own persistent inspector state"
+    );
+    assert!(
+        modal_host.contains("EntryInspector")
+            && modal_host.contains("inspector.open")
+            && modal_host.contains("closeInspector"),
+        "GlobalModalHost should render a persistent EntryInspector side panel"
+    );
+    assert!(
+        entry_card.contains("onInspect")
+            && entry_card.contains("onClick")
+            && entry_card.contains("data-entry-interactive"),
+        "Entry cards should open the inspector on plain single-click without stealing interactive child clicks"
+    );
+    assert!(
+        entry_service.contains("getRelatedEntries")
+            && entry_service.contains("\"related_entries\""),
+        "entryService should expose related notes through a Tauri command"
+    );
+    assert!(
+        tauri_lib.contains("async fn related_entries") && tauri_lib.contains("related_entries,"),
+        "Tauri commands should expose LocalBackend::related_entries"
+    );
+}
+
+#[test]
+fn local_snapshot_safety_is_exposed_in_storage_panel_and_startup() {
+    let app = read_file("frontend/src/App.tsx");
+    let bootstrap = read_file("frontend/src/components/LocalSnapshotBootstrap.tsx");
+    let storage_panel =
+        read_file("frontend/src/components/modals/AttachmentMaintenanceController.tsx");
+    let entry_service = read_file("frontend/src/services/entryService.ts");
+    let tauri_lib = read_file("src-tauri/src/lib.rs");
+
+    assert!(
+        app.contains("LocalSnapshotBootstrap"),
+        "App should mount a quiet startup snapshot bootstrapper"
+    );
+    assert!(
+        bootstrap.contains("isTauri") && bootstrap.contains("if (!isTauri())"),
+        "Startup snapshot bootstrapper should only invoke desktop commands inside Tauri"
+    );
+    assert!(
+        entry_service.contains("getLocalSnapshotState")
+            && entry_service.contains("createLocalSnapshot")
+            && entry_service.contains("pauseAutoLocalSnapshots")
+            && entry_service.contains("runAutoLocalSnapshotIfDue"),
+        "entryService should expose local snapshot safety commands"
+    );
+    assert!(
+        storage_panel.contains("snapshotState")
+            && storage_panel.contains("createLocalSnapshot")
+            && storage_panel.contains("pauseAutoLocalSnapshots")
+            && storage_panel.contains(".bujo/snapshots"),
+        "Storage panel should show local snapshot status and controls"
+    );
+    assert!(
+        tauri_lib.contains("async fn local_snapshot_state")
+            && tauri_lib.contains("async fn create_local_snapshot")
+            && tauri_lib.contains("async fn pause_auto_local_snapshots")
+            && tauri_lib.contains("async fn run_auto_local_snapshot_if_due")
+            && tauri_lib.contains("local_snapshot_state,")
+            && tauri_lib.contains("create_local_snapshot,"),
+        "Tauri should expose local snapshot commands"
+    );
+}
+
+#[test]
+fn entry_service_defaults_plain_search_to_intelligent_semantic_mode() {
+    let entry_service = read_file("frontend/src/services/entryService.ts");
+
+    assert!(
+        entry_service.contains("const requestedMode = params.mode ?? \"semantic\"")
+            && entry_service.contains("mode: requestedMode")
+            && entry_service.contains("requestedMode === \"semantic\"")
+            && !entry_service.contains("mode: params.mode ?? \"text\"")
+            && !entry_service.contains("(params.mode ?? \"text\") === \"semantic\""),
+        "entryService.search should default unspecified searches to semantic mode and only fall back after semantic empty results"
+    );
+}
+
+#[test]
 fn tag_inputs_offer_existing_native_tag_suggestions() {
     let tag_cache = read_file("frontend/src/context/TagCacheContext.tsx");
     let add_entry = read_file("frontend/src/components/modals/AddEntryModal.tsx");

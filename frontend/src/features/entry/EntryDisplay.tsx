@@ -114,7 +114,7 @@ export default function EntryDisplay({
 
   // 4. 正常展开模式 (显示完整 Markdown)
   return (
-    <div className="select-text" onClick={(e) => e.stopPropagation()}>
+    <div className="select-text">
       <MarkdownViewer
         content={content}
         tags={tags}

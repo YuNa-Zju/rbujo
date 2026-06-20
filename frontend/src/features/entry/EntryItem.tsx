@@ -88,6 +88,7 @@ export default function EntryItem({
     >
       {/* Status Toggle / Icon */}
       <button
+        data-entry-interactive
         className={`w-7 h-7 flex items-center justify-center shrink-0 mt-[1px] rounded-full transition-all duration-200 ${
           canToggleStatus
             ? `cursor-pointer active:scale-90 hover:bg-base-200/80 ${theme.softHover}`
@@ -125,6 +126,7 @@ export default function EntryItem({
                 {/* Migrated TO Date */}
                 {entry.migrated_to_date && (
                   <span
+                    data-entry-interactive
                     className="flex items-center gap-1.5 text-info/90 hover:text-info cursor-pointer font-medium bg-info/5 hover:bg-info/10 px-2 py-0.5 rounded-full transition-colors border border-info/10"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -145,6 +147,7 @@ export default function EntryItem({
                   entry.status === "migrated_future") &&
                   ["migrated_future", "future"].includes(entry.status) && (
                     <span
+                      data-entry-interactive
                       className="flex items-center gap-1.5 cursor-pointer font-medium px-2 py-0.5 rounded-full transition-colors border text-amber-600/90 hover:text-amber-700 bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/10"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -168,6 +171,7 @@ export default function EntryItem({
                 {/* Migrated FROM */}
                 {entry.from_date && (
                   <span
+                    data-entry-interactive
                     className="flex items-center gap-1.5 text-base-content/50 hover:text-base-content/80 cursor-pointer font-medium px-2 py-0.5 rounded-full transition-colors hover:bg-base-200/50 border border-transparent hover:border-base-200"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -186,7 +190,7 @@ export default function EntryItem({
 
       {/* Action Buttons */}
       {!forceCollapse && !hideActions && !readOnly && (
-        <div className="flex-none">
+        <div className="flex-none" data-entry-interactive>
           <EntryActions
             entryId={entry.id} // 传入 ID 以支持菜单互斥
             isTask={isTask}

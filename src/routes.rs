@@ -562,9 +562,9 @@ async fn get_daily_log(
     Path(date_str): Path<String>,
 ) -> AppResult<Json<Vec<EntryResponse>>> {
     let date = validate_date(&date_str)?;
-    let entries = sqlx::query_as::<_, Entry>(&format!(
+    let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
         "{ENTRY_SELECT} WHERE owner_id = ? AND target_date = ? ORDER BY position ASC, created_at DESC"
-    ))
+    )))
     .bind(user.id)
     .bind(date)
     .fetch_all(state.db())
@@ -584,7 +584,7 @@ async fn get_future_log(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> AppResult<Json<FutureLogResponse>> {
-    let future_entries = sqlx::query_as::<_, Entry>(&format!(
+    let future_entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
         r#"{ENTRY_SELECT}
         WHERE owner_id = ?
           AND is_future = 1
@@ -592,18 +592,18 @@ async fn get_future_log(
           AND target_month IS NULL
           AND status NOT IN ('forward', 'future')
         ORDER BY position ASC, created_at DESC"#
-    ))
+    )))
     .bind(user.id)
     .fetch_all(state.db())
     .await?;
 
-    let monthly_entries = sqlx::query_as::<_, Entry>(&format!(
+    let monthly_entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
         r#"{ENTRY_SELECT}
         WHERE owner_id = ?
           AND target_month IS NOT NULL
           AND status NOT IN ('forward', 'future')
         ORDER BY target_month ASC, position ASC, created_at DESC"#
-    ))
+    )))
     .bind(user.id)
     .fetch_all(state.db())
     .await?;
@@ -774,7 +774,7 @@ async fn search_entries(
     }
     sql.push_str(" ORDER BY target_date DESC, created_at DESC");
 
-    let mut db_query = sqlx::query_as::<_, Entry>(&sql).bind(user.id);
+    let mut db_query = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(sql)).bind(user.id);
     for binding in bindings.into_iter().skip(1) {
         db_query = db_query.bind(binding);
     }
@@ -822,9 +822,9 @@ async fn export_all_entries(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> AppResult<Json<Vec<EntryExportSchema>>> {
-    let entries = sqlx::query_as::<_, Entry>(&format!(
+    let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
         "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
-    ))
+    )))
     .bind(user.id)
     .fetch_all(state.db())
     .await?;
@@ -920,11 +920,11 @@ async fn export_entries_markdown(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> AppResult<Response> {
-    let entries = sqlx::query_as::<_, Entry>(&format!(
+    let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
         r#"{ENTRY_SELECT}
         WHERE owner_id = ?
         ORDER BY target_date DESC, is_future DESC, target_month DESC, position ASC"#
-    ))
+    )))
     .bind(user.id)
     .fetch_all(state.db())
     .await?;
@@ -985,9 +985,9 @@ async fn export_entries_zip(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> AppResult<Response> {
-    let entries = sqlx::query_as::<_, Entry>(&format!(
+    let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
         "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY target_date ASC, position ASC"
-    ))
+    )))
     .bind(user.id)
     .fetch_all(state.db())
     .await?;
@@ -1041,13 +1041,13 @@ async fn get_calendar_feed(
     let start_filter = (Local::now().date_naive() - Duration::days(30))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = sqlx::query_as::<_, Entry>(&format!(
+    let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
         r#"{ENTRY_SELECT}
         WHERE owner_id = ?
           AND target_date >= ?
           AND status != 'cancelled'
           AND entry_type IN ('task', 'event')"#
-    ))
+    )))
     .bind(user_id)
     .bind(start_filter)
     .fetch_all(state.db())
@@ -1136,12 +1136,14 @@ async fn upload_file(
 }
 
 async fn fetch_entry_owned(state: &AppState, entry_id: &str, owner_id: i64) -> AppResult<Entry> {
-    sqlx::query_as::<_, Entry>(&format!("{ENTRY_SELECT} WHERE id = ? AND owner_id = ?"))
-        .bind(entry_id)
-        .bind(owner_id)
-        .fetch_optional(state.db())
-        .await?
-        .ok_or_else(|| AppError::NotFound("Entry not found".to_string()))
+    sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
+        "{ENTRY_SELECT} WHERE id = ? AND owner_id = ?"
+    )))
+    .bind(entry_id)
+    .bind(owner_id)
+    .fetch_optional(state.db())
+    .await?
+    .ok_or_else(|| AppError::NotFound("Entry not found".to_string()))
 }
 
 async fn save_entry(state: &AppState, entry: &Entry) -> AppResult<()> {
@@ -1443,9 +1445,9 @@ async fn collect_and_delete_children(
         if !seen.insert(parent_id.clone()) {
             continue;
         }
-        let children = sqlx::query_as::<_, Entry>(&format!(
+        let children = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             "{ENTRY_SELECT} WHERE source_entry_id = ? AND owner_id = ?"
-        ))
+        )))
         .bind(&parent_id)
         .bind(owner_id)
         .fetch_all(state.db())

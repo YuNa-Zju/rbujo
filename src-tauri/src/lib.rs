@@ -6,8 +6,9 @@ use std::sync::{
 
 use rbullet_journal::local::{
     AttachmentCleanupResult, AttachmentMaintenanceSummary, CreateEntryInput, DailyMarkdownFile,
-    EntryPatch, FutureLogResponse, LocalBackend, MarkdownWorkspace, MigrationResult,
-    ResolvedUpload, SearchOptions, SearchResult, StoredUpload, UploadBackup, UploadInput,
+    EntryPatch, FutureLogResponse, LocalBackend, LocalSnapshotInfo, LocalSnapshotSettings,
+    LocalSnapshotState, MarkdownWorkspace, MigrationResult, ResolvedUpload, SearchOptions,
+    SearchResult, StoredUpload, UploadBackup, UploadInput,
 };
 use rbullet_journal::models::{
     DayOverviewDto, EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
@@ -433,6 +434,19 @@ async fn get_migration_chain(
 }
 
 #[tauri::command]
+async fn related_entries(
+    state: State<'_, DesktopState>,
+    entry_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<SearchResult>, String> {
+    state
+        .backend
+        .related_entries(entry_id, limit.unwrap_or(5))
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn search_entries(
     state: State<'_, DesktopState>,
     options: SearchOptions,
@@ -647,6 +661,58 @@ async fn cleanup_all_unused_uploads(
     state
         .backend
         .cleanup_all_unused_uploads()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn local_snapshot_state(
+    state: State<'_, DesktopState>,
+) -> Result<LocalSnapshotState, String> {
+    state.backend.local_snapshot_state().await.map_err(to_error)
+}
+
+#[tauri::command]
+async fn create_local_snapshot(
+    state: State<'_, DesktopState>,
+) -> Result<LocalSnapshotInfo, String> {
+    state
+        .backend
+        .create_local_snapshot()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn pause_auto_local_snapshots(
+    state: State<'_, DesktopState>,
+    days: i64,
+) -> Result<LocalSnapshotSettings, String> {
+    state
+        .backend
+        .pause_auto_local_snapshots(days)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn resume_auto_local_snapshots(
+    state: State<'_, DesktopState>,
+) -> Result<LocalSnapshotSettings, String> {
+    state
+        .backend
+        .resume_auto_local_snapshots()
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
+async fn run_auto_local_snapshot_if_due(
+    state: State<'_, DesktopState>,
+) -> Result<Option<LocalSnapshotInfo>, String> {
+    state
+        .backend
+        .run_auto_local_snapshot_if_due()
         .await
         .map_err(to_error)
 }
@@ -1088,6 +1154,7 @@ pub fn run() {
             migrate_entry_to_date,
             migrate_entry_to_future,
             get_migration_chain,
+            related_entries,
             search_entries,
             list_tags,
             rename_tag,
@@ -1106,6 +1173,11 @@ pub fn run() {
             attachment_maintenance_summary,
             cleanup_unused_uploads,
             cleanup_all_unused_uploads,
+            local_snapshot_state,
+            create_local_snapshot,
+            pause_auto_local_snapshots,
+            resume_auto_local_snapshots,
+            run_auto_local_snapshot_if_due,
             export_markdown_archive,
             export_markdown_archive_to_file,
             export_bjk_archive_to_file,

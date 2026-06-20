@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
 use anyhow::Context;
+use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{Executor, SqlitePool};
 
 pub async fn connect(database_url: &str) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(database_url)
@@ -193,7 +193,9 @@ async fn add_column_if_missing(
 ) -> anyhow::Result<()> {
     let escaped = table.replace('"', "\"\"");
     let pragma = format!("PRAGMA table_info(\"{escaped}\")");
-    let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(pragma))
+        .fetch_all(pool)
+        .await?;
     let exists = rows.iter().any(|row| {
         let name: String = row.try_get("name").unwrap_or_default();
         name == column
@@ -201,7 +203,7 @@ async fn add_column_if_missing(
 
     if !exists {
         let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
-        pool.execute(sql.as_str()).await?;
+        sqlx::query(sqlx::AssertSqlSafe(sql)).execute(pool).await?;
     }
 
     Ok(())

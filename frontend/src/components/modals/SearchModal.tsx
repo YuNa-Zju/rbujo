@@ -280,14 +280,6 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
   const handleRefresh = () => performSearch();
 
   // --- 局部样式定义 ---
-  const modeBtnActive = isDark
-    ? "bg-indigo-500/20 text-indigo-300 shadow-sm"
-    : "bg-white text-indigo-600 shadow-sm border border-indigo-50";
-
-  const modeBtnInactive = isDark
-    ? "text-slate-500 hover:text-slate-300 hover:bg-white/5"
-    : "text-slate-400 hover:text-slate-600 hover:bg-white/60";
-
   const dateInputStyle = isDark
     ? "text-slate-300 bg-white/5 border-transparent focus-within:bg-white/10"
     : "text-slate-600 bg-white border-indigo-50 focus-within:border-indigo-200 focus-within:shadow-sm";
@@ -297,6 +289,22 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     : "bg-indigo-50/30 border-indigo-50/50";
 
   const resultsAreaStyle = isDark ? "bg-[#0f172a]" : "bg-[#f8fafc]";
+
+  const modeMeta = {
+    semantic: {
+      label: t.search?.modeSemantic || "Semantic",
+      icon: Sparkles,
+    },
+    text: {
+      label: t.search?.modeText || "Text",
+      icon: Hash,
+    },
+    regex: {
+      label: t.search?.modeRegex || "Regex",
+      icon: Code,
+    },
+  }[mode];
+  const ModeIcon = modeMeta.icon;
 
   const hasSearchFilters =
     Boolean(query.trim()) ||
@@ -416,35 +424,16 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
               <div
                 className={`rounded-2xl p-2 flex flex-col sm:flex-row sm:items-center gap-3 border ${filterContainerStyle}`}
               >
-                {/* Mode Toggle */}
-                <div className="flex gap-1 shrink-0 self-start sm:self-center">
-                  <button
-                    onClick={() => setMode("text")}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                      mode === "text" ? modeBtnActive : modeBtnInactive
-                    }`}
-                  >
-                    <Hash size={12} strokeWidth={2.5} />{" "}
-                    {t.search?.modeText || "Text"}
-                  </button>
-                  <button
-                    onClick={() => setMode("regex")}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                      mode === "regex" ? modeBtnActive : modeBtnInactive
-                    }`}
-                  >
-                    <Code size={12} strokeWidth={2.5} />{" "}
-                    {t.search?.modeRegex || "Regex"}
-                  </button>
-                  <button
-                    onClick={() => setMode("semantic")}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                      mode === "semantic" ? modeBtnActive : modeBtnInactive
-                    }`}
-                  >
-                    <Sparkles size={12} strokeWidth={2.5} />{" "}
-                    {t.search?.modeSemantic || "Semantic"}
-                  </button>
+                {/* Current smart mode */}
+                <div
+                  className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
+                    isDark
+                      ? "bg-indigo-500/15 text-indigo-200"
+                      : "bg-white text-indigo-600 shadow-sm border border-indigo-50"
+                  }`}
+                >
+                  <ModeIcon size={12} strokeWidth={2.5} />
+                  {modeMeta.label}
                 </div>
 
                 <div
@@ -604,6 +593,39 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
                       ? t.tag?.tryDifferent || "Try different keywords."
                       : ""}
                   </p>
+                  {hasSearchFilters && query.trim() && (
+                    <div className="mt-4 flex flex-wrap justify-center gap-2">
+                      {mode === "semantic" ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-sm rounded-full"
+                            onClick={() => setMode("text")}
+                          >
+                            <Hash size={13} />
+                            {t.search?.modeText || "Text"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm rounded-full"
+                            onClick={() => setMode("regex")}
+                          >
+                            <Code size={13} />
+                            {t.search?.modeRegex || "Regex"}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-sm rounded-full"
+                          onClick={() => setMode("semantic")}
+                        >
+                          <Sparkles size={13} />
+                          {t.search?.modeSemantic || "Semantic"}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
