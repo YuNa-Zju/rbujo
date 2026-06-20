@@ -141,6 +141,12 @@ export interface LocalSnapshotState {
   snapshot_dir: string;
 }
 
+export interface LocalSnapshotRestoreResult {
+  restored_snapshot: LocalSnapshotInfo;
+  rollback_snapshot: LocalSnapshotInfo;
+  state: LocalSnapshotState;
+}
+
 export interface DayOverview {
   id: string;
   type: EntryType;
@@ -546,6 +552,12 @@ export const entryService = {
 
   createLocalSnapshot: async () => {
     return invoke<LocalSnapshotInfo>("create_local_snapshot");
+  },
+
+  restoreLocalSnapshot: async (filename: string) => {
+    return invoke<LocalSnapshotRestoreResult>("restore_local_snapshot", {
+      filename,
+    });
   },
 
   pauseAutoLocalSnapshots: async (days = 7) => {

@@ -504,6 +504,86 @@ async fn local_snapshot_listing_skips_corrupt_snapshot_files() {
 }
 
 #[tokio::test]
+async fn local_snapshot_restore_creates_pre_restore_backup_and_can_roll_forward_again() {
+    let dir = temp_app_dir("local-snapshot-restore");
+    let backend = LocalBackend::open(dir.clone()).await.unwrap();
+    let original = backend
+        .create_entry(CreateEntryInput {
+            content: "恢复前的原始内容".to_string(),
+            entry_type: "idea".to_string(),
+            target_date: Some("2026-06-20".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["snapshot".to_string()],
+        })
+        .await
+        .unwrap();
+    let baseline = backend.create_local_snapshot().await.unwrap();
+
+    backend
+        .update_entry(
+            original.id.clone(),
+            EntryPatch {
+                content: Some("恢复前已经修改过的当前内容".to_string()),
+                tags: Some(vec!["current".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let added = backend
+        .create_entry(CreateEntryInput {
+            content: "恢复前新增的笔记".to_string(),
+            entry_type: "task".to_string(),
+            target_date: Some("2026-06-20".to_string()),
+            target_month: None,
+            is_future: false,
+            tags: vec!["current".to_string()],
+        })
+        .await
+        .unwrap();
+
+    let restored = backend
+        .restore_local_snapshot(baseline.filename.clone())
+        .await
+        .unwrap();
+    let entries = backend.get_all_entries_for_backup().await.unwrap();
+
+    assert_ne!(restored.rollback_snapshot.filename, baseline.filename);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, original.id);
+    assert_eq!(entries[0].content.as_deref(), Some("恢复前的原始内容"));
+    assert_eq!(entries[0].tags, vec!["snapshot".to_string()]);
+    assert!(!entries.iter().any(|entry| entry.id == added.id));
+
+    let markdown_after_restore =
+        fs::read_to_string(default_workspace_path(&dir).join("Daily/2026/06/2026-06-20.md"))
+            .unwrap();
+    assert!(markdown_after_restore.contains("恢复前的原始内容"));
+    assert!(!markdown_after_restore.contains("恢复前新增的笔记"));
+
+    backend
+        .restore_local_snapshot(restored.rollback_snapshot.filename)
+        .await
+        .unwrap();
+    let rolled_forward = backend.get_all_entries_for_backup().await.unwrap();
+
+    assert_eq!(rolled_forward.len(), 2);
+    assert!(
+        rolled_forward
+            .iter()
+            .any(|entry| entry.content.as_deref() == Some("恢复前已经修改过的当前内容"))
+    );
+    assert!(
+        rolled_forward
+            .iter()
+            .any(|entry| entry.content.as_deref() == Some("恢复前新增的笔记"))
+    );
+
+    fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
 async fn auto_local_snapshots_can_be_paused_for_seven_days() {
     let dir = temp_app_dir("local-snapshot-pause");
     let backend = LocalBackend::open(dir.clone()).await.unwrap();

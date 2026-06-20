@@ -6,9 +6,9 @@ use std::sync::{
 
 use rbullet_journal::local::{
     AttachmentCleanupResult, AttachmentMaintenanceSummary, CreateEntryInput, DailyMarkdownFile,
-    EntryPatch, FutureLogResponse, LocalBackend, LocalSnapshotInfo, LocalSnapshotSettings,
-    LocalSnapshotState, MarkdownWorkspace, MigrationResult, ResolvedUpload, SearchOptions,
-    SearchResult, StoredUpload, UploadBackup, UploadInput,
+    EntryPatch, FutureLogResponse, LocalBackend, LocalSnapshotInfo, LocalSnapshotRestoreResult,
+    LocalSnapshotSettings, LocalSnapshotState, MarkdownWorkspace, MigrationResult, ResolvedUpload,
+    SearchOptions, SearchResult, StoredUpload, UploadBackup, UploadInput,
 };
 use rbullet_journal::models::{
     DayOverviewDto, EntryExportSchema, EntryResponse, ImportResponseDto, ReopenResponse,
@@ -684,6 +684,18 @@ async fn create_local_snapshot(
 }
 
 #[tauri::command]
+async fn restore_local_snapshot(
+    state: State<'_, DesktopState>,
+    filename: String,
+) -> Result<LocalSnapshotRestoreResult, String> {
+    state
+        .backend
+        .restore_local_snapshot(filename)
+        .await
+        .map_err(to_error)
+}
+
+#[tauri::command]
 async fn pause_auto_local_snapshots(
     state: State<'_, DesktopState>,
     days: i64,
@@ -1175,6 +1187,7 @@ pub fn run() {
             cleanup_all_unused_uploads,
             local_snapshot_state,
             create_local_snapshot,
+            restore_local_snapshot,
             pause_auto_local_snapshots,
             resume_auto_local_snapshots,
             run_auto_local_snapshot_if_due,

@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import {
   CalendarDays,
   Clock3,
@@ -73,15 +80,40 @@ export default function EntryInspector({
     entry?.target_date || entry?.target_month || (entry?.is_future ? "Future" : null);
   const visible = open && entry;
 
+  useEffect(() => {
+    if (!visible) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, visible]);
+
+  const handleBackdropClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (event.target === event.currentTarget) onClose();
+    },
+    [onClose],
+  );
+
   return (
-    <aside
-      className={`fixed right-0 top-0 z-40 h-dvh w-[360px] max-w-[calc(100vw-20px)] border-l border-base-200 bg-base-100/95 shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out ${
-        visible ? "translate-x-0" : "pointer-events-none translate-x-full"
+    <div
+      className={`fixed inset-0 z-40 bg-transparent transition-[visibility] ${
+        visible ? "pointer-events-auto visible" : "pointer-events-none invisible"
       }`}
       aria-hidden={!visible}
+      onClick={handleBackdropClick}
     >
-      {visible && (
-        <div className="flex h-full flex-col">
+      <aside
+        className={`absolute right-0 top-0 h-dvh w-[360px] max-w-[calc(100vw-20px)] border-l border-base-200 bg-base-100/95 shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out ${
+          visible ? "translate-x-0" : "translate-x-full"
+        }`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {visible && (
+          <div className="flex h-full flex-col">
           <header className="flex items-start gap-3 border-b border-base-200 px-4 py-4">
             <div
               className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${theme.softBg}`}
@@ -194,9 +226,10 @@ export default function EntryInspector({
               </div>
             </section>
           </div>
-        </div>
-      )}
-    </aside>
+          </div>
+        )}
+      </aside>
+    </div>
   );
 }
 

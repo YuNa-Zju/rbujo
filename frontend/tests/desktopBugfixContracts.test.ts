@@ -644,10 +644,12 @@ test("global semantic search is restored with a bundled local BGE model", async 
   const cargoSource = await readFile(cargoPath, "utf8");
   const tauriConfig = JSON.parse(await readFile(tauriConfigPath, "utf8"));
 
-  assert.match(searchSource, /setMode\("text"\)/);
-  assert.match(searchSource, /setMode\("regex"\)/);
-  assert.match(searchSource, /setMode\("semantic"\)/);
-  assert.match(searchSource, /Sparkles/);
+  assert.match(searchSource, /parseSmartSearchQuery/);
+  assert.match(searchSource, /mode: searchQuery\.mode/);
+  assert.match(searchSource, /q: searchQuery\.query/);
+  assert.doesNotMatch(searchSource, /setMode\("text"\)/);
+  assert.doesNotMatch(searchSource, /setMode\("regex"\)/);
+  assert.doesNotMatch(searchSource, /setMode\("semantic"\)/);
   assert.match(entryServiceSource, /"semantic"/);
   assert.doesNotMatch(entryServiceSource, /@huggingface\/transformers/);
   assert.match(localSource, /SearchMode::Semantic/);
