@@ -10,7 +10,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useTranslation } from "../../hooks/useTranslation";
-import { useRef, useEffect } from "react";
+import { useCallback, useRef, useEffect } from "react";
 import { entryEventBus } from "../../lib/entryEventBus"; // 引入总线
 
 interface Props {
@@ -42,34 +42,42 @@ export default function EntryActions({
 }: Props) {
   const { t } = useTranslation();
   const detailsRef = useRef<HTMLDetailsElement>(null);
+  const closeMenu = useCallback(() => {
+    detailsRef.current?.removeAttribute("open");
+  }, []);
 
   // --- 🔴 核心互斥逻辑 ---
   useEffect(() => {
     // 1. 监听全局下拉菜单打开事件
     const handleOtherDropdownOpen = (openedId: string | number) => {
       if (openedId !== entryId && detailsRef.current?.hasAttribute("open")) {
-        detailsRef.current.removeAttribute("open");
+        closeMenu();
       }
     };
 
     entryEventBus.on("ui:dropdown_opened" as any, handleOtherDropdownOpen);
 
     // 2. 点击外部关闭
-    const handleClickOutside = (event: MouseEvent) => {
+    const handlePointerDownOutside = (event: PointerEvent) => {
       if (
         detailsRef.current &&
         !detailsRef.current.contains(event.target as Node)
       ) {
-        detailsRef.current.removeAttribute("open");
+        closeMenu();
       }
     };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenu();
+    };
 
-    document.addEventListener("click", handleClickOutside);
+    document.addEventListener("pointerdown", handlePointerDownOutside, true);
+    document.addEventListener("keydown", handleKeyDown);
     return () => {
       entryEventBus.off("ui:dropdown_opened" as any, handleOtherDropdownOpen);
-      document.removeEventListener("click", handleClickOutside);
+      document.removeEventListener("pointerdown", handlePointerDownOutside, true);
+      document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [entryId]);
+  }, [closeMenu, entryId]);
 
   // 处理菜单切换动作
   const handleToggle = (e: React.SyntheticEvent) => {
@@ -83,7 +91,7 @@ export default function EntryActions({
   const handleAction = (action: () => void) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    detailsRef.current?.removeAttribute("open");
+    closeMenu();
     action();
   };
 
@@ -91,7 +99,7 @@ export default function EntryActions({
     e.preventDefault();
     e.stopPropagation();
     navigator.clipboard.writeText(content);
-    detailsRef.current?.removeAttribute("open");
+    closeMenu();
   };
 
   return (

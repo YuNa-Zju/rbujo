@@ -10,7 +10,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
@@ -284,6 +284,13 @@ pub struct LocalSnapshotState {
     pub settings: LocalSnapshotSettings,
     pub snapshots: Vec<LocalSnapshotInfo>,
     pub snapshot_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalSnapshotRestoreResult {
+    pub restored_snapshot: LocalSnapshotInfo,
+    pub rollback_snapshot: LocalSnapshotInfo,
+    pub state: LocalSnapshotState,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3540,6 +3547,37 @@ impl LocalBackend {
         Ok(info)
     }
 
+    pub async fn restore_local_snapshot(
+        &self,
+        filename: String,
+    ) -> AppResult<LocalSnapshotRestoreResult> {
+        let snapshot_path = self.local_snapshot_path_for_filename(&filename).await?;
+        let restored_snapshot = self
+            .local_snapshot_info_from_path(snapshot_path.clone())
+            .await?
+            .ok_or_else(|| AppError::NotFound("Snapshot not found".to_string()))?;
+        let snapshot = self.read_local_snapshot_from_path(&snapshot_path).await?;
+        let mut sync_dates = self.current_entry_date_values().await?;
+        sync_dates.extend(
+            snapshot
+                .entries
+                .iter()
+                .map(|entry| entry.target_date.clone()),
+        );
+
+        let rollback_snapshot = self.create_local_snapshot().await?;
+        self.replace_entries_from_snapshot(snapshot.entries).await?;
+        self.clear_daily_markdown_sync_state().await?;
+        self.write_daily_markdown_for_date_values(sync_dates).await;
+        let _ = self.write_future_markdown_files().await;
+
+        Ok(LocalSnapshotRestoreResult {
+            restored_snapshot,
+            rollback_snapshot,
+            state: self.local_snapshot_state().await?,
+        })
+    }
+
     async fn write_local_snapshot(&self) -> AppResult<LocalSnapshotInfo> {
         let snapshot_dir = self.local_snapshot_dir_path().await?;
         tokio::fs::create_dir_all(&snapshot_dir)
@@ -3589,6 +3627,11 @@ impl LocalBackend {
             .ok_or_else(|| AppError::Internal("Snapshot was not written".to_string()))
     }
 
+    async fn local_snapshot_path_for_filename(&self, filename: &str) -> AppResult<PathBuf> {
+        let filename = safe_local_snapshot_filename(filename)?;
+        Ok(self.local_snapshot_dir_path().await?.join(filename))
+    }
+
     pub async fn list_local_snapshots(&self) -> AppResult<Vec<LocalSnapshotInfo>> {
         let snapshot_dir = self.local_snapshot_dir_path().await?;
         if tokio::fs::metadata(&snapshot_dir).await.is_err() {
@@ -3629,6 +3672,23 @@ impl LocalBackend {
         Ok(())
     }
 
+    async fn read_local_snapshot_from_path(&self, path: &Path) -> AppResult<LocalSnapshotFile> {
+        let bytes = tokio::fs::read(path)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let mut decoder = GzDecoder::new(Cursor::new(bytes));
+        let mut json = String::new();
+        decoder
+            .read_to_string(&mut json)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let snapshot = serde_json::from_str::<LocalSnapshotFile>(&json)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        if snapshot.format != LOCAL_SNAPSHOT_FORMAT {
+            return Err(AppError::BadRequest("Invalid snapshot format".to_string()));
+        }
+        Ok(snapshot)
+    }
+
     async fn local_snapshot_info_from_path(
         &self,
         path: PathBuf,
@@ -3645,19 +3705,7 @@ impl LocalBackend {
         if !metadata.is_file() {
             return Ok(None);
         }
-        let bytes = tokio::fs::read(&path)
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        let mut decoder = GzDecoder::new(Cursor::new(bytes));
-        let mut json = String::new();
-        decoder
-            .read_to_string(&mut json)
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        let snapshot = serde_json::from_str::<LocalSnapshotFile>(&json)
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        if snapshot.format != LOCAL_SNAPSHOT_FORMAT {
-            return Ok(None);
-        }
+        let snapshot = self.read_local_snapshot_from_path(&path).await?;
         Ok(Some(LocalSnapshotInfo {
             filename: filename.to_string(),
             absolute_path: path.to_string_lossy().to_string(),
@@ -3666,6 +3714,65 @@ impl LocalBackend {
             attachment_count: snapshot.attachments.len(),
             size: metadata.len() as i64,
         }))
+    }
+
+    async fn current_entry_date_values(&self) -> AppResult<Vec<Option<String>>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT target_date
+            FROM entries
+            WHERE owner_id = ?
+              AND target_date IS NOT NULL
+            ORDER BY target_date ASC
+            "#,
+        )
+        .bind(self.owner_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| row.try_get::<String, _>("target_date").map(Some))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::from)
+    }
+
+    async fn replace_entries_from_snapshot(
+        &self,
+        entries: Vec<EntryExportSchema>,
+    ) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM entries WHERE owner_id = ?")
+            .bind(self.owner_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM tags WHERE owner_id = ?")
+            .bind(self.owner_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for item in entries {
+            let tags = normalize_tags(item.tags.clone());
+            let entry = normalize_import_entry(item, self.owner_id)?;
+            insert_entry_in_tx(&mut tx, &entry).await?;
+            for (position, tag) in tags.into_iter().enumerate() {
+                let tag_id = ensure_tag_in_tx(&mut tx, self.owner_id, &tag).await?;
+                sqlx::query(
+                    r#"
+                    INSERT OR REPLACE INTO entry_tags(entry_id, tag_id, owner_id, position)
+                    VALUES (?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&entry.id)
+                .bind(tag_id)
+                .bind(self.owner_id)
+                .bind(position as i64)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        tx.commit().await?;
+        self.clear_overview_cache();
+        Ok(())
     }
 
     pub async fn list_uploads_for_backup(&self) -> AppResult<Vec<UploadBackup>> {
@@ -4207,6 +4314,68 @@ impl LocalBackend {
         self.clear_overview_cache();
         Ok(())
     }
+}
+
+async fn insert_entry_in_tx(tx: &mut Transaction<'_, Sqlite>, entry: &Entry) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO entries(
+            id, content, entry_type, status, created_at, target_date,
+            target_month, is_future, source_entry_id, owner_id, position,
+            from_date, migrated_to_date, migrated_to_month, archived_at,
+            chain_root_id, migrated_to_entry_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&entry.id)
+    .bind(&entry.content)
+    .bind(&entry.entry_type)
+    .bind(&entry.status)
+    .bind(&entry.created_at)
+    .bind(&entry.target_date)
+    .bind(&entry.target_month)
+    .bind(entry.is_future)
+    .bind(&entry.source_entry_id)
+    .bind(entry.owner_id)
+    .bind(entry.position)
+    .bind(&entry.from_date)
+    .bind(&entry.migrated_to_date)
+    .bind(&entry.migrated_to_month)
+    .bind(&entry.archived_at)
+    .bind(&entry.chain_root_id)
+    .bind(&entry.migrated_to_entry_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn ensure_tag_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    owner_id: i64,
+    tag: &str,
+) -> AppResult<i64> {
+    if let Some(existing) = sqlx::query_scalar(
+        "SELECT id FROM tags WHERE owner_id = ? AND lower(name) = lower(?) ORDER BY id LIMIT 1",
+    )
+    .bind(owner_id)
+    .bind(tag)
+    .fetch_optional(&mut **tx)
+    .await?
+    {
+        return Ok(existing);
+    }
+    sqlx::query("INSERT OR IGNORE INTO tags(owner_id, name, created_at) VALUES (?, ?, ?)")
+        .bind(owner_id)
+        .bind(tag)
+        .bind(now_string())
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query_scalar("SELECT id FROM tags WHERE owner_id = ? AND name = ?")
+        .bind(owner_id)
+        .bind(tag)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(AppError::from)
 }
 
 async fn ensure_local_user(pool: &SqlitePool) -> AppResult<i64> {
@@ -5799,6 +5968,21 @@ fn local_snapshot_is_paused(settings: &LocalSnapshotSettings) -> bool {
         .as_deref()
         .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
         .is_some_and(|paused_until| paused_until.with_timezone(&chrono::Utc) > chrono::Utc::now())
+}
+
+fn safe_local_snapshot_filename(value: &str) -> AppResult<String> {
+    let filename = value.trim();
+    if filename.is_empty()
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains("..")
+        || !filename.ends_with(".json.gz")
+    {
+        return Err(AppError::BadRequest(
+            "Invalid snapshot filename".to_string(),
+        ));
+    }
+    Ok(filename.to_string())
 }
 
 fn related_metadata_score(

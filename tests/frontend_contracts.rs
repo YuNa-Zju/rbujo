@@ -116,6 +116,72 @@ fn entry_service_defaults_plain_search_to_intelligent_semantic_mode() {
 }
 
 #[test]
+fn search_modal_uses_auto_smart_mode_without_mode_switches() {
+    let search_modal = read_file("frontend/src/components/modals/SearchModal.tsx");
+
+    assert!(
+        search_modal.contains("parseSmartSearchQuery")
+            && search_modal.contains("mode: searchQuery.mode")
+            && search_modal.contains("q: searchQuery.query"),
+        "SearchModal should derive regex vs smart semantic search from the query text"
+    );
+    assert!(
+        !search_modal.contains("setMode")
+            && !search_modal.contains("useState<\"text\" | \"regex\" | \"semantic\">")
+            && !search_modal.contains("modeMeta")
+            && !search_modal.contains("Current smart mode"),
+        "SearchModal should not expose or keep a manual search mode selector"
+    );
+}
+
+#[test]
+fn inspector_and_entry_action_menu_support_outside_click_and_escape_close() {
+    let inspector = read_file("frontend/src/components/EntryInspector.tsx");
+    let entry_actions = read_file("frontend/src/features/entry/EntryActions.tsx");
+
+    assert!(
+        inspector.contains("handleBackdropClick")
+            && inspector.contains("keydown")
+            && inspector.contains("Escape")
+            && inspector.contains("onClick={handleBackdropClick}"),
+        "EntryInspector should close when clicking outside the panel or pressing Escape"
+    );
+    assert!(
+        entry_actions.contains("pointerdown")
+            && entry_actions.contains("keydown")
+            && entry_actions.contains("Escape")
+            && entry_actions.contains("closeMenu"),
+        "EntryActions dropdown should close from outside pointer clicks and Escape"
+    );
+}
+
+#[test]
+fn local_snapshot_restore_is_exposed_with_pre_restore_backup() {
+    let storage_panel =
+        read_file("frontend/src/components/modals/AttachmentMaintenanceController.tsx");
+    let entry_service = read_file("frontend/src/services/entryService.ts");
+    let tauri_lib = read_file("src-tauri/src/lib.rs");
+
+    assert!(
+        entry_service.contains("restoreLocalSnapshot")
+            && entry_service.contains("\"restore_local_snapshot\""),
+        "entryService should expose local snapshot restore"
+    );
+    assert!(
+        tauri_lib.contains("async fn restore_local_snapshot")
+            && tauri_lib.contains("restore_local_snapshot,"),
+        "Tauri should expose LocalBackend::restore_local_snapshot"
+    );
+    assert!(
+        storage_panel.contains("onRestoreSnapshot")
+            && storage_panel.contains("restoreLocalSnapshot")
+            && storage_panel.contains("恢复")
+            && storage_panel.contains("恢复前"),
+        "Storage panel should let users restore snapshots and explain the pre-restore backup"
+    );
+}
+
+#[test]
 fn tag_inputs_offer_existing_native_tag_suggestions() {
     let tag_cache = read_file("frontend/src/context/TagCacheContext.tsx");
     let add_entry = read_file("frontend/src/components/modals/AddEntryModal.tsx");

@@ -8,9 +8,6 @@ import {
 import {
   Search,
   X,
-  Hash,
-  Code,
-  Sparkles,
   Calendar,
   ArrowRight,
   Loader2,
@@ -40,6 +37,18 @@ const normalizeTagFilter = (value: string) =>
     .replace(/^#+/, "")
     .replace(/^[,，;；:：\s]+|[,，;；:：\s]+$/g, "");
 
+const parseSmartSearchQuery = (value: string): {
+  query: string;
+  mode: "semantic" | "regex";
+} => {
+  const trimmed = value.trim();
+  if (trimmed.length > 2 && trimmed.startsWith("/") && trimmed.endsWith("/")) {
+    const pattern = trimmed.slice(1, -1).trim();
+    if (pattern) return { query: pattern, mode: "regex" };
+  }
+  return { query: value, mode: "semantic" };
+};
+
 const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
   const { t } = useTranslation();
   const { handleJump } = useEntryNavigation();
@@ -54,7 +63,6 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
 
   // 搜索状态
   const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<"text" | "regex" | "semantic">("semantic");
   const [selectedTypes, setSelectedTypes] = useState<EntryType[]>([
     "task",
     "idea",
@@ -69,6 +77,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
   const [endDate, setEndDate] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const searchQuery = useMemo(() => parseSmartSearchQuery(query), [query]);
 
   const pendingJumpRef = useRef<{ date: string | null } | null>(null);
 
@@ -91,7 +100,6 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
       const timer = setTimeout(() => {
         setQuery("");
         setResults([]);
-        setMode("semantic");
         setSelectedTags([]);
         setTagDraft("");
         setTagInputFocused(false);
@@ -180,8 +188,8 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     setLoading(true);
     try {
       const data = await entryService.search({
-        q: query,
-        mode: mode,
+        q: searchQuery.query,
+        mode: searchQuery.mode,
         entry_type: selectedTypes.length > 0 ? selectedTypes : undefined,
         tags: selectedTags,
         start_date: startDate || undefined,
@@ -194,7 +202,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     } finally {
       setLoading(false);
     }
-  }, [query, mode, selectedTypes, selectedTags, startDate, endDate]);
+  }, [query, searchQuery, selectedTypes, selectedTags, startDate, endDate]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -209,18 +217,13 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
   // --- 实时过滤 ---
   const checkEntryMatches = useCallback(
     (entry: any) => {
-      if (query) {
+      if (query && searchQuery.mode === "regex") {
         const content = entry.content || "";
-        if (mode === "text") {
-          if (!content.toLowerCase().includes(query.toLowerCase()))
-            return false;
-        } else if (mode === "regex") {
-          try {
-            const regex = new RegExp(query, "i");
-            if (!regex.test(content)) return false;
-          } catch {
-            return false;
-          }
+        try {
+          const regex = new RegExp(searchQuery.query, "i");
+          if (!regex.test(content)) return false;
+        } catch {
+          return false;
         }
       }
       if (selectedTags.length > 0) {
@@ -239,13 +242,13 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
         return false;
       return true;
     },
-    [query, mode, selectedTags, selectedTypes],
+    [query, searchQuery, selectedTags, selectedTypes],
   );
 
   useEffect(() => {
     if (!isOpen) return;
     const handleUpdate = (updatedEntry: any) => {
-      if (mode === "semantic") {
+      if (searchQuery.mode === "semantic") {
         void performSearch();
         return;
       }
@@ -275,7 +278,7 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
       entryEventBus.off("entry:status_change", handleUpdate);
       entryEventBus.off("entry:delete", handleDelete);
     };
-  }, [isOpen, mode, performSearch, checkEntryMatches]);
+  }, [isOpen, searchQuery.mode, performSearch, checkEntryMatches]);
 
   const handleRefresh = () => performSearch();
 
@@ -289,22 +292,6 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
     : "bg-indigo-50/30 border-indigo-50/50";
 
   const resultsAreaStyle = isDark ? "bg-[#0f172a]" : "bg-[#f8fafc]";
-
-  const modeMeta = {
-    semantic: {
-      label: t.search?.modeSemantic || "Semantic",
-      icon: Sparkles,
-    },
-    text: {
-      label: t.search?.modeText || "Text",
-      icon: Hash,
-    },
-    regex: {
-      label: t.search?.modeRegex || "Regex",
-      icon: Code,
-    },
-  }[mode];
-  const ModeIcon = modeMeta.icon;
 
   const hasSearchFilters =
     Boolean(query.trim()) ||
@@ -424,22 +411,6 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
               <div
                 className={`rounded-2xl p-2 flex flex-col sm:flex-row sm:items-center gap-3 border ${filterContainerStyle}`}
               >
-                {/* Current smart mode */}
-                <div
-                  className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
-                    isDark
-                      ? "bg-indigo-500/15 text-indigo-200"
-                      : "bg-white text-indigo-600 shadow-sm border border-indigo-50"
-                  }`}
-                >
-                  <ModeIcon size={12} strokeWidth={2.5} />
-                  {modeMeta.label}
-                </div>
-
-                <div
-                  className={`hidden sm:block h-6 w-px mx-1 shrink-0 ${isDark ? "bg-white/10" : "bg-indigo-50/50"}`}
-                ></div>
-
                 {/* Entry Types */}
                 <div className="flex gap-2 overflow-x-auto no-scrollbar w-full sm:w-auto items-center pb-1 sm:pb-0">
                   {(["task", "idea", "event"] as const).map((type) => {
@@ -594,37 +565,11 @@ const SearchModal = ({ isOpen, initialQuery, onClose }: Props) => {
                       : ""}
                   </p>
                   {hasSearchFilters && query.trim() && (
-                    <div className="mt-4 flex flex-wrap justify-center gap-2">
-                      {mode === "semantic" ? (
-                        <>
-                          <button
-                            type="button"
-                            className="btn btn-sm rounded-full"
-                            onClick={() => setMode("text")}
-                          >
-                            <Hash size={13} />
-                            {t.search?.modeText || "Text"}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-sm rounded-full"
-                            onClick={() => setMode("regex")}
-                          >
-                            <Code size={13} />
-                            {t.search?.modeRegex || "Regex"}
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-sm rounded-full"
-                          onClick={() => setMode("semantic")}
-                        >
-                          <Sparkles size={13} />
-                          {t.search?.modeSemantic || "Semantic"}
-                        </button>
-                      )}
-                    </div>
+                    <p
+                      className={`mt-4 text-xs opacity-45 ${styles.card.textSecondary}`}
+                    >
+                      输入 /关键词/ 可按正则搜索
+                    </p>
                   )}
                 </div>
               </div>

@@ -27,6 +27,7 @@ import {
   entryService,
   type AttachmentMaintenanceItem,
   type AttachmentMaintenanceSummary,
+  type LocalSnapshotInfo,
   type LocalSnapshotState,
   type MarkdownWorkspace,
 } from "../../services/entryService";
@@ -75,6 +76,7 @@ export default function AttachmentMaintenanceController() {
   const [choosing, setChoosing] = useState(false);
   const [openingFolder, setOpeningFolder] = useState(false);
   const [snapshotBusy, setSnapshotBusy] = useState<string | null>(null);
+  const [snapshotMessage, setSnapshotMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadStorage = useCallback(async () => {
@@ -137,9 +139,11 @@ export default function AttachmentMaintenanceController() {
   const createSnapshot = useCallback(async () => {
     setSnapshotBusy("create");
     setError(null);
+    setSnapshotMessage(null);
     try {
       await entryService.createLocalSnapshot();
       setSnapshotState(await entryService.getLocalSnapshotState());
+      setSnapshotMessage("已创建本地安全快照");
     } catch (nextError) {
       console.error("Local snapshot failed", nextError);
       setError("无法创建本地安全快照");
@@ -151,6 +155,7 @@ export default function AttachmentMaintenanceController() {
   const pauseAutoSnapshots = useCallback(async () => {
     setSnapshotBusy("pause");
     setError(null);
+    setSnapshotMessage(null);
     try {
       const settings = await entryService.pauseAutoLocalSnapshots(7);
       setSnapshotState((current) =>
@@ -167,6 +172,7 @@ export default function AttachmentMaintenanceController() {
   const resumeAutoSnapshots = useCallback(async () => {
     setSnapshotBusy("resume");
     setError(null);
+    setSnapshotMessage(null);
     try {
       const settings = await entryService.resumeAutoLocalSnapshots();
       setSnapshotState((current) =>
@@ -175,6 +181,25 @@ export default function AttachmentMaintenanceController() {
     } catch (nextError) {
       console.error("Resume local snapshots failed", nextError);
       setError("无法恢复自动快照");
+    } finally {
+      setSnapshotBusy(null);
+    }
+  }, []);
+
+  const restoreSnapshot = useCallback(async (snapshot: LocalSnapshotInfo) => {
+    setSnapshotBusy(`restore:${snapshot.filename}`);
+    setError(null);
+    setSnapshotMessage(null);
+    try {
+      const result = await entryService.restoreLocalSnapshot(snapshot.filename);
+      setSnapshotState(result.state);
+      setSummary(await entryService.getAttachmentMaintenanceSummary());
+      setSnapshotMessage(
+        `已恢复快照，并已创建恢复前快照：${formatSnapshotTime(result.rollback_snapshot.created_at)}`,
+      );
+    } catch (nextError) {
+      console.error("Restore local snapshot failed", nextError);
+      setError("无法恢复本地安全快照");
     } finally {
       setSnapshotBusy(null);
     }
@@ -235,11 +260,13 @@ export default function AttachmentMaintenanceController() {
       choosing={choosing}
       openingFolder={openingFolder}
       snapshotBusy={snapshotBusy}
+      snapshotMessage={snapshotMessage}
       error={error}
       labels={labels}
       onChooseWorkspace={chooseWorkspace}
       onOpenWorkspace={openWorkspace}
       onCreateSnapshot={createSnapshot}
+      onRestoreSnapshot={restoreSnapshot}
       onPauseAutoSnapshots={pauseAutoSnapshots}
       onResumeAutoSnapshots={resumeAutoSnapshots}
       onOpenReference={openReference}
@@ -257,11 +284,13 @@ function AttachmentMaintenanceModal({
   choosing,
   openingFolder,
   snapshotBusy,
+  snapshotMessage,
   error,
   labels,
   onChooseWorkspace,
   onOpenWorkspace,
   onCreateSnapshot,
+  onRestoreSnapshot,
   onPauseAutoSnapshots,
   onResumeAutoSnapshots,
   onOpenReference,
@@ -275,11 +304,13 @@ function AttachmentMaintenanceModal({
   choosing: boolean;
   openingFolder: boolean;
   snapshotBusy: string | null;
+  snapshotMessage: string | null;
   error: string | null;
   labels: AttachmentMaintenanceLabels;
   onChooseWorkspace: () => void;
   onOpenWorkspace: () => void;
   onCreateSnapshot: () => void;
+  onRestoreSnapshot: (snapshot: LocalSnapshotInfo) => void;
   onPauseAutoSnapshots: () => void;
   onResumeAutoSnapshots: () => void;
   onOpenReference: (
@@ -411,9 +442,16 @@ function AttachmentMaintenanceModal({
                   busy={snapshotBusy}
                   loading={loading}
                   onCreateSnapshot={onCreateSnapshot}
+                  onRestoreSnapshot={onRestoreSnapshot}
                   onPauseAutoSnapshots={onPauseAutoSnapshots}
                   onResumeAutoSnapshots={onResumeAutoSnapshots}
                 />
+
+                {snapshotMessage && (
+                  <div className="mt-4 rounded-2xl border border-success/20 bg-success/10 px-4 py-3 text-sm font-medium text-success">
+                    {snapshotMessage}
+                  </div>
+                )}
 
                 {error && (
                   <div className="mt-4 rounded-2xl border border-error/20 bg-error/10 px-4 py-3 text-sm font-medium text-error">
@@ -608,6 +646,7 @@ function SnapshotSafetyCard({
   busy,
   loading,
   onCreateSnapshot,
+  onRestoreSnapshot,
   onPauseAutoSnapshots,
   onResumeAutoSnapshots,
 }: {
@@ -615,13 +654,23 @@ function SnapshotSafetyCard({
   busy: string | null;
   loading: boolean;
   onCreateSnapshot: () => void;
+  onRestoreSnapshot: (snapshot: LocalSnapshotInfo) => void;
   onPauseAutoSnapshots: () => void;
   onResumeAutoSnapshots: () => void;
 }) {
   const latest = snapshotState?.snapshots[0] || null;
+  const snapshots = snapshotState?.snapshots ?? [];
+  const [confirmRestoreFilename, setConfirmRestoreFilename] = useState<
+    string | null
+  >(null);
   const pausedUntil = snapshotState?.settings.paused_until || null;
   const isPaused = Boolean(pausedUntil && new Date(pausedUntil) > new Date());
   const snapshotDir = snapshotState?.snapshot_dir || ".bujo/snapshots";
+
+  useEffect(() => {
+    if (!busy) return;
+    setConfirmRestoreFilename(null);
+  }, [busy]);
 
   return (
     <div className="mt-4 rounded-2xl border border-base-content/10 bg-base-100/60 p-4">
@@ -714,6 +763,54 @@ function SnapshotSafetyCard({
           )}
         </div>
       </div>
+
+      {snapshots.length > 0 && (
+        <div className="mt-3 space-y-2 rounded-xl border border-base-content/10 bg-base-200/25 p-2">
+          <div className="px-1 text-[11px] font-bold text-base-content/45">
+            恢复会先创建一份“恢复前”快照，方便快速返回当前状态；附件文件会保留不删除。
+          </div>
+          {snapshots.map((snapshot) => {
+            const restoreBusy = busy === `restore:${snapshot.filename}`;
+            const confirming = confirmRestoreFilename === snapshot.filename;
+            return (
+              <div
+                key={snapshot.filename}
+                className="flex items-center justify-between gap-3 rounded-lg bg-base-100/55 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold">
+                    {formatSnapshotTime(snapshot.created_at)}
+                  </div>
+                  <div className="mt-0.5 truncate text-[11px] text-base-content/45">
+                    {snapshot.entry_count} 条 / {formatBytes(snapshot.size)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={`btn btn-xs rounded-full ${
+                    confirming ? "btn-warning" : "btn-ghost"
+                  }`}
+                  onClick={() => {
+                    if (confirming) {
+                      onRestoreSnapshot(snapshot);
+                      return;
+                    }
+                    setConfirmRestoreFilename(snapshot.filename);
+                  }}
+                  disabled={loading || Boolean(busy)}
+                >
+                  {restoreBusy ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <RotateCcw size={12} />
+                  )}
+                  {confirming ? "确认恢复" : "恢复"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
