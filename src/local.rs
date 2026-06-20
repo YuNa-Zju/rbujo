@@ -906,9 +906,9 @@ impl LocalBackend {
             return Ok(());
         }
 
-        let entries = sqlx::query_as::<_, Entry>(&format!(
+        let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
@@ -1224,7 +1224,7 @@ impl LocalBackend {
         let sql = format!(
             "{ENTRY_SELECT} WHERE owner_id = ? AND target_date = ?{archive_filter} ORDER BY position ASC, created_at DESC"
         );
-        let entries = sqlx::query_as::<_, Entry>(&sql)
+        let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(sql))
             .bind(self.owner_id)
             .bind(date)
             .fetch_all(&self.pool)
@@ -1242,7 +1242,7 @@ impl LocalBackend {
         } else {
             " AND archived_at IS NULL"
         };
-        let future_entries = sqlx::query_as::<_, Entry>(&format!(
+        let future_entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             r#"{ENTRY_SELECT}
             WHERE owner_id = ?
               AND is_future = 1
@@ -1251,19 +1251,19 @@ impl LocalBackend {
               AND status NOT IN ('forward', 'future')
               {archive_filter}
             ORDER BY position ASC, created_at DESC"#
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
 
-        let monthly_entries = sqlx::query_as::<_, Entry>(&format!(
+        let monthly_entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             r#"{ENTRY_SELECT}
             WHERE owner_id = ?
               AND target_month IS NOT NULL
               AND status NOT IN ('forward', 'future')
               {archive_filter}
             ORDER BY target_month ASC, position ASC, created_at DESC"#
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
@@ -1298,7 +1298,7 @@ impl LocalBackend {
         } else {
             " AND archived_at IS NULL"
         };
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT id, target_date, entry_type, status
             FROM entries
@@ -1307,7 +1307,7 @@ impl LocalBackend {
               {archive_filter}
             ORDER BY target_date ASC, position ASC, created_at DESC
             "#
-        ))
+        )))
         .bind(self.owner_id)
         .bind(month)
         .fetch_all(&self.pool)
@@ -1674,9 +1674,9 @@ impl LocalBackend {
     }
 
     pub async fn migrate_text_tags_to_native(&self) -> AppResult<usize> {
-        let entries = sqlx::query_as::<_, Entry>(&format!(
+        let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
@@ -1726,7 +1726,7 @@ impl LocalBackend {
             .ok_or_else(|| AppError::BadRequest("Invalid new tag".to_string()))?;
         let same_tag_key = old_name.eq_ignore_ascii_case(&new_name);
 
-        let affected_entries = sqlx::query_as::<_, Entry>(&format!(
+        let affected_entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             r#"
             {ENTRY_SELECT}
             JOIN entry_tags ON entry_tags.entry_id = entries.id
@@ -1736,7 +1736,7 @@ impl LocalBackend {
             WHERE entries.owner_id = ? AND lower(tags.name) = lower(?)
             ORDER BY entries.created_at ASC
             "#
-        ))
+        )))
         .bind(self.owner_id)
         .bind(&old_name)
         .fetch_all(&self.pool)
@@ -1810,9 +1810,9 @@ impl LocalBackend {
     }
 
     pub async fn get_all_entries_for_backup(&self) -> AppResult<Vec<EntryExportSchema>> {
-        let entries = sqlx::query_as::<_, Entry>(&format!(
+        let entries = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
             "{ENTRY_SELECT} WHERE owner_id = ? ORDER BY created_at ASC"
-        ))
+        )))
         .bind(self.owner_id)
         .fetch_all(&self.pool)
         .await?;
@@ -3043,20 +3043,20 @@ impl LocalBackend {
             " AND archived_at IS NULL"
         };
         let entries = if let Some(target_month) = target_month {
-            sqlx::query_as::<_, Entry>(&format!(
+            sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
                 r#"{ENTRY_SELECT}
                 WHERE owner_id = ?
                   AND target_month = ?
                   AND status NOT IN ('forward', 'future')
                   {archive_filter}
                 ORDER BY position ASC, created_at DESC"#
-            ))
+            )))
             .bind(self.owner_id)
             .bind(target_month)
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, Entry>(&format!(
+            sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
                 r#"{ENTRY_SELECT}
                 WHERE owner_id = ?
                   AND is_future = 1
@@ -3065,7 +3065,7 @@ impl LocalBackend {
                   AND status NOT IN ('forward', 'future')
                   {archive_filter}
                 ORDER BY position ASC, created_at DESC"#
-            ))
+            )))
             .bind(self.owner_id)
             .fetch_all(&self.pool)
             .await?
@@ -3442,7 +3442,7 @@ impl LocalBackend {
         } else {
             " AND archived_at IS NULL"
         };
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT id, target_date, entry_type, status
             FROM entries
@@ -3453,7 +3453,7 @@ impl LocalBackend {
               {archive_filter}
             ORDER BY target_date ASC, position ASC, created_at DESC
             "#
-        ))
+        )))
         .bind(self.owner_id)
         .bind(start_date)
         .bind(end_date)
@@ -3504,7 +3504,7 @@ impl LocalBackend {
             bindings.push(validate_date(end_date)?);
         }
         sql.push_str(" ORDER BY target_date DESC, created_at DESC");
-        let mut query = sqlx::query_as::<_, Entry>(&sql).bind(self.owner_id);
+        let mut query = sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(sql)).bind(self.owner_id);
         for binding in bindings {
             query = query.bind(binding);
         }
@@ -3773,12 +3773,14 @@ impl LocalBackend {
     }
 
     async fn fetch_entry(&self, id: &str) -> AppResult<Entry> {
-        sqlx::query_as::<_, Entry>(&format!("{ENTRY_SELECT} WHERE id = ? AND owner_id = ?"))
-            .bind(id)
-            .bind(self.owner_id)
-            .fetch_optional(&self.pool)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Entry not found".to_string()))
+        sqlx::query_as::<_, Entry>(sqlx::AssertSqlSafe(format!(
+            "{ENTRY_SELECT} WHERE id = ? AND owner_id = ?"
+        )))
+        .bind(id)
+        .bind(self.owner_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Entry not found".to_string()))
     }
 
     async fn save_entry(&self, entry: &Entry) -> AppResult<()> {
@@ -4216,7 +4218,11 @@ fn sanitized_extension(file_name: &str) -> String {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn daily_markdown_relative_path(date: &str) -> String {
