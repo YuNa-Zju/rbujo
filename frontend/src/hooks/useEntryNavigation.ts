@@ -49,8 +49,7 @@ export function useEntryNavigation() {
 
     sessionStorage.setItem("calendar_focus_date", dateStr);
 
-    const shouldGoToCalendar =
-      location.pathname === "/" || location.pathname === "/timeline";
+    const shouldGoToCalendar = location.pathname === "/";
 
     if (shouldGoToCalendar) {
       navigate("/", {

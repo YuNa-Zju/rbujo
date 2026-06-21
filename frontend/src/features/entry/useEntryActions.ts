@@ -304,13 +304,17 @@ export function useEntryActions(
         await entryService.moveFutureEntry(entry.id, targetMonth);
       } else {
         // Daily -> Future：状态变为 migrated_future
-        const updatedEntry = {
-          ...entry,
-          status: "migrated_future",
-          target_month: targetMonth,
-        };
-        entryEventBus.emit("entry:status_change", updatedEntry);
-        await entryService.moveToFuture(entry.id, targetMonth);
+        const data = await entryService.moveToFutureWithSource(
+          entry.id,
+          targetMonth,
+        );
+        entryEventBus.emit("entry:status_change", data.updated_source);
+        entryEventBus.emit("entry:migrate", {
+          source: data.updated_source,
+          target: data.new_entry,
+          date: targetMonth || "Someday",
+        });
+        entryEventBus.emit("entry:create", data.new_entry);
       }
       refresh();
       refs.futureModalRef?.current?.close();
@@ -421,13 +425,14 @@ export function useEntryActions(
         await entryService.moveFutureEntry(entry.id, nextMonth);
       } else {
         // Daily -> Next Month (Migrate to Future)
-        const updatedEntry = {
-          ...entry,
-          status: "migrated_future",
-          target_month: nextMonth,
-        };
-        entryEventBus.emit("entry:status_change", updatedEntry);
-        await entryService.moveToFuture(entry.id, nextMonth);
+        const data = await entryService.moveToFutureWithSource(entry.id, nextMonth);
+        entryEventBus.emit("entry:status_change", data.updated_source);
+        entryEventBus.emit("entry:migrate", {
+          source: data.updated_source,
+          target: data.new_entry,
+          date: nextMonth,
+        });
+        entryEventBus.emit("entry:create", data.new_entry);
       }
       refresh();
     });

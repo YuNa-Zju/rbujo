@@ -14,8 +14,20 @@ import {
   type AddEntryPayload,
   type EntryActionPayload,
 } from "../lib/uiEvents";
+import {
+  buildInitialWorkbenchState,
+  openWorkbenchEntry as openWorkbenchEntryState,
+  openWorkbenchTimeline as openWorkbenchTimelineState,
+  returnWorkbenchTimeline as returnWorkbenchTimelineState,
+  setWorkbenchCollapsed as setWorkbenchCollapsedStateValue,
+  setWorkbenchWidth as setWorkbenchWidthStateValue,
+  type WorkbenchState,
+} from "../features/workbench/workbenchModel";
 
 type EntryActionKind = "migrate" | "future" | "delete" | "edit";
+
+const WORKBENCH_WIDTH_STORAGE_KEY = "rbujo.workbench.width";
+const WORKBENCH_COLLAPSED_STORAGE_KEY = "rbujo.workbench.collapsed";
 
 interface AddEntryRequest extends AddEntryPayload {
   requestId: number;
@@ -27,22 +39,16 @@ interface EntryActionRequest {
   requestId: number;
 }
 
-interface EntryInspectorState {
-  open: boolean;
-  entry: any | null;
-}
-
 interface ModalControllerValue {
   search: { open: boolean; initialQuery: string | null };
   tagSearch: { open: boolean; tag: string | null };
-  inspector: EntryInspectorState;
+  workbench: WorkbenchState;
   commandPaletteOpen: boolean;
   commandPaletteRequestId: number;
   futureLogOpen: boolean;
   backupOpen: boolean;
   addEntryRequest: AddEntryRequest | null;
   entryActionRequest: EntryActionRequest | null;
-  timelineRequestId: number;
   openSearch: (query?: string | null) => void;
   closeSearch: () => void;
   openTagSearch: (tag?: string | null) => void;
@@ -56,12 +62,26 @@ interface ModalControllerValue {
   openAddEntry: (payload?: AddEntryPayload) => void;
   openEntryAction: (kind: EntryActionKind, payload: EntryActionPayload) => void;
   clearEntryAction: () => void;
+  openWorkbenchTimeline: () => void;
+  openWorkbenchEntry: (entry: any) => void;
+  returnWorkbenchTimeline: () => void;
+  setWorkbenchCollapsed: (collapsed: boolean) => void;
+  setWorkbenchWidth: (width: number) => void;
   openInspector: (entry: any) => void;
   closeInspector: () => void;
-  openTimeline: () => void;
 }
 
 const ModalControllerContext = createContext<ModalControllerValue | null>(null);
+
+const readInitialWorkbenchState = () => {
+  if (typeof window === "undefined") return buildInitialWorkbenchState();
+  const storedWidth = window.localStorage.getItem(WORKBENCH_WIDTH_STORAGE_KEY);
+  return buildInitialWorkbenchState({
+    collapsed:
+      window.localStorage.getItem(WORKBENCH_COLLAPSED_STORAGE_KEY) === "true",
+    width: storedWidth == null ? undefined : Number(storedWidth),
+  });
+};
 
 export function ModalControllerProvider({ children }: { children: ReactNode }) {
   const requestSeq = useRef(0);
@@ -73,10 +93,9 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     open: false,
     tag: null as string | null,
   });
-  const [inspector, setInspector] = useState<EntryInspectorState>({
-    open: false,
-    entry: null,
-  });
+  const [workbench, setWorkbench] = useState<WorkbenchState>(
+    readInitialWorkbenchState,
+  );
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteRequestId, setCommandPaletteRequestId] = useState(0);
   const [futureLogOpen, setFutureLogOpen] = useState(false);
@@ -85,7 +104,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     useState<AddEntryRequest | null>(null);
   const [entryActionRequest, setEntryActionRequest] =
     useState<EntryActionRequest | null>(null);
-  const [timelineRequestId, setTimelineRequestId] = useState(0);
 
   const nextRequestId = useCallback(() => {
     requestSeq.current += 1;
@@ -151,18 +169,31 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     setEntryActionRequest(null);
   }, []);
 
-  const openInspector = useCallback((entry: any) => {
+  const openWorkbenchEntry = useCallback((entry: any) => {
     if (!entry) return;
-    setInspector({ open: true, entry });
+    setWorkbench((current) => openWorkbenchEntryState(current, entry));
   }, []);
 
-  const closeInspector = useCallback(() => {
-    setInspector((current) => ({ ...current, open: false }));
+  const openWorkbenchTimeline = useCallback(() => {
+    setWorkbench(openWorkbenchTimelineState);
   }, []);
 
-  const openTimeline = useCallback(() => {
-    setTimelineRequestId((current) => current + 1);
+  const returnWorkbenchTimeline = useCallback(() => {
+    setWorkbench(returnWorkbenchTimelineState);
   }, []);
+
+  const setWorkbenchCollapsed = useCallback((collapsed: boolean) => {
+    setWorkbench((current) =>
+      setWorkbenchCollapsedStateValue(current, collapsed),
+    );
+  }, []);
+
+  const setWorkbenchWidth = useCallback((width: number) => {
+    setWorkbench((current) => setWorkbenchWidthStateValue(current, width));
+  }, []);
+
+  const openInspector = openWorkbenchEntry;
+  const closeInspector = returnWorkbenchTimeline;
 
   useEffect(() => {
     const add = (payload: AddEntryPayload) => openAddEntry(payload || {});
@@ -173,7 +204,8 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       openEntryAction("future", payload);
     const remove = (payload: EntryActionPayload) =>
       openEntryAction("delete", payload);
-    const inspect = (payload: EntryActionPayload) => openInspector(payload?.entry);
+    const inspect = (payload: EntryActionPayload) =>
+      openWorkbenchEntry(payload?.entry);
 
     uiEvents.on("OPEN_ADD_ENTRY", add);
     uiEvents.on("OPEN_EDIT_ENTRY", edit);
@@ -185,7 +217,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     uiEvents.on("OPEN_TAG_SEARCH", openTagSearch);
     uiEvents.on("OPEN_CMD_PALETTE", openCommandPalette);
     uiEvents.on("OPEN_FUTURE_LOG", openFutureLog);
-    uiEvents.on("OPEN_TIMELINE", openTimeline);
     uiEvents.on("OPEN_BACKUP", openBackup);
 
     return () => {
@@ -199,7 +230,6 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       uiEvents.off("OPEN_TAG_SEARCH", openTagSearch);
       uiEvents.off("OPEN_CMD_PALETTE", openCommandPalette);
       uiEvents.off("OPEN_FUTURE_LOG", openFutureLog);
-      uiEvents.off("OPEN_TIMELINE", openTimeline);
       uiEvents.off("OPEN_BACKUP", openBackup);
     };
   }, [
@@ -208,11 +238,22 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     openCommandPalette,
     openEntryAction,
     openFutureLog,
-    openInspector,
+    openWorkbenchEntry,
     openSearch,
     openTagSearch,
-    openTimeline,
   ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      WORKBENCH_WIDTH_STORAGE_KEY,
+      String(workbench.width),
+    );
+    window.localStorage.setItem(
+      WORKBENCH_COLLAPSED_STORAGE_KEY,
+      String(workbench.collapsed),
+    );
+  }, [workbench.collapsed, workbench.width]);
 
   useEffect(() => {
     let disposed = false;
@@ -244,14 +285,13 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
     () => ({
       search,
       tagSearch,
-      inspector,
+      workbench,
       commandPaletteOpen,
       commandPaletteRequestId,
       futureLogOpen,
       backupOpen,
       addEntryRequest,
       entryActionRequest,
-      timelineRequestId,
       openSearch,
       closeSearch,
       openTagSearch,
@@ -265,9 +305,13 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       openAddEntry,
       openEntryAction,
       clearEntryAction,
+      openWorkbenchTimeline,
+      openWorkbenchEntry,
+      returnWorkbenchTimeline,
+      setWorkbenchCollapsed,
+      setWorkbenchWidth,
       openInspector,
       closeInspector,
-      openTimeline,
     }),
     [
       addEntryRequest,
@@ -281,21 +325,23 @@ export function ModalControllerProvider({ children }: { children: ReactNode }) {
       commandPaletteRequestId,
       entryActionRequest,
       commandPaletteOpen,
-      closeInspector,
       futureLogOpen,
-      inspector,
+      workbench,
       openAddEntry,
       openBackup,
       openCommandPalette,
       openEntryAction,
       openFutureLog,
+      openWorkbenchEntry,
+      openWorkbenchTimeline,
       openInspector,
       openSearch,
       openTagSearch,
-      openTimeline,
+      returnWorkbenchTimeline,
       search,
+      setWorkbenchCollapsed,
+      setWorkbenchWidth,
       tagSearch,
-      timelineRequestId,
     ],
   );
 

@@ -119,10 +119,9 @@ export function LegacyGlobalEntryModals() {
     const targetMonth = futureMonth || null;
 
     try {
-      let response;
       if (selectedEntry.is_future) {
         // Future -> Future (修改月份)
-        response = await entryService.moveFutureEntry(
+        const response = await entryService.moveFutureEntry(
           selectedEntry.id,
           targetMonth,
         );
@@ -137,26 +136,18 @@ export function LegacyGlobalEntryModals() {
         entryEventBus.emit("entry:update", response);
       } else {
         // Daily -> Future
-        response = await entryService.moveToFuture(
+        const response = await entryService.moveToFutureWithSource(
           selectedEntry.id,
           targetMonth,
         );
 
         // 逻辑 2 & 3: 处理存根与真身的渲染分离
-        const movedEntry = response;
-
         // A. 准备 Daily 存根 (Stub)
-        const stubEntry = {
-          ...selectedEntry,
-          status: "migrated_future",
-          is_future: false, // 🔴 确保它留在 Daily 视图
-          target_month: targetMonth,
-          date: selectedEntry.date || movedEntry.from_date,
-        };
+        const stubEntry = response.updated_source;
 
         // B. 准备 Future 真身
         const futureEntry = {
-          ...movedEntry,
+          ...response.new_entry,
           is_future: true, // 🔴 确保它去往 Future 视图
           target_month: targetMonth,
         };

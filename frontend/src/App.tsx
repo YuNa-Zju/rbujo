@@ -10,6 +10,9 @@ const GlobalModalHost = lazy(() => import("./components/modals/GlobalModalHost")
 const GlobalCommandPalette = lazy(
   () => import("./components/modals/cmdk/GlobalCommandPalette"),
 );
+const TimelineWorkbench = lazy(
+  () => import("./features/workbench/TimelineWorkbench"),
+);
 const CalendarPage = lazy(() => import("./features/calendar/CalendarPage"));
 const DailyPage = lazy(() => import("./features/daily/DailyPage"));
 const ArchivePage = lazy(() => import("./features/archive/ArchivePage"));
@@ -25,14 +28,21 @@ export default function App() {
             <GlobalCommandPalette />
           </Suspense>
 
-          <Suspense fallback={null}>
-            <Routes>
-              <Route path="/" element={<CalendarPage />} />
-              <Route path="/daily/:dateStr" element={<DailyPage />} />
-              <Route path="/archive" element={<ArchivePage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </Suspense>
+          <div className="app-shell flex h-[100dvh] w-full overflow-hidden bg-base-100">
+            <main className="app-shell-main min-w-0 flex-1 overflow-hidden">
+              <Suspense fallback={null}>
+                <Routes>
+                  <Route path="/" element={<CalendarPage />} />
+                  <Route path="/daily/:dateStr" element={<DailyPage />} />
+                  <Route path="/archive" element={<ArchivePage />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </Suspense>
+            </main>
+            <Suspense fallback={null}>
+              <TimelineWorkbench />
+            </Suspense>
+          </div>
 
           <Suspense fallback={null}>
             <GlobalModalHost />

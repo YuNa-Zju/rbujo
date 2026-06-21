@@ -14,6 +14,8 @@ interface DailySheetCardProps {
   onCollapseCalendar: () => void;
   onExpandCalendar: () => void;
   onToggleCalendar: () => void;
+  calendarToggleDisabled?: boolean;
+  calendarToggleLabel?: string;
 }
 
 const SHEET_DRAG_DISTANCE_THRESHOLD = 54;
@@ -31,9 +33,14 @@ export default function DailySheetCard({
   onCollapseCalendar,
   onExpandCalendar,
   onToggleCalendar,
+  calendarToggleDisabled = false,
+  calendarToggleLabel,
 }: DailySheetCardProps) {
   const dragControls = useDragControls();
   const lastWheelAt = useRef(0);
+  const toggleLabel =
+    calendarToggleLabel ||
+    (viewMode === "month" ? "Switch to week view" : "Switch to month view");
 
   const startSheetDrag = (event: PointerEvent<HTMLElement>) => {
     if (isManualSorting) return;
@@ -82,7 +89,7 @@ export default function DailySheetCard({
       animate={{ y: 0 }}
       transition={{ type: "spring", stiffness: 420, damping: 38 }}
       className={clsx(
-        "relative flex h-full min-h-0 flex-col overflow-hidden rounded-[2rem] border border-base-200/80 bg-base-100/95 shadow-[0_18px_55px_rgba(15,23,42,0.08)]",
+        "calendar-daily-sheet relative flex h-full min-h-[300px] flex-col overflow-hidden rounded-[2rem] border border-base-200/80 bg-base-100/95 shadow-[0_18px_55px_rgba(15,23,42,0.08)] [@media(max-height:720px)]:min-h-[240px] [@media(max-height:640px)]:min-h-[210px]",
         viewMode === "week" ? "mt-3" : "mt-4",
       )}
     >
@@ -96,13 +103,17 @@ export default function DailySheetCard({
       >
         <button
           type="button"
-          className="mx-auto mb-2 block h-2 w-16 rounded-full bg-base-content/15 transition-colors hover:bg-primary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          onClick={onToggleCalendar}
+          className={clsx(
+            "mx-auto mb-2 block h-2 w-16 rounded-full bg-base-content/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+            calendarToggleDisabled
+              ? "cursor-default opacity-60"
+              : "hover:bg-primary/35",
+          )}
+          onClick={calendarToggleDisabled ? undefined : onToggleCalendar}
           onPointerDown={(event) => event.stopPropagation()}
-          aria-label={
-            viewMode === "month" ? "Switch to week view" : "Switch to month view"
-          }
-          title={viewMode === "month" ? "Switch to week view" : "Switch to month view"}
+          disabled={calendarToggleDisabled}
+          aria-label={toggleLabel}
+          title={toggleLabel}
         />
         <div className="flex min-h-9 items-center justify-between gap-3">
           {title}
@@ -110,7 +121,7 @@ export default function DailySheetCard({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto no-scrollbar">{children}</div>
 
       {footer && (
         <div className="flex-none border-t border-base-content/5 bg-linear-to-t from-base-100 via-base-100/95 to-base-100/75 p-2">

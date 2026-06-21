@@ -14,9 +14,9 @@
       {
         "label": "main",
         "title": "BuJo",
-        "width": 1180,
+        "width": 1540,
         "height": 820,
-        "minWidth": 900,
+        "minWidth": 1180,
         "minHeight": 640
       }
     ],

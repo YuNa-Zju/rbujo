@@ -335,7 +335,7 @@ export default function DailyPage() {
 
   return (
     <div
-      className="fixed inset-0 w-full h-full bg-base-100 overflow-hidden flex flex-col"
+      className="relative h-full w-full bg-base-100 overflow-hidden flex flex-col"
       onTouchStart={(e) => {
         touchStartX.current = e.touches[0].clientX;
       }}

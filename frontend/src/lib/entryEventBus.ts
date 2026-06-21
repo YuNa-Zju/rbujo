@@ -22,8 +22,7 @@ export type EventType =
   | "entry:invalidate_overview_cache"
   | "ui:dropdown_opened"
   | "window:close_all_modals" // 全局关闭弹窗指令
-  | "window:open_future_log" // 🚀 新增：打开 Future Log 指令
-  | "ui:open_timeline";
+  | "window:open_future_log"; // 🚀 新增：打开 Future Log 指令
 
 type Handler = (data?: any) => void;
 

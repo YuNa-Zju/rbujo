@@ -47,6 +47,7 @@ import {
   isCompletedFutureStatus,
   isExpiredFutureEntry,
 } from "../../features/futureLog/futureLogClassification";
+import { isFutureLogEntry } from "../../features/futureLog/futureLogEntryModel";
 import {
   FUTURE_DROP_SOMEDAY_ID,
   futureEntryDragId,
@@ -515,11 +516,7 @@ const FutureLogModal = ({ onClose }: Props) => {
     const handleUpdate = (updatedEntry: any) => {
       setLayout((prev) => {
         const next = removeEntryFromLayout(prev, updatedEntry.id);
-        const isFuture =
-          updatedEntry.target_month ||
-          updatedEntry.is_future ||
-          ["future", "migrated_future"].includes(updatedEntry.status);
-        if (isFuture) addToLayoutStruct(next, updatedEntry);
+        if (isFutureLogEntry(updatedEntry)) addToLayoutStruct(next, updatedEntry);
         return next;
       });
     };
@@ -531,10 +528,7 @@ const FutureLogModal = ({ onClose }: Props) => {
         if (payload.target) {
           const targetEntry = payload.target;
           next = removeEntryFromLayout(next, targetEntry.id);
-          const isFuture =
-            targetEntry.target_month ||
-            ["future", "migrated_future"].includes(targetEntry.status);
-          if (isFuture) addToLayoutStruct(next, targetEntry);
+          if (isFutureLogEntry(targetEntry)) addToLayoutStruct(next, targetEntry);
         }
         return next;
       });

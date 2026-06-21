@@ -8,7 +8,6 @@ import TagSearchModal from "./TagSearchModal";
 
 // 2. 视图类弹窗
 import FutureLogModal from "./FutureLogModal";
-import TimelineModal, { type TimelineModalRef } from "./TimelineModal";
 
 // 3. 设置/系统类弹窗
 import BackupModal from "./BackupModal";
@@ -25,12 +24,10 @@ export function LegacyGlobalUIModals() {
     closeBackup,
     addEntryRequest,
     entryActionRequest,
-    timelineRequestId,
   } = useModalController();
 
   // --- Ref 管理 ---
   const addEntryRef = useRef<AddEntryModalRef>(null);
-  const timelineRef = useRef<TimelineModalRef>(null);
 
   useEffect(() => {
     if (addEntryRequest) {
@@ -43,10 +40,6 @@ export function LegacyGlobalUIModals() {
       addEntryRef.current?.showModal({ entry: entryActionRequest.payload.entry });
     }
   }, [entryActionRequest]);
-
-  useEffect(() => {
-    if (timelineRequestId > 0) timelineRef.current?.open();
-  }, [timelineRequestId]);
 
   return (
     <>
@@ -62,8 +55,6 @@ export function LegacyGlobalUIModals() {
       )}
 
       {futureLogOpen && <FutureLogModal onClose={closeFutureLog} />}
-
-      <TimelineModal ref={timelineRef} />
 
       {tagSearch.open && (
         <TagSearchModal
