@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { format } from "date-fns";
+import { addWeeks, format, subWeeks } from "date-fns";
 import { zhCN, enUS } from "date-fns/locale";
 import {
   Plus,
@@ -25,6 +25,7 @@ import HeaderActionTrigger from "./components/HeaderActionTrigger";
 import YearGrid from "./components/YearGrid";
 import SwipeCalendarSurface from "./components/SwipeCalendarSurface";
 import DailySheetCard from "./components/DailySheetCard";
+import { getCalendarResponsiveMetrics } from "./calendarResponsiveLayout";
 import DraggableEntryCard, {
   EntryCard,
 } from "../../components/DraggableEntryCard";
@@ -50,6 +51,9 @@ import {
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { entryService } from "../../services/entryService";
 
+const getViewportHeight = () =>
+  typeof window === "undefined" ? 900 : window.innerHeight;
+
 export default function CalendarPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -71,6 +75,12 @@ export default function CalendarPage() {
     toggleViewMode,
   } = useCalendarState();
 
+  const [viewportHeight, setViewportHeight] = useState(getViewportHeight);
+  const calendarResponsiveMetrics = getCalendarResponsiveMetrics(viewportHeight);
+  const isAutoCompactWeek =
+    viewMode === "month" && calendarResponsiveMetrics.forceWeekView;
+  const calendarDisplayMode = isAutoCompactWeek ? "week" : viewMode;
+
   const {
     dailyCache,
     overviewCache,
@@ -79,7 +89,7 @@ export default function CalendarPage() {
     handleSilentRefresh,
     setDailyCache,
     setOverviewCache,
-  } = useJournalData(selectedDate, currentDate, viewMode);
+  } = useJournalData(selectedDate, currentDate, calendarDisplayMode);
 
   const [activeItem, setActiveItem] = useState<any | null>(null);
   const [isManualSorting, setIsManualSorting] = useState(false);
@@ -87,6 +97,13 @@ export default function CalendarPage() {
   const [openSelectedMarkdown, setOpenSelectedMarkdown] = useState(false);
 
   // ✅ 监听路由参数打开 Future Log
+  useEffect(() => {
+    const handleResize = () => setViewportHeight(getViewportHeight());
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
   useEffect(() => {
     const state = location.state as any;
     if (state?.openFutureLog) {
@@ -96,6 +113,7 @@ export default function CalendarPage() {
   }, [location, navigate]);
 
   const collapseCalendar = () => {
+    if (isAutoCompactWeek) return;
     if (viewMode !== "month") return;
     setCurrentDate(selectedDate);
     setLastViewMode("month");
@@ -110,6 +128,7 @@ export default function CalendarPage() {
   };
 
   const toggleCalendarHeight = () => {
+    if (isAutoCompactWeek) return;
     if (viewMode === "month") {
       collapseCalendar();
       return;
@@ -117,6 +136,16 @@ export default function CalendarPage() {
     if (viewMode === "week") {
       expandCalendar();
     }
+  };
+
+  const handleCalendarNav = (direction: "prev" | "next") => {
+    if (isAutoCompactWeek) {
+      const nextDate =
+        direction === "prev" ? subWeeks(selectedDate, 1) : addWeeks(selectedDate, 1);
+      handleJumpToDate(nextDate);
+      return;
+    }
+    handleNav(direction);
   };
 
   const sensors = useSensors(
@@ -197,7 +226,7 @@ export default function CalendarPage() {
 
   return (
     <div
-      className="fixed inset-0 w-full h-[100dvh] bg-base-100 overflow-hidden flex flex-col overscroll-none"
+      className="relative h-full w-full bg-base-100 overflow-hidden flex flex-col overscroll-none"
       style={{ touchAction: "pan-y" }}
     >
       <div className="flex-none z-50 bg-base-100 shadow-sm relative">
@@ -216,9 +245,9 @@ export default function CalendarPage() {
             <span className="text-[10px] text-gray-400 uppercase tracking-widest mt-0.5">
               {
                 t.calendar[
-                  viewMode === "year"
+                  calendarDisplayMode === "year"
                     ? "yearView"
-                    : viewMode === "month"
+                    : calendarDisplayMode === "month"
                       ? "monthView"
                       : "weekView"
                 ]
@@ -240,7 +269,7 @@ export default function CalendarPage() {
         </div>
 
         <AnimatePresence mode="wait">
-          {viewMode !== "year" && (
+          {calendarDisplayMode !== "year" && (
             <motion.div
               layout
               key="card-stack-calendar"
@@ -248,22 +277,22 @@ export default function CalendarPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.22, ease: "easeOut" }}
-              className="px-4 pt-3 pb-2"
+              className="px-4 pt-2 pb-1"
             >
               <SwipeCalendarSurface
-                viewMode={viewMode as "month" | "week"}
+                viewMode={calendarDisplayMode as "month" | "week"}
                 currentDate={currentDate}
                 selectedDate={selectedDate}
                 overviewCache={overviewCache}
                 onDateClick={handleDateClick}
-                onNavigate={handleNav}
+                onNavigate={handleCalendarNav}
                 navDirection={navDirection}
               />
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-      <div className="flex-1 relative w-full h-full min-h-0 bg-base-100 flex flex-col overflow-hidden px-4 pb-4">
+      <div className="calendar-daily-scroll-region flex-1 relative w-full min-h-0 bg-base-100 flex flex-col overflow-hidden no-scrollbar overscroll-contain px-4 pb-4">
         <AnimatePresence mode="wait">
           {viewMode === "year" ? (
             <motion.div
@@ -288,14 +317,20 @@ export default function CalendarPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
               transition={{ duration: 0.2 }}
-              className="flex h-full w-full min-h-0 flex-col"
+              className="flex min-h-0 w-full flex-1 flex-col"
             >
               <DailySheetCard
-                viewMode={viewMode as "month" | "week"}
+                viewMode={calendarDisplayMode as "month" | "week"}
                 isManualSorting={isManualSorting}
                 onCollapseCalendar={collapseCalendar}
                 onExpandCalendar={expandCalendar}
                 onToggleCalendar={toggleCalendarHeight}
+                calendarToggleDisabled={isAutoCompactWeek}
+                calendarToggleLabel={
+                  isAutoCompactWeek
+                    ? "Month view returns when this window is taller"
+                    : undefined
+                }
                 title={
                   <h2
                     className="flex min-w-0 cursor-pointer items-center gap-2 truncate font-serif text-2xl font-bold capitalize text-base-content"
@@ -367,7 +402,7 @@ export default function CalendarPage() {
                 }
               >
                 <div
-                  className={`h-full w-full overscroll-contain px-4 ${
+                  className={`flex min-h-0 h-full w-full flex-col overscroll-contain px-4 ${
                     currentDailyEntries.length === 0
                       ? "overflow-hidden"
                       : "overflow-y-auto no-scrollbar"
@@ -449,7 +484,7 @@ export default function CalendarPage() {
                   )}
 
                   {!loadingList && currentDailyEntries.length === 0 && (
-                    <div className="flex h-full w-full flex-col p-1 animate-in fade-in zoom-in duration-500">
+                    <div className="flex min-h-0 flex-1 flex-col p-1 animate-in fade-in zoom-in duration-500">
                       <button
                         onClick={() =>
                           uiEvents.emit("OPEN_ADD_ENTRY", {
@@ -457,7 +492,7 @@ export default function CalendarPage() {
                             mode: "daily",
                           })
                         }
-                        className="group flex min-h-[200px] flex-1 cursor-pointer flex-col items-center justify-center gap-5 rounded-[2rem] border-2 border-dashed border-base-300 transition-all duration-300 hover:border-primary/30 hover:bg-base-200/30 active:scale-[0.99]"
+                        className="group flex min-h-[220px] flex-1 cursor-pointer flex-col items-center justify-center gap-5 rounded-[2rem] border-2 border-dashed border-base-300 transition-all duration-300 hover:border-primary/30 hover:bg-base-200/30 active:scale-[0.99] [@media(max-height:720px)]:min-h-[160px] [@media(max-height:640px)]:min-h-[132px]"
                       >
                         <div className="relative">
                           <div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-transparent bg-base-200 transition-all duration-300 group-hover:border-base-200 group-hover:bg-base-100 group-hover:shadow-sm">

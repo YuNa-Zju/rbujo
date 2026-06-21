@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { type EntryType } from "../config/entryTheme";
 import { type EntrySummary } from "../utils/markdownUtils";
+import { normalizeMoveToFutureResult } from "./entryServiceMigration";
 
 export interface CreateEntryPayload {
   content: string;
@@ -290,11 +291,15 @@ export const entryService = {
   },
 
   moveToFuture: async (id: string, month: string | null) => {
+    return (await entryService.moveToFutureWithSource(id, month)).new_entry;
+  },
+
+  moveToFutureWithSource: async (id: string, month: string | null) => {
     const result = await invoke<any>("migrate_entry_to_future", {
       id,
       targetMonth: month,
     });
-    return normalizeMigrationResult(result).new_entry;
+    return normalizeMoveToFutureResult(result);
   },
 
   rescheduleFutureEntry: async (id: string, date: string) => {

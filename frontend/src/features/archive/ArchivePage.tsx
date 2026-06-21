@@ -244,7 +244,7 @@ export default function ArchivePage() {
   const hasArchiveContent = visibleEntries.length > 0;
 
   return (
-    <div className="fixed inset-0 flex h-[100dvh] w-full flex-col overflow-hidden bg-base-100">
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-base-100">
       <div className="z-[100] grid h-14 flex-none grid-cols-[1fr_auto_1fr] items-center border-b border-base-200/50 bg-base-100/80 px-2 backdrop-blur-md sm:px-4">
         <div className="flex justify-start">
           <button

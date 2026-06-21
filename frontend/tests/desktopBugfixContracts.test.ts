@@ -197,30 +197,33 @@ test("update install flow reports download progress in the update dialog", async
 });
 
 test("timeline views load the full scheduled task set instead of a 60 day preview", async () => {
-  const modalPath = path.resolve(
+  const removedModalPath = path.resolve(
     import.meta.dirname,
     "../src/components/modals/TimelineModal.tsx",
   );
-  const pagePath = path.resolve(
+  const removedPagePath = path.resolve(
     import.meta.dirname,
     "../src/features/timeline/TimelinePage.tsx",
+  );
+  const timelineHookPath = path.resolve(
+    import.meta.dirname,
+    "../src/features/workbench/useTimelineEntries.ts",
   );
   const translationsPath = path.resolve(
     import.meta.dirname,
     "../src/config/translations.ts",
   );
-  const modalSource = await readFile(modalPath, "utf8");
-  const pageSource = await readFile(pagePath, "utf8");
+  const timelineHookSource = await readFile(timelineHookPath, "utf8");
   const translationsSource = await readFile(translationsPath, "utf8");
 
-  for (const source of [modalSource, pageSource]) {
-    assert.doesNotMatch(source, /addDays\(today,\s*60\)/);
-    assert.doesNotMatch(source, /end_date:\s*format\(endDate/);
-    assert.match(
-      source,
-      /entryService\.search\(\{\s*q:\s*query,\s*entry_type:\s*\["task"\],\s*status:\s*"open",\s*limit:\s*TIMELINE_SEARCH_LIMIT,\s*\}\)/,
-    );
-  }
+  await assert.rejects(readFile(removedModalPath, "utf8"), { code: "ENOENT" });
+  await assert.rejects(readFile(removedPagePath, "utf8"), { code: "ENOENT" });
+  assert.doesNotMatch(timelineHookSource, /addDays\(today,\s*60\)/);
+  assert.doesNotMatch(timelineHookSource, /end_date:\s*format\(endDate/);
+  assert.match(
+    timelineHookSource,
+    /entryService\.search\(\{\s*q:\s*query,[\s\S]*entry_type:\s*\["task"\],[\s\S]*status:\s*"open",[\s\S]*limit:\s*TIMELINE_SEARCH_LIMIT,[\s\S]*\}\)/,
+  );
 
   assert.match(
     await readFile(
@@ -229,12 +232,9 @@ test("timeline views load the full scheduled task set instead of a 60 day previe
     ),
     /status:\s*params\.status \?\? null/,
   );
-  assert.match(modalSource, /const TIMELINE_SEARCH_LIMIT = 10000/);
-  assert.match(pageSource, /const TIMELINE_SEARCH_LIMIT = 10000/);
-  assert.match(translationsSource, /全部待办概览/);
-  assert.match(translationsSource, /All Scheduled Tasks/);
-  assert.match(translationsSource, /所有待办已显示/);
-  assert.match(translationsSource, /All scheduled tasks shown/);
+  assert.match(timelineHookSource, /const TIMELINE_SEARCH_LIMIT = 10000/);
+  assert.match(translationsSource, /暂无带日期的待办/);
+  assert.match(translationsSource, /No dated tasks found/);
   assert.doesNotMatch(
     translationsSource,
     /未来 60 天|Next 60 Days|next 60 days|60 天预览|End of 60 days/,
@@ -501,7 +501,6 @@ test("business modal files do not portal themselves to body", async () => {
     "../src/components/modals/SettingsModalController.tsx",
     "../src/components/modals/UpdateCheckController.tsx",
     "../src/components/modals/VersionInfoController.tsx",
-    "../src/components/modals/TimelineModal.tsx",
     "../src/components/modals/SearchModal.tsx",
     "../src/components/modals/AddEntryModal.tsx",
     "../src/components/modals/MigrateModal.tsx",

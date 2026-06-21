@@ -1,4 +1,4 @@
-import { useRef, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type WheelEvent } from "react";
 import {
   addDays,
   addMonths,
@@ -16,17 +16,18 @@ import { zhCN, enUS } from "date-fns/locale";
 import { motion, type PanInfo } from "framer-motion";
 import clsx from "clsx";
 import { useTranslation } from "../../../hooks/useTranslation";
+import { getCalendarResponsiveMetrics } from "../calendarResponsiveLayout";
 import CalendarDots from "./CalendarDots";
 import type { DayOverview } from "./CalendarDots";
 
 export const CALENDAR_PAGE_OFFSETS = [-1, 0, 1];
-export const DAY_BUTTON_SIZE_CLASS = "w-7 h-7";
+export const DAY_BUTTON_SIZE_CLASS = "h-6 w-6";
 export const CALENDAR_DOTS_POSITION_CLASS =
-  "calendar-day-dots absolute bottom-0 left-1/2 h-2.5 -translate-x-1/2";
-export const MONTH_SURFACE_HEIGHT = 340;
-export const WEEK_SURFACE_HEIGHT = 168;
-export const MONTH_CARD_MIN_HEIGHT = 292;
-export const WEEK_CARD_MIN_HEIGHT = 116;
+  "calendar-day-dots absolute bottom-0 left-1/2 -translate-x-1/2";
+export const MONTH_SURFACE_HEIGHT = 300;
+export const WEEK_SURFACE_HEIGHT = 144;
+export const MONTH_CARD_MIN_HEIGHT = 252;
+export const WEEK_CARD_MIN_HEIGHT = 98;
 export const CALENDAR_CARD_WIDTH_STYLE = "min(920px, calc(100% - 7rem))";
 export const CALENDAR_CARD_RADIUS_CLASS = "rounded-[1.75rem] overflow-hidden";
 export const SIDE_PAGE_OPACITY = 0.56;
@@ -49,6 +50,9 @@ interface SwipeCalendarSurfaceProps {
 const NAVIGATE_DISTANCE_THRESHOLD = 82;
 const NAVIGATE_VELOCITY_THRESHOLD = 520;
 const WHEEL_NAVIGATION_COOLDOWN_MS = 420;
+
+const getViewportHeight = () =>
+  typeof window === "undefined" ? 900 : window.innerHeight;
 
 function pageDateForOffset(date: Date, viewMode: ViewMode, offset: number) {
   return viewMode === "month" ? addMonths(date, offset) : addWeeks(date, offset);
@@ -106,6 +110,19 @@ export default function SwipeCalendarSurface({
   const { t, lang } = useTranslation();
   const locale = lang === "zh" ? zhCN : enUS;
   const lastWheelNavigationAt = useRef(0);
+  const [viewportHeight, setViewportHeight] = useState(getViewportHeight);
+  const responsiveMetrics = getCalendarResponsiveMetrics(viewportHeight);
+  const dayCellHeight =
+    viewMode === "week"
+      ? responsiveMetrics.weekDayCellHeight
+      : responsiveMetrics.dayCellHeight;
+
+  useEffect(() => {
+    const handleResize = () => setViewportHeight(getViewportHeight());
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const weekDays = [
     t.calendar?.week?.mon || "一",
@@ -158,7 +175,12 @@ export default function SwipeCalendarSurface({
     <motion.section
       layout
       onWheel={handleWheel}
-      animate={{ height: viewMode === "week" ? WEEK_SURFACE_HEIGHT : MONTH_SURFACE_HEIGHT }}
+      animate={{
+        height:
+          viewMode === "week"
+            ? responsiveMetrics.weekSurfaceHeight
+            : responsiveMetrics.monthSurfaceHeight,
+      }}
       transition={{ type: "spring", stiffness: 420, damping: 38 }}
       className="calendar-swipe-surface relative w-full overflow-hidden rounded-[2rem] border border-base-200/80 bg-base-100/80 shadow-[0_18px_55px_rgba(15,23,42,0.08)]"
       style={{ perspective: 1100 }}
@@ -185,14 +207,18 @@ export default function SwipeCalendarSurface({
               transition={{ type: "spring", stiffness: 360, damping: 36 }}
               className={clsx(
                 CALENDAR_CARD_RADIUS_CLASS,
-                "absolute left-1/2 top-6 -translate-x-1/2 border bg-base-100 p-4 shadow-[0_18px_44px_rgba(15,23,42,0.10)]",
+                "absolute left-1/2 -translate-x-1/2 border bg-base-100 p-3 shadow-[0_18px_44px_rgba(15,23,42,0.10)]",
                 isCurrentPage
                   ? "calendar-page-card-current z-20 border-transparent ring-0"
                   : "calendar-page-card-side z-0 cursor-pointer border-base-200/60 bg-base-200/25",
               )}
               style={{
                 width: CALENDAR_CARD_WIDTH_STYLE,
-                minHeight: viewMode === "week" ? WEEK_CARD_MIN_HEIGHT : MONTH_CARD_MIN_HEIGHT,
+                minHeight:
+                  viewMode === "week"
+                    ? responsiveMetrics.weekCardMinHeight
+                    : responsiveMetrics.monthCardMinHeight,
+                top: responsiveMetrics.cardTop,
               }}
             >
               <div className="mb-1.5 flex items-baseline justify-between px-1">
@@ -225,8 +251,9 @@ export default function SwipeCalendarSurface({
                       type="button"
                       aria-pressed={selected}
                       onClick={() => isCurrentPage && onDateClick(day)}
+                      style={{ height: dayCellHeight }}
                       className={clsx(
-                        "group relative flex h-[38px] min-w-0 flex-col items-center justify-start rounded-2xl px-0.5 pt-0 text-center transition-transform active:scale-95",
+                        "group relative flex h-[32px] min-w-0 flex-col items-center justify-start rounded-2xl px-0.5 pt-0 text-center transition-transform active:scale-95",
                         outsideMonth && "opacity-35",
                         !isCurrentPage && "pointer-events-none",
                       )}
@@ -241,6 +268,10 @@ export default function SwipeCalendarSurface({
                               ? "bg-primary/10 text-primary ring-1 ring-primary/20"
                               : "text-base-content/75 group-hover:bg-base-200/70",
                         )}
+                        style={{
+                          height: responsiveMetrics.dayButtonSize,
+                          width: responsiveMetrics.dayButtonSize,
+                        }}
                       >
                         {format(day, "d")}
                       </span>
@@ -255,6 +286,7 @@ export default function SwipeCalendarSurface({
                             items={overviewCache[dateKey] || []}
                             dateKey={dateKey}
                             viewMode={viewMode}
+                            density={responsiveMetrics.dotDensity}
                           />
                         )}
                       </div>

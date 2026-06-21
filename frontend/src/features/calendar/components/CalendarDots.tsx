@@ -2,6 +2,7 @@ import { memo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { X, ChevronRight, ChevronsRight, Check } from "lucide-react";
 import { type EntryType } from "../../../config/entryTheme";
+import type { CalendarDotDensity } from "../calendarResponsiveLayout";
 
 export interface DayOverview {
   id: string;
@@ -23,7 +24,7 @@ const COLOR_MAP = {
 };
 
 export const CALENDAR_DOT_ROW_CLASS =
-  "flex h-2.5 items-center justify-center gap-0.5 px-0.5 pointer-events-none";
+  "flex items-center justify-center gap-0.5 px-0.5 pointer-events-none";
 
 const DOT_TRANSITION = {
   layout: { type: "spring" as const, stiffness: 360, damping: 28 },
@@ -33,11 +34,22 @@ const DOT_TRANSITION = {
 
 function CalendarDots({
   items,
+  density = "regular",
 }: {
   items: DayOverview[];
   dateKey: string;
-  viewMode: any;
+  viewMode: "month" | "week" | string;
+  density?: CalendarDotDensity;
 }) {
+  const isCompact = density === "compact";
+  const dotSize = isCompact ? 5 : 6;
+  const iconBoxSize = isCompact ? 9 : 10;
+  const iconSize = isCompact ? 8 : 10;
+  const rowHeight = isCompact ? 9 : 10;
+  const overflowBadgeHeight = isCompact ? 9 : 10;
+  const overflowBadgeMinWidth = isCompact ? 11 : 12;
+  const overflowFontSize = isCompact ? 7 : 8;
+
   const getRenderConfig = (item: DayOverview) => {
     // 1. 已删除 -> X
     if (item.status === "cancelled") {
@@ -72,7 +84,7 @@ function CalendarDots({
   const overflowCount = safeItems.length - visibleItems.length;
 
   return (
-    <div className={CALENDAR_DOT_ROW_CLASS}>
+    <div className={CALENDAR_DOT_ROW_CLASS} style={{ height: rowHeight }}>
       <AnimatePresence initial={false} mode="popLayout">
         {visibleItems.map((item) => {
           const config = getRenderConfig(item);
@@ -86,21 +98,27 @@ function CalendarDots({
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.72, opacity: 0 }}
               transition={DOT_TRANSITION}
-              className={`flex items-center justify-center ${
-                isIcon ? "h-2.5 w-2.5" : "h-1.5 w-1.5"
-              }`}
+              className="flex items-center justify-center"
+              style={{
+                height: isIcon ? iconBoxSize : dotSize,
+                width: isIcon ? iconBoxSize : dotSize,
+              }}
             >
               {isIcon && config.icon ? (
                 <config.icon
-                  size={10}
-                  strokeWidth={3.5}
+                  size={iconSize}
+                  strokeWidth={isCompact ? 3 : 3.5}
                   color={config.color}
                   className="opacity-100"
                 />
               ) : (
                 <div
-                  className="h-1.5 w-1.5 rounded-full ring-1 ring-base-100"
-                  style={{ backgroundColor: config.color }}
+                  className="rounded-full ring-1 ring-base-100"
+                  style={{
+                    height: dotSize,
+                    width: dotSize,
+                    backgroundColor: config.color,
+                  }}
                 />
               )}
             </motion.div>
@@ -115,9 +133,16 @@ function CalendarDots({
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.72, opacity: 0 }}
             transition={DOT_TRANSITION}
-            className="flex h-2.5 min-w-3 items-center justify-center rounded-full bg-rose-400/80 px-0.5 ring-1 ring-base-100"
+            className="flex items-center justify-center rounded-full bg-rose-400/80 px-0.5 ring-1 ring-base-100"
+            style={{
+              height: overflowBadgeHeight,
+              minWidth: overflowBadgeMinWidth,
+            }}
           >
-            <span className="text-[8px] font-bold leading-none text-white">
+            <span
+              className="font-bold leading-none text-white"
+              style={{ fontSize: overflowFontSize }}
+            >
               +{overflowCount}
             </span>
           </motion.div>

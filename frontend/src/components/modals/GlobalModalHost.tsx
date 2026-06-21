@@ -7,7 +7,6 @@ import AddEntryModal, { type AddEntryModalRef } from "./AddEntryModal";
 import SearchModal from "./SearchModal";
 import TagSearchModal from "./TagSearchModal";
 import FutureLogModal from "./FutureLogModal";
-import TimelineModal, { type TimelineModalRef } from "./TimelineModal";
 import BackupModal from "./BackupModal";
 import MigrateModal from "./MigrateModal";
 import FutureModal from "./FutureModal";
@@ -17,7 +16,6 @@ import VersionInfoController from "./VersionInfoController";
 import AttachmentMaintenanceController from "./AttachmentMaintenanceController";
 import SettingsModalController from "./SettingsModalController";
 import BjkImportPromptController from "./BjkImportPromptController";
-import EntryInspector from "../EntryInspector";
 
 export default function GlobalModalHost() {
   const {
@@ -25,20 +23,16 @@ export default function GlobalModalHost() {
     closeSearch,
     tagSearch,
     closeTagSearch,
-    inspector,
-    closeInspector,
     futureLogOpen,
     closeFutureLog,
     backupOpen,
     closeBackup,
     addEntryRequest,
     entryActionRequest,
-    timelineRequestId,
     clearEntryAction,
   } = useModalController();
 
   const addEntryRef = useRef<AddEntryModalRef>(null);
-  const timelineRef = useRef<TimelineModalRef>(null);
   const migrateRef = useRef<HTMLDialogElement>(null);
   const futureRef = useRef<HTMLDialogElement>(null);
   const deleteRef = useRef<HTMLDialogElement>(null);
@@ -59,10 +53,6 @@ export default function GlobalModalHost() {
       addEntryRef.current?.showModal({ entry: entryActionRequest.payload.entry });
     }
   }, [entryActionRequest]);
-
-  useEffect(() => {
-    if (timelineRequestId > 0) timelineRef.current?.open();
-  }, [timelineRequestId]);
 
   useEffect(() => {
     if (!entryActionRequest || entryActionRequest.kind === "edit") return;
@@ -150,9 +140,8 @@ export default function GlobalModalHost() {
     const targetMonth = futureMonth || null;
 
     try {
-      let response;
       if (selectedEntry.is_future) {
-        response = await entryService.moveFutureEntry(
+        const response = await entryService.moveFutureEntry(
           selectedEntry.id,
           targetMonth,
         );
@@ -165,17 +154,13 @@ export default function GlobalModalHost() {
         }
         entryEventBus.emit("entry:update", response);
       } else {
-        response = await entryService.moveToFuture(selectedEntry.id, targetMonth);
-        const movedEntry = response;
-        const stubEntry = {
-          ...selectedEntry,
-          status: "migrated_future",
-          is_future: false,
-          target_month: targetMonth,
-          date: selectedEntry.date || movedEntry.from_date,
-        };
+        const response = await entryService.moveToFutureWithSource(
+          selectedEntry.id,
+          targetMonth,
+        );
+        const stubEntry = response.updated_source;
         const futureEntry = {
-          ...movedEntry,
+          ...response.new_entry,
           is_future: true,
           target_month: targetMonth,
         };
@@ -235,8 +220,6 @@ export default function GlobalModalHost() {
 
       {futureLogOpen && <FutureLogModal onClose={closeFutureLog} />}
 
-      <TimelineModal ref={timelineRef} />
-
       {tagSearch.open && (
         <TagSearchModal tag={tagSearch.tag} onClose={closeTagSearch} />
       )}
@@ -274,11 +257,6 @@ export default function GlobalModalHost() {
       <AttachmentMaintenanceController />
       <SettingsModalController />
       <BjkImportPromptController />
-      <EntryInspector
-        open={inspector.open}
-        entry={inspector.entry}
-        onClose={closeInspector}
-      />
     </>
   );
 }

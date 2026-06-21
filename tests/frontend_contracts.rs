@@ -8,6 +8,11 @@ fn read_file(path: &str) -> String {
     })
 }
 
+fn file_exists(path: &str) -> bool {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    root.join(path).exists()
+}
+
 #[test]
 fn search_modal_exposes_native_tag_filter() {
     let source = read_file("frontend/src/components/modals/SearchModal.tsx");
@@ -23,30 +28,59 @@ fn search_modal_exposes_native_tag_filter() {
 }
 
 #[test]
-fn entry_inspector_is_persistent_side_panel_with_related_notes() {
+fn timeline_workbench_replaces_split_timeline_and_inspector_panels() {
     let modal_controller = read_file("frontend/src/context/ModalControllerContext.tsx");
     let modal_host = read_file("frontend/src/components/modals/GlobalModalHost.tsx");
+    let app = read_file("frontend/src/App.tsx");
     let entry_card = read_file("frontend/src/components/DraggableEntryCard.tsx");
+    let header_actions =
+        read_file("frontend/src/features/calendar/components/HeaderActionTrigger.tsx");
+    let command_palette = read_file("frontend/src/components/modals/cmdk/GlobalCommandPalette.tsx");
+    let workbench = read_file("frontend/src/features/workbench/TimelineWorkbench.tsx");
     let entry_service = read_file("frontend/src/services/entryService.ts");
     let tauri_lib = read_file("src-tauri/src/lib.rs");
 
     assert!(
-        modal_controller.contains("inspector")
-            && modal_controller.contains("openInspector")
-            && modal_controller.contains("closeInspector"),
-        "ModalControllerContext should own persistent inspector state"
+        modal_controller.contains("workbench")
+            && modal_controller.contains("openWorkbenchTimeline")
+            && modal_controller.contains("openWorkbenchEntry")
+            && modal_controller.contains("returnWorkbenchTimeline"),
+        "ModalControllerContext should own persistent timeline workbench state"
     );
     assert!(
-        modal_host.contains("EntryInspector")
-            && modal_host.contains("inspector.open")
-            && modal_host.contains("closeInspector"),
-        "GlobalModalHost should render a persistent EntryInspector side panel"
+        app.contains("TimelineWorkbench") && app.contains("app-shell-main"),
+        "App shell should render the persistent timeline workbench beside the main route content"
+    );
+    assert!(
+        !modal_host.contains("<TimelineModal ref={timelineRef}")
+            && !modal_host.contains("<EntryInspector"),
+        "GlobalModalHost should not mount separate TimelineModal and fixed EntryInspector panels"
+    );
+    assert!(
+        !header_actions.contains("OPEN_TIMELINE")
+            && !header_actions.contains("openTimeline")
+            && !command_palette.contains("command:timeline")
+            && !command_palette.contains("OPEN_TIMELINE"),
+        "Timeline should not have duplicate home-header or command-palette entry points now that the workbench is persistent"
+    );
+    assert!(
+        !file_exists("frontend/src/features/timeline/TimelinePage.tsx")
+            && !file_exists("frontend/src/components/modals/TimelineModal.tsx"),
+        "Legacy Timeline route and modal implementations should be removed after the persistent workbench replaces them"
     );
     assert!(
         entry_card.contains("onInspect")
             && entry_card.contains("onClick")
             && entry_card.contains("data-entry-interactive"),
-        "Entry cards should open the inspector on plain single-click without stealing interactive child clicks"
+        "Entry cards should open workbench detail on plain single-click without stealing interactive child clicks"
+    );
+    assert!(
+        workbench.contains("mode === \"timeline\"")
+            && workbench.contains("mode === \"detail\"")
+            && workbench.contains("workbench-resize-handle")
+            && workbench.contains("returnWorkbenchTimeline")
+            && workbench.contains("openWorkbenchEntry"),
+        "TimelineWorkbench should provide timeline, detail, resizing, and back-to-timeline flows"
     );
     assert!(
         entry_service.contains("getRelatedEntries")
@@ -60,31 +94,114 @@ fn entry_inspector_is_persistent_side_panel_with_related_notes() {
 }
 
 #[test]
-fn entry_inspector_keeps_actions_purposeful_and_related_cards_compact() {
-    let inspector = read_file("frontend/src/components/EntryInspector.tsx");
+fn workbench_detail_keeps_actions_purposeful_and_related_cards_compact() {
+    let detail = read_file("frontend/src/features/workbench/WorkbenchDetail.tsx");
 
     assert!(
-        inspector.contains("className=\"flex items-center gap-1.5 border-b")
-            && !inspector.contains("flex flex-wrap items-center gap-1.5 border-b"),
-        "Inspector toolbar should stay as one compact icon row instead of wrapping into multiple rows"
+        detail.contains("inlineScheduleMode")
+            && detail.contains("handleConfirmMigrate")
+            && detail.contains("handleConfirmFuture")
+            && detail.contains("Related Notes"),
+        "Workbench detail should inline migrate and Future scheduling instead of opening those modals"
     );
     assert!(
-        !inspector.contains("InspectorMoreMenu")
-            && !inspector.contains("performArchive")
-            && !inspector.contains("performCancel")
-            && !inspector.contains("label=\"复制\""),
-        "Inspector should not duplicate low-frequency actions from the entry card three-dot menu"
+        !detail.contains("performArchive")
+            && !detail.contains("performCancel")
+            && !detail.contains("label=\"复制\""),
+        "Workbench detail should not duplicate low-frequency actions from the entry card three-dot menu"
     );
     assert!(
-        inspector.contains("const isClosedTask = isTask && activeEntry?.status !== \"open\"")
-            && inspector.contains("label={isClosedTask ? \"重新打开\" : \"完成\"}"),
-        "Closed tasks in Inspector should advertise the real reopen action instead of showing a misleading complete action"
+        detail.contains("const isClosedTask = isTask && activeEntry?.status !== \"open\"")
+            && detail.contains("label={isClosedTask ? \"重新打开\" : \"完成\"}"),
+        "Closed tasks in workbench detail should advertise the real reopen action"
     );
     assert!(
-        inspector.contains("backendSummary={item.summary}")
-            && inspector.contains("forceCollapse")
-            && !inspector.contains("getInspectorDisplayText(item)"),
+        detail.contains("backendSummary={item.summary}")
+            && detail.contains("forceCollapse")
+            && !detail.contains("getInspectorDisplayText(item)"),
         "Related Notes should reuse compact entry rendering with backend summaries and avoid duplicate summary text"
+    );
+    assert!(
+        detail.contains("workbench-detail-card")
+            && detail.contains("workbench-schedule-card")
+            && detail.contains("grid-cols-[repeat(5,minmax(0,2.25rem))]"),
+        "Workbench detail should keep a polished card surface and fixed single-row icon action rail"
+    );
+    assert!(
+        detail.contains("MarkdownToolbar")
+            && detail.contains("textareaRef")
+            && detail.contains("WorkbenchStatusSelector")
+            && !detail.contains(
+                "Status\n                  {canEditDraftStatus ? (\n                    <select"
+            ),
+        "Workbench edit mode should reuse the markdown toolbar and avoid a native status dropdown"
+    );
+}
+
+#[test]
+fn calendar_daily_sheet_keeps_min_height_inside_workbench_shell() {
+    let page = read_file("frontend/src/features/calendar/CalendarPage.tsx");
+    let sheet = read_file("frontend/src/features/calendar/components/DailySheetCard.tsx");
+    let calendar = read_file("frontend/src/features/calendar/components/SwipeCalendarSurface.tsx");
+
+    assert!(
+        calendar.contains("export const MONTH_SURFACE_HEIGHT = 300")
+            && calendar.contains("export const MONTH_CARD_MIN_HEIGHT = 252")
+            && calendar.contains("getCalendarResponsiveMetrics")
+            && calendar.contains("weekDayCellHeight")
+            && calendar.contains("h-[32px]"),
+        "Month calendar should be compact enough to leave a complete daily sheet visible"
+    );
+    assert!(
+        page.contains("calendarResponsiveMetrics.forceWeekView")
+            && page.contains("isAutoCompactWeek")
+            && page.contains("calendarDisplayMode")
+            && page.contains("onNavigate={handleCalendarNav}")
+            && page.contains("if (isAutoCompactWeek) return;")
+            && page.contains("calendarToggleDisabled={isAutoCompactWeek}")
+            && page.contains("useJournalData(selectedDate, currentDate, calendarDisplayMode)"),
+        "Tight desktop windows should render the calendar as a week without overwriting the saved month-view preference"
+    );
+    assert!(
+        page.contains("overflow-hidden no-scrollbar overscroll-contain")
+            && page.contains("calendar-daily-scroll-region"),
+        "Calendar page should fit the daily sheet instead of making the daily region the primary scroll fallback"
+    );
+    assert!(
+        sheet.contains("min-h-[300px]")
+            && sheet.contains("[@media(max-height:720px)]:min-h-[240px]")
+            && sheet.contains("[@media(max-height:640px)]:min-h-[210px]")
+            && sheet.contains("calendarToggleDisabled")
+            && sheet.contains("calendar-daily-sheet")
+            && sheet.contains("overflow-y-auto"),
+        "DailySheetCard should keep a usable minimum height for empty states and entry cards"
+    );
+    assert!(
+        !page.contains("min-h-[380px]") && !sheet.contains("min-h-[340px]"),
+        "Daily sheet should not force a tall fallback that pushes its bottom out of view"
+    );
+    assert!(
+        page.contains("flex min-h-0 flex-1 flex-col p-1")
+            && !page.contains("flex h-full w-full flex-col p-1"),
+        "Daily empty state should fill the remaining sheet body instead of overflowing after the top spacer"
+    );
+}
+
+#[test]
+fn future_log_event_filter_ignores_daily_migration_stubs() {
+    let modal = read_file("frontend/src/components/modals/FutureLogModal.tsx");
+    let model = read_file("frontend/src/features/futureLog/futureLogEntryModel.ts");
+
+    assert!(
+        model.contains("export function isFutureLogEntry"),
+        "Future Log should centralize event filtering for candidate entries"
+    );
+    assert!(
+        modal.contains("isFutureLogEntry(updatedEntry)")
+            && modal.contains("isFutureLogEntry(targetEntry)")
+            && !modal.contains("updatedEntry.target_month ||")
+            && !modal.contains("targetEntry.target_month ||"),
+        "FutureLogModal should not add migrated daily source stubs just because they carry target_month"
     );
 }
 
@@ -398,7 +515,8 @@ fn calendar_selected_day_is_fixed_circle() {
 
     assert!(
         swipe_surface.contains("DAY_BUTTON_SIZE_CLASS")
-            && swipe_surface.contains("w-7 h-7")
+            && swipe_surface.contains("h-6 w-6")
+            && swipe_surface.contains("dayButtonSize")
             && swipe_surface.contains("rounded-full"),
         "Selected day should use a fixed square button with full rounding, not a stretched capsule"
     );
@@ -413,6 +531,7 @@ fn calendar_selected_day_is_fixed_circle() {
     assert!(
         calendar_dots.contains("memo(")
             && calendar_dots.contains("CALENDAR_DOT_ROW_CLASS")
+            && calendar_dots.contains("CalendarDotDensity")
             && calendar_dots.contains("AnimatePresence")
             && calendar_dots.contains("motion.div")
             && calendar_dots.contains("layout"),
@@ -430,14 +549,14 @@ fn calendar_card_stack_preserves_desktop_space_and_side_dots() {
     assert!(
         swipe_surface.contains("CALENDAR_CARD_WIDTH_STYLE")
             && swipe_surface.contains("920px")
-            && swipe_surface.contains("MONTH_SURFACE_HEIGHT = 340")
-            && swipe_surface.contains("MONTH_CARD_MIN_HEIGHT = 292")
-            && swipe_surface.contains("w-7 h-7")
-            && swipe_surface.contains("h-[38px]"),
+            && swipe_surface.contains("MONTH_SURFACE_HEIGHT = 300")
+            && swipe_surface.contains("MONTH_CARD_MIN_HEIGHT = 252")
+            && swipe_surface.contains("h-6 w-6")
+            && swipe_surface.contains("h-[32px]"),
         "Calendar card stack should use desktop-sized width while keeping month view compact enough to reveal daily todos"
     );
     assert!(
-        calendar_page.contains("pt-3 pb-2")
+        calendar_page.contains("pt-2 pb-1")
             && calendar_page.contains("btn btn-primary h-11")
             && daily_sheet.contains(" p-2"),
         "Calendar page chrome and the new-entry footer should stay compact enough to keep todos visible"
@@ -487,8 +606,10 @@ fn calendar_navigation_has_desktop_motion_and_bar_toggle() {
             && daily_sheet.contains("handleSheetWheel")
             && daily_sheet.contains("onToggleCalendar")
             && daily_sheet.contains("aria-label")
-            && daily_sheet.contains("onClick={onToggleCalendar}"),
-        "Daily sheet grabber should support desktop-friendly wheel and click toggles between month/week views"
+            && daily_sheet
+                .contains("onClick={calendarToggleDisabled ? undefined : onToggleCalendar}")
+            && daily_sheet.contains("disabled={calendarToggleDisabled}"),
+        "Daily sheet grabber should support desktop-friendly wheel and click toggles while allowing forced compact calendar mode to disable preference-changing clicks"
     );
 }
 

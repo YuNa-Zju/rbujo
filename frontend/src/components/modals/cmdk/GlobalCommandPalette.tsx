@@ -678,13 +678,6 @@ export default function GlobalCommandPalette() {
                 className="space-y-2"
               >
                 <Item
-                  icon={<Clock />}
-                  label={t.command?.timeline}
-                  value="command:timeline"
-                  keywords={["timeline", "time", "view", "时间线"]}
-                  onSelect={() => run(() => uiEvents.emit("OPEN_TIMELINE"))}
-                />
-                <Item
                   icon={<CalendarCheck />}
                   label={t.command?.futureLog}
                   value="command:future-log"

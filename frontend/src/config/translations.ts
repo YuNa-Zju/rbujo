@@ -294,17 +294,10 @@ export const translations = {
     },
     timeline: {
       title: "时间轴",
-      subtitle: "全部待办概览",
       placeholder: "搜索时间轴...",
-      loading: "正在扫描时间流...", // 保持了一点科技感的语气
       empty: "暂无带日期的待办",
       noResults: "未找到匹配的任务",
-      daysLeft: "天后", // 例如: "5 天后"
-      today: "今天",
       tomorrow: "明天",
-      endOfRange: "所有待办已显示",
-      noEntry: "暂无任务安排",
-      sync: "同步中...",
     },
     tag: {
       searching: "正在搜索...",
@@ -330,7 +323,6 @@ export const translations = {
       openSearch: "打开搜索",
       tagMenu: "标签菜单",
       futureLog: "未来日志",
-      timeline: "时间轴视图",
       account: "账户",
       changePassword: "修改密码",
       logout: "退出登录",
@@ -741,17 +733,10 @@ export const translations = {
     },
     timeline: {
       title: "Timeline",
-      subtitle: "All Scheduled Tasks",
       placeholder: "Search timeline...", // 对应搜索框
-      loading: "Scanning time stream...",
       empty: "No dated tasks found.",
       noResults: "No matching tasks found.",
-      daysLeft: "days left", // 例如: "5 days left"
-      today: "Today",
       tomorrow: "Tomorrow",
-      endOfRange: "All scheduled tasks shown",
-      noEntry: "No tasks scheduled",
-      sync: "Syncing...",
     },
     tag: {
       searching: "Searching...",
@@ -777,7 +762,6 @@ export const translations = {
       openSearch: "Open Search",
       tagMenu: "Tag Menu",
       futureLog: "Future Log",
-      timeline: "Timeline View",
       account: "Account",
       changePassword: "Change Password",
       logout: "Log Out",
