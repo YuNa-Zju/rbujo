@@ -145,22 +145,24 @@ fn calendar_daily_sheet_keeps_min_height_inside_workbench_shell() {
     let calendar = read_file("frontend/src/features/calendar/components/SwipeCalendarSurface.tsx");
 
     assert!(
-        calendar.contains("export const MONTH_SURFACE_HEIGHT = 300")
-            && calendar.contains("export const MONTH_CARD_MIN_HEIGHT = 252")
+        calendar.contains("export const MONTH_SURFACE_HEIGHT = 372")
+            && calendar.contains("export const MONTH_CARD_MIN_HEIGHT = 316")
             && calendar.contains("getCalendarResponsiveMetrics")
             && calendar.contains("weekDayCellHeight")
-            && calendar.contains("h-[32px]"),
-        "Month calendar should be compact enough to leave a complete daily sheet visible"
+            && calendar.contains("heightOverride"),
+        "Month calendar should be large by default while still allowing the daily sheet to control its height"
     );
     assert!(
         page.contains("calendarResponsiveMetrics.forceWeekView")
             && page.contains("isAutoCompactWeek")
+            && page.contains("isManualCompactWeek")
             && page.contains("calendarDisplayMode")
+            && page.contains("calendarSurfaceHeight")
             && page.contains("onNavigate={handleCalendarNav}")
             && page.contains("if (isAutoCompactWeek) return;")
-            && page.contains("calendarToggleDisabled={isAutoCompactWeek}")
+            && page.contains("onCalendarResizeDrag")
             && page.contains("useJournalData(selectedDate, currentDate, calendarDisplayMode)"),
-        "Tight desktop windows should render the calendar as a week without overwriting the saved month-view preference"
+        "Tight desktop windows and manually shrunken calendar heights should render the calendar as a week without overwriting the saved month-view preference"
     );
     assert!(
         page.contains("overflow-hidden no-scrollbar overscroll-contain")
@@ -515,7 +517,7 @@ fn calendar_selected_day_is_fixed_circle() {
 
     assert!(
         swipe_surface.contains("DAY_BUTTON_SIZE_CLASS")
-            && swipe_surface.contains("h-6 w-6")
+            && swipe_surface.contains("h-7 w-7")
             && swipe_surface.contains("dayButtonSize")
             && swipe_surface.contains("rounded-full"),
         "Selected day should use a fixed square button with full rounding, not a stretched capsule"
@@ -524,9 +526,10 @@ fn calendar_selected_day_is_fixed_circle() {
         swipe_surface.contains("CalendarDots")
             && swipe_surface.contains("calendar-day-dots")
             && swipe_surface.contains("CALENDAR_DOTS_POSITION_CLASS")
-            && swipe_surface.contains("absolute bottom-0 left-1/2")
+            && swipe_surface.contains("mt-0.5")
+            && !swipe_surface.contains("absolute bottom-0 left-1/2")
             && !swipe_surface.contains("rounded-lg active:scale-90"),
-        "Dots should be anchored inside each date cell instead of flowing into adjacent rows"
+        "Dots should occupy their own row below the date number instead of overlapping the selected-day circle"
     );
     assert!(
         calendar_dots.contains("memo(")
@@ -548,27 +551,27 @@ fn calendar_card_stack_preserves_desktop_space_and_side_dots() {
 
     assert!(
         swipe_surface.contains("CALENDAR_CARD_WIDTH_STYLE")
-            && swipe_surface.contains("920px")
-            && swipe_surface.contains("MONTH_SURFACE_HEIGHT = 300")
-            && swipe_surface.contains("MONTH_CARD_MIN_HEIGHT = 252")
-            && swipe_surface.contains("h-6 w-6")
-            && swipe_surface.contains("h-[32px]"),
-        "Calendar card stack should use desktop-sized width while keeping month view compact enough to reveal daily todos"
+            && swipe_surface.contains("1120px")
+            && swipe_surface.contains("MONTH_SURFACE_HEIGHT = 372")
+            && swipe_surface.contains("MONTH_CARD_MIN_HEIGHT = 316")
+            && swipe_surface.contains("h-7 w-7")
+            && swipe_surface.contains("heightOverride"),
+        "Calendar card stack should use a larger desktop card while letting the sheet resizer keep todos visible"
     );
     assert!(
-        calendar_page.contains("pt-2 pb-1")
+        calendar_page.contains("pt-3 pb-2")
             && calendar_page.contains("btn btn-primary h-11")
             && daily_sheet.contains(" p-2"),
-        "Calendar page chrome and the new-entry footer should stay compact enough to keep todos visible"
+        "Calendar page chrome and the new-entry footer should stay compact while the larger calendar owns more of the page"
     );
     assert!(
         swipe_surface.contains("SIDE_PAGE_OPACITY")
-            && swipe_surface.contains("SIDE_PAGE_TRANSLATE_PERCENT = \"50%\"")
+            && swipe_surface.contains("SIDE_PAGE_TRANSLATE_PERCENT = \"62%\"")
             && swipe_surface.contains("CALENDAR_CARD_RADIUS_CLASS")
             && swipe_surface.contains("overflow-hidden")
             && swipe_surface.contains("calendar-side-page-dots")
             && swipe_surface.contains("showDotsOnSidePages"),
-        "Previous and next calendar pages should keep their rounded corners visible and still render overview dots"
+        "Previous and next calendar pages should stay visible but be weaker than the enlarged primary card"
     );
     assert!(
         !swipe_surface
@@ -604,12 +607,14 @@ fn calendar_navigation_has_desktop_motion_and_bar_toggle() {
     assert!(
         daily_sheet.contains("SHEET_WHEEL_THRESHOLD")
             && daily_sheet.contains("handleSheetWheel")
-            && daily_sheet.contains("onToggleCalendar")
+            && daily_sheet.contains("onCalendarResizeDrag")
+            && daily_sheet.contains("onCalendarResizeBy")
             && daily_sheet.contains("aria-label")
-            && daily_sheet
-                .contains("onClick={calendarToggleDisabled ? undefined : onToggleCalendar}")
-            && daily_sheet.contains("disabled={calendarToggleDisabled}"),
-        "Daily sheet grabber should support desktop-friendly wheel and click toggles while allowing forced compact calendar mode to disable preference-changing clicks"
+            && daily_sheet.contains("role=\"separator\"")
+            && daily_sheet.contains("aria-valuenow")
+            && daily_sheet.contains("cursor-grab")
+            && daily_sheet.contains("active:cursor-grabbing"),
+        "Daily sheet handle should support continuous drag and wheel resizing accessibly"
     );
 }
 

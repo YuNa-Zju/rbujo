@@ -21,17 +21,17 @@ import CalendarDots from "./CalendarDots";
 import type { DayOverview } from "./CalendarDots";
 
 export const CALENDAR_PAGE_OFFSETS = [-1, 0, 1];
-export const DAY_BUTTON_SIZE_CLASS = "h-6 w-6";
+export const DAY_BUTTON_SIZE_CLASS = "h-7 w-7";
 export const CALENDAR_DOTS_POSITION_CLASS =
-  "calendar-day-dots absolute bottom-0 left-1/2 -translate-x-1/2";
-export const MONTH_SURFACE_HEIGHT = 300;
-export const WEEK_SURFACE_HEIGHT = 144;
-export const MONTH_CARD_MIN_HEIGHT = 252;
-export const WEEK_CARD_MIN_HEIGHT = 98;
-export const CALENDAR_CARD_WIDTH_STYLE = "min(920px, calc(100% - 7rem))";
+  "calendar-day-dots mt-0.5 flex h-3 items-center justify-center";
+export const MONTH_SURFACE_HEIGHT = 372;
+export const WEEK_SURFACE_HEIGHT = 166;
+export const MONTH_CARD_MIN_HEIGHT = 316;
+export const WEEK_CARD_MIN_HEIGHT = 118;
+export const CALENDAR_CARD_WIDTH_STYLE = "min(1120px, calc(100% - 4rem))";
 export const CALENDAR_CARD_RADIUS_CLASS = "rounded-[1.75rem] overflow-hidden";
-export const SIDE_PAGE_OPACITY = 0.56;
-export const SIDE_PAGE_TRANSLATE_PERCENT = "50%";
+export const SIDE_PAGE_OPACITY = 0.42;
+export const SIDE_PAGE_TRANSLATE_PERCENT = "62%";
 export const NAVIGATION_ANIMATION_DISTANCE = "7%";
 
 type ViewMode = "month" | "week";
@@ -45,6 +45,7 @@ interface SwipeCalendarSurfaceProps {
   onDateClick: (date: Date) => void;
   onNavigate: (direction: "prev" | "next") => void;
   navDirection?: NavDirection;
+  heightOverride?: number;
 }
 
 const NAVIGATE_DISTANCE_THRESHOLD = 82;
@@ -106,6 +107,7 @@ export default function SwipeCalendarSurface({
   onDateClick,
   onNavigate,
   navDirection = null,
+  heightOverride,
 }: SwipeCalendarSurfaceProps) {
   const { t, lang } = useTranslation();
   const locale = lang === "zh" ? zhCN : enUS;
@@ -116,6 +118,11 @@ export default function SwipeCalendarSurface({
     viewMode === "week"
       ? responsiveMetrics.weekDayCellHeight
       : responsiveMetrics.dayCellHeight;
+  const surfaceHeight =
+    heightOverride ??
+    (viewMode === "week"
+      ? responsiveMetrics.weekSurfaceHeight
+      : responsiveMetrics.monthSurfaceHeight);
 
   useEffect(() => {
     const handleResize = () => setViewportHeight(getViewportHeight());
@@ -176,10 +183,7 @@ export default function SwipeCalendarSurface({
       layout
       onWheel={handleWheel}
       animate={{
-        height:
-          viewMode === "week"
-            ? responsiveMetrics.weekSurfaceHeight
-            : responsiveMetrics.monthSurfaceHeight,
+        height: surfaceHeight,
       }}
       transition={{ type: "spring", stiffness: 420, damping: 38 }}
       className="calendar-swipe-surface relative w-full overflow-hidden rounded-[2rem] border border-base-200/80 bg-base-100/80 shadow-[0_18px_55px_rgba(15,23,42,0.08)]"
@@ -207,7 +211,7 @@ export default function SwipeCalendarSurface({
               transition={{ type: "spring", stiffness: 360, damping: 36 }}
               className={clsx(
                 CALENDAR_CARD_RADIUS_CLASS,
-                "absolute left-1/2 -translate-x-1/2 border bg-base-100 p-3 shadow-[0_18px_44px_rgba(15,23,42,0.10)]",
+                "absolute left-1/2 -translate-x-1/2 border bg-base-100 p-4 shadow-[0_18px_44px_rgba(15,23,42,0.10)]",
                 isCurrentPage
                   ? "calendar-page-card-current z-20 border-transparent ring-0"
                   : "calendar-page-card-side z-0 cursor-pointer border-base-200/60 bg-base-200/25",
@@ -221,8 +225,8 @@ export default function SwipeCalendarSurface({
                 top: responsiveMetrics.cardTop,
               }}
             >
-              <div className="mb-1.5 flex items-baseline justify-between px-1">
-                <span className="font-serif text-base font-bold capitalize text-base-content/85">
+              <div className="mb-2 flex items-baseline justify-between px-1">
+                <span className="font-serif text-lg font-bold capitalize text-base-content/85">
                   {format(pageDate, viewMode === "week" ? "MMM d" : "MMMM yyyy", {
                     locale,
                   })}
@@ -232,7 +236,7 @@ export default function SwipeCalendarSurface({
                 </span>
               </div>
 
-              <div className="grid grid-cols-7 text-center text-[10px] font-black text-base-content/35">
+              <div className="grid grid-cols-7 text-center text-[11px] font-black text-base-content/35">
                 {weekDays.map((day) => (
                   <div key={day}>{day}</div>
                 ))}
@@ -253,7 +257,7 @@ export default function SwipeCalendarSurface({
                       onClick={() => isCurrentPage && onDateClick(day)}
                       style={{ height: dayCellHeight }}
                       className={clsx(
-                        "group relative flex h-[32px] min-w-0 flex-col items-center justify-start rounded-2xl px-0.5 pt-0 text-center transition-transform active:scale-95",
+                        "group relative flex h-[42px] min-w-0 flex-col items-center justify-start rounded-2xl px-0.5 pt-0.5 text-center transition-transform active:scale-95",
                         outsideMonth && "opacity-35",
                         !isCurrentPage && "pointer-events-none",
                       )}

@@ -14,6 +14,13 @@ interface DailySheetCardProps {
   onCollapseCalendar: () => void;
   onExpandCalendar: () => void;
   onToggleCalendar: () => void;
+  onCalendarResizeStart?: () => void;
+  onCalendarResizeDrag?: (deltaY: number) => void;
+  onCalendarResizeBy?: (deltaY: number) => void;
+  onCalendarResizeEnd?: () => void;
+  calendarResizeValue?: number;
+  calendarResizeMin?: number;
+  calendarResizeMax?: number;
   calendarToggleDisabled?: boolean;
   calendarToggleLabel?: string;
 }
@@ -33,6 +40,13 @@ export default function DailySheetCard({
   onCollapseCalendar,
   onExpandCalendar,
   onToggleCalendar,
+  onCalendarResizeStart,
+  onCalendarResizeDrag,
+  onCalendarResizeBy,
+  onCalendarResizeEnd,
+  calendarResizeValue,
+  calendarResizeMin,
+  calendarResizeMax,
   calendarToggleDisabled = false,
   calendarToggleLabel,
 }: DailySheetCardProps) {
@@ -40,14 +54,30 @@ export default function DailySheetCard({
   const lastWheelAt = useRef(0);
   const toggleLabel =
     calendarToggleLabel ||
-    (viewMode === "month" ? "Switch to week view" : "Switch to month view");
+    (viewMode === "month"
+      ? "Drag to resize the calendar"
+      : "Drag down to expand the calendar");
+  const canResizeCalendar =
+    !calendarToggleDisabled &&
+    Boolean(onCalendarResizeStart && onCalendarResizeDrag);
 
   const startSheetDrag = (event: PointerEvent<HTMLElement>) => {
     if (isManualSorting) return;
+    if (canResizeCalendar) onCalendarResizeStart?.();
     dragControls.start(event);
   };
 
+  const handleDrag = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    if (!canResizeCalendar) return;
+    onCalendarResizeDrag?.(info.offset.y);
+  };
+
   const handleDragEnd = (_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    if (canResizeCalendar) {
+      onCalendarResizeDrag?.(info.offset.y);
+      onCalendarResizeEnd?.();
+      return;
+    }
     if (
       info.offset.y <= -SHEET_DRAG_DISTANCE_THRESHOLD ||
       info.velocity.y <= -SHEET_DRAG_VELOCITY_THRESHOLD
@@ -66,6 +96,10 @@ export default function DailySheetCard({
   const handleSheetWheel = (event: WheelEvent<HTMLElement>) => {
     if (isManualSorting || Math.abs(event.deltaY) < SHEET_WHEEL_THRESHOLD) return;
     event.preventDefault();
+    if (canResizeCalendar && onCalendarResizeBy) {
+      onCalendarResizeBy(event.deltaY);
+      return;
+    }
     const now = Date.now();
     if (now - lastWheelAt.current < SHEET_WHEEL_COOLDOWN_MS) return;
     lastWheelAt.current = now;
@@ -85,6 +119,7 @@ export default function DailySheetCard({
       dragMomentum={false}
       dragElastic={0.08}
       dragConstraints={{ top: 0, bottom: 0 }}
+      onDrag={handleDrag}
       onDragEnd={handleDragEnd}
       animate={{ y: 0 }}
       transition={{ type: "spring", stiffness: 420, damping: 38 }}
@@ -94,25 +129,43 @@ export default function DailySheetCard({
       )}
     >
       <div
-        className={clsx(
-          "flex-none border-b border-base-content/5 bg-base-100/90 px-4 pb-2 pt-1.5 backdrop-blur-md",
-          isManualSorting ? "cursor-default" : "cursor-grab active:cursor-grabbing",
-        )}
-        onPointerDown={startSheetDrag}
+        className="flex-none cursor-default border-b border-base-content/5 bg-base-100/90 px-4 pb-2 pt-1.5 backdrop-blur-md"
         onWheel={handleSheetWheel}
       >
         <button
           type="button"
+          role="separator"
           className={clsx(
-            "mx-auto mb-2 block h-2 w-16 rounded-full bg-base-content/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+            "mx-auto mb-2 block h-2 w-20 rounded-full bg-base-content/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
             calendarToggleDisabled
               ? "cursor-default opacity-60"
-              : "hover:bg-primary/35",
+              : "cursor-grab hover:bg-primary/35 active:cursor-grabbing",
           )}
-          onClick={calendarToggleDisabled ? undefined : onToggleCalendar}
-          onPointerDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            startSheetDrag(event);
+          }}
+          onKeyDown={(event) => {
+            if (calendarToggleDisabled || !onCalendarResizeBy) return;
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              onCalendarResizeBy(-18);
+            }
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              onCalendarResizeBy(18);
+            }
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onToggleCalendar();
+            }
+          }}
           disabled={calendarToggleDisabled}
           aria-label={toggleLabel}
+          aria-orientation="horizontal"
+          aria-valuemin={calendarResizeMin}
+          aria-valuemax={calendarResizeMax}
+          aria-valuenow={calendarResizeValue}
           title={toggleLabel}
         />
         <div className="flex min-h-9 items-center justify-between gap-3">

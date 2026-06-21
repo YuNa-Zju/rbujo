@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { addWeeks, format, subWeeks } from "date-fns";
@@ -54,6 +54,9 @@ import { entryService } from "../../services/entryService";
 const getViewportHeight = () =>
   typeof window === "undefined" ? 900 : window.innerHeight;
 
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
 export default function CalendarPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -77,9 +80,43 @@ export default function CalendarPage() {
 
   const [viewportHeight, setViewportHeight] = useState(getViewportHeight);
   const calendarResponsiveMetrics = getCalendarResponsiveMetrics(viewportHeight);
+  const [calendarSurfaceHeight, setCalendarSurfaceHeight] = useState<number | null>(
+    null,
+  );
+  const resizeStartCalendarHeight = useRef<number | null>(null);
   const isAutoCompactWeek =
     viewMode === "month" && calendarResponsiveMetrics.forceWeekView;
-  const calendarDisplayMode = isAutoCompactWeek ? "week" : viewMode;
+  const defaultCalendarSurfaceHeight =
+    viewMode === "week" || isAutoCompactWeek
+      ? calendarResponsiveMetrics.weekSurfaceHeight
+      : calendarResponsiveMetrics.monthSurfaceHeight;
+  const clampCalendarSurfaceHeight = useCallback(
+    (value: number) =>
+      clampNumber(
+        value,
+        calendarResponsiveMetrics.weekSurfaceHeight,
+        calendarResponsiveMetrics.monthSurfaceMaxHeight,
+      ),
+    [
+      calendarResponsiveMetrics.monthSurfaceMaxHeight,
+      calendarResponsiveMetrics.weekSurfaceHeight,
+    ],
+  );
+  const resolvedCalendarSurfaceHeight =
+    viewMode === "year"
+      ? defaultCalendarSurfaceHeight
+      : clampCalendarSurfaceHeight(
+          calendarSurfaceHeight ?? defaultCalendarSurfaceHeight,
+        );
+  const isManualCompactWeek =
+    viewMode === "month" &&
+    !isAutoCompactWeek &&
+    resolvedCalendarSurfaceHeight <=
+      calendarResponsiveMetrics.manualWeekSwitchHeight;
+  const calendarDisplayMode =
+    viewMode === "month" && (isAutoCompactWeek || isManualCompactWeek)
+      ? "week"
+      : viewMode;
 
   const {
     dailyCache,
@@ -95,6 +132,25 @@ export default function CalendarPage() {
   const [isManualSorting, setIsManualSorting] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | undefined>(undefined);
   const [openSelectedMarkdown, setOpenSelectedMarkdown] = useState(false);
+
+  useEffect(() => {
+    setCalendarSurfaceHeight((current) =>
+      current === null ? null : clampCalendarSurfaceHeight(current),
+    );
+  }, [clampCalendarSurfaceHeight]);
+
+  const applyCalendarSurfaceHeight = (height: number) => {
+    const nextHeight = clampCalendarSurfaceHeight(height);
+    if (
+      viewMode === "week" &&
+      nextHeight > calendarResponsiveMetrics.manualWeekSwitchHeight
+    ) {
+      setCurrentDate(selectedDate);
+      setLastViewMode("week");
+      setViewMode("month");
+    }
+    setCalendarSurfaceHeight(nextHeight);
+  };
 
   // ✅ 监听路由参数打开 Future Log
   useEffect(() => {
@@ -114,38 +170,57 @@ export default function CalendarPage() {
 
   const collapseCalendar = () => {
     if (isAutoCompactWeek) return;
-    if (viewMode !== "month") return;
-    setCurrentDate(selectedDate);
-    setLastViewMode("month");
-    setViewMode("week");
+    applyCalendarSurfaceHeight(calendarResponsiveMetrics.weekSurfaceHeight);
   };
 
   const expandCalendar = () => {
-    if (viewMode !== "week") return;
-    setCurrentDate(selectedDate);
-    setLastViewMode("week");
-    setViewMode("month");
+    if (isAutoCompactWeek) return;
+    if (viewMode === "week") {
+      setCurrentDate(selectedDate);
+      setLastViewMode("week");
+      setViewMode("month");
+    }
+    applyCalendarSurfaceHeight(calendarResponsiveMetrics.monthSurfaceHeight);
   };
 
   const toggleCalendarHeight = () => {
     if (isAutoCompactWeek) return;
-    if (viewMode === "month") {
+    if (
+      resolvedCalendarSurfaceHeight >
+      calendarResponsiveMetrics.manualWeekSwitchHeight
+    ) {
       collapseCalendar();
       return;
     }
-    if (viewMode === "week") {
-      expandCalendar();
-    }
+    expandCalendar();
   };
 
   const handleCalendarNav = (direction: "prev" | "next") => {
-    if (isAutoCompactWeek) {
+    if (calendarDisplayMode === "week" && viewMode === "month") {
       const nextDate =
         direction === "prev" ? subWeeks(selectedDate, 1) : addWeeks(selectedDate, 1);
       handleJumpToDate(nextDate);
       return;
     }
     handleNav(direction);
+  };
+
+  const handleCalendarResizeStart = () => {
+    resizeStartCalendarHeight.current = resolvedCalendarSurfaceHeight;
+  };
+
+  const handleCalendarResizeDrag = (deltaY: number) => {
+    const startHeight =
+      resizeStartCalendarHeight.current ?? resolvedCalendarSurfaceHeight;
+    applyCalendarSurfaceHeight(startHeight + deltaY);
+  };
+
+  const handleCalendarResizeBy = (deltaY: number) => {
+    applyCalendarSurfaceHeight(resolvedCalendarSurfaceHeight + deltaY);
+  };
+
+  const handleCalendarResizeEnd = () => {
+    resizeStartCalendarHeight.current = null;
   };
 
   const sensors = useSensors(
@@ -277,7 +352,7 @@ export default function CalendarPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.22, ease: "easeOut" }}
-              className="px-4 pt-2 pb-1"
+              className="px-5 pt-3 pb-2"
             >
               <SwipeCalendarSurface
                 viewMode={calendarDisplayMode as "month" | "week"}
@@ -287,6 +362,7 @@ export default function CalendarPage() {
                 onDateClick={handleDateClick}
                 onNavigate={handleCalendarNav}
                 navDirection={navDirection}
+                heightOverride={resolvedCalendarSurfaceHeight}
               />
             </motion.div>
           )}
@@ -325,6 +401,17 @@ export default function CalendarPage() {
                 onCollapseCalendar={collapseCalendar}
                 onExpandCalendar={expandCalendar}
                 onToggleCalendar={toggleCalendarHeight}
+                onCalendarResizeStart={handleCalendarResizeStart}
+                onCalendarResizeDrag={handleCalendarResizeDrag}
+                onCalendarResizeBy={handleCalendarResizeBy}
+                onCalendarResizeEnd={handleCalendarResizeEnd}
+                calendarResizeValue={Math.round(resolvedCalendarSurfaceHeight)}
+                calendarResizeMin={Math.round(
+                  calendarResponsiveMetrics.weekSurfaceHeight,
+                )}
+                calendarResizeMax={Math.round(
+                  calendarResponsiveMetrics.monthSurfaceMaxHeight,
+                )}
                 calendarToggleDisabled={isAutoCompactWeek}
                 calendarToggleLabel={
                   isAutoCompactWeek

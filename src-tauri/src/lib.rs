@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -533,6 +534,12 @@ async fn open_upload(state: State<'_, DesktopState>, relative_path: String) -> R
 }
 
 #[tauri::command]
+async fn open_external_link(href: String) -> Result<(), String> {
+    let target = external_open_target(&href)?;
+    open_external_target(&target)
+}
+
+#[tauri::command]
 async fn resolve_uploads(
     state: State<'_, DesktopState>,
     relative_paths: Vec<String>,
@@ -928,6 +935,53 @@ fn semantic_assets_dir_from_resource_dir(resource_dir: &Path) -> Option<PathBuf>
     })
 }
 
+fn external_open_target(href: &str) -> Result<String, String> {
+    let trimmed = href.trim();
+    if trimmed.is_empty() {
+        return Err("Link target is empty".to_string());
+    }
+
+    if let Ok(url) = Url::parse(trimmed) {
+        return match url.scheme() {
+            "http" | "https" | "mailto" => Ok(url.to_string()),
+            "file" => url
+                .to_file_path()
+                .map(|path| path.to_string_lossy().to_string())
+                .map_err(|_| "File link is not a local path".to_string()),
+            _ => Err("Unsupported link target".to_string()),
+        };
+    }
+
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        return Ok(path.to_string_lossy().to_string());
+    }
+
+    Err("Unsupported link target".to_string())
+}
+
+fn open_external_target(target: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let status = Command::new("open").arg(target).spawn();
+
+    #[cfg(target_os = "windows")]
+    let status = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        Command::new("rundll32.exe")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(target)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = Command::new("xdg-open").arg(target).spawn();
+
+    status.map(|_| ()).map_err(to_error)
+}
+
 fn pending_bjk_import_from_url(url: &Url) -> Option<PendingBjkImport> {
     url.to_file_path()
         .ok()
@@ -1175,6 +1229,7 @@ pub fn run() {
             list_uploads,
             restore_upload,
             open_upload,
+            open_external_link,
             resolve_uploads,
             sync_daily_markdown_file,
             open_daily_markdown,
@@ -1228,8 +1283,8 @@ fn safe_export_filename(value: &str, fallback: &str, extension: &str) -> String 
 #[cfg(test)]
 mod tests {
     use super::{
-        bjk_path_from_arg, bjk_path_from_args, menu_event_name, native_menu_enabled,
-        pending_bjk_import_from_path, pending_bjk_import_from_url,
+        bjk_path_from_arg, bjk_path_from_args, external_open_target, menu_event_name,
+        native_menu_enabled, pending_bjk_import_from_path, pending_bjk_import_from_url,
         semantic_assets_dir_from_resource_dir,
     };
     use std::fs;
@@ -1251,6 +1306,25 @@ mod tests {
         assert_eq!(menu_event_name("check_update"), Some("menu:check-update"));
         assert_eq!(menu_event_name("version_info"), Some("menu:version-info"));
         assert_eq!(menu_event_name("unknown"), None);
+    }
+
+    #[test]
+    fn external_open_target_accepts_web_mail_and_local_files_only() {
+        assert_eq!(
+            external_open_target("https://example.com/path?q=1").unwrap(),
+            "https://example.com/path?q=1"
+        );
+        assert_eq!(
+            external_open_target("mailto:hello@example.com").unwrap(),
+            "mailto:hello@example.com"
+        );
+        assert_eq!(
+            external_open_target("file:///tmp/rbujo-note.pdf").unwrap(),
+            PathBuf::from("/tmp/rbujo-note.pdf").to_string_lossy()
+        );
+        assert!(external_open_target("javascript:alert(1)").is_err());
+        assert!(external_open_target("tauri://localhost/settings").is_err());
+        assert!(external_open_target("relative-note.md").is_err());
     }
 
     #[test]
