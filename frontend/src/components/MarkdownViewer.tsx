@@ -102,7 +102,7 @@ const transformMarkdownUrl = (value: string) => {
       parsed.protocol === "asset:" ||
       (["http:", "https:"].includes(parsed.protocol) &&
         parsed.hostname === "asset.localhost");
-    if (isTauriAsset) {
+    if (isTauriAsset || parsed.protocol === "file:") {
       return value;
     }
   } catch {
@@ -262,18 +262,22 @@ export default function MarkdownViewer({
     uiEvents.emit("OPEN_TAG_SEARCH", tag);
   };
 
-  const handleAttachmentOpen = async (
-    e: React.MouseEvent<HTMLAnchorElement>,
+  const handleMarkdownLinkOpen = async (
+    event: React.MouseEvent<HTMLAnchorElement>,
     href?: string,
   ) => {
+    if (!href || href.startsWith("#")) return;
     const relativePath = extractUploadRelativePath(href);
-    if (!relativePath) return;
-    e.preventDefault();
-    e.stopPropagation();
+    event.preventDefault();
+    event.stopPropagation();
     try {
-      await entryService.openUpload(relativePath);
+      if (relativePath) {
+        await entryService.openUpload(relativePath);
+        return;
+      }
+      await entryService.openExternalLink(href);
     } catch (error) {
-      console.error("Failed to open attachment", error);
+      console.error("Failed to open Markdown link", error);
     }
   };
 
@@ -416,7 +420,12 @@ export default function MarkdownViewer({
                   <blockquote>{children}</blockquote>
                 ),
                 a: ({ href, children }) => (
-                  <a href={href} onClick={(e) => handleAttachmentOpen(e, href)}>
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(event) => handleMarkdownLinkOpen(event, href)}
+                  >
                     {children}
                   </a>
                 ),

@@ -512,6 +512,10 @@ export const entryService = {
     await invoke<void>("open_upload", { relativePath });
   },
 
+  openExternalLink: async (href: string) => {
+    await invoke<void>("open_external_link", { href });
+  },
+
   resolveUploads: async (relativePaths: string[]) => {
     const uploads = await invoke<Omit<ResolvedUpload, "url">[]>("resolve_uploads", {
       relativePaths,
